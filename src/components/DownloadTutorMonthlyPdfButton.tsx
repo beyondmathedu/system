@@ -80,7 +80,7 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
       });
     </script>
   </body>
-</html>`);
+</html>`;
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const w = window.open(url, "_blank");
