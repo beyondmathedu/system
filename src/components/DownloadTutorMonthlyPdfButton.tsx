@@ -56,10 +56,13 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(safeFileName)}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet" />
     <style>
       @page { size: A4 portrait; margin: 12mm; }
       html, body { background: #fff; }
-      body { font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", Arial, sans-serif; color: #111; }
+      body { font-family: "Noto Sans TC", system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", Arial, sans-serif; color: #111; }
       h1 { font-size: 14px; margin: 0 0 8px 0; }
       table { width: 100%; border-collapse: collapse; table-layout: fixed; }
       th, td { border: 1px solid #d0d7de; padding: 6px 6px; font-size: 10px; vertical-align: top; word-break: break-word; }
