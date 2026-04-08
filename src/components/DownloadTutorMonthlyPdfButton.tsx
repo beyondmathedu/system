@@ -31,9 +31,6 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
       setHint("正在開啟列印視窗（可另存為 PDF）…");
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-      const w = window.open("", "_blank", "noopener,noreferrer");
-      if (!w) throw new Error("瀏覽器阻擋彈出視窗，請允許 Pop-up 後再試");
-
       const escapeHtml = (s: string) =>
         s
           .replace(/&/g, "&amp;")
@@ -53,8 +50,7 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
 
       const headHtml = `<tr>${head.map((h) => `<th>${escapeHtml(String(h ?? ""))}</th>`).join("")}</tr>`;
 
-      w.document.open();
-      w.document.write(`<!doctype html>
+      const html = `<!doctype html>
 <html lang="zh-HK">
   <head>
     <meta charset="utf-8" />
@@ -85,7 +81,14 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
     </script>
   </body>
 </html>`);
-      w.document.close();
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, "_blank");
+      if (!w) {
+        URL.revokeObjectURL(url);
+        throw new Error("瀏覽器阻擋彈出視窗，請允許 Pop-up 後再試");
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 
       setHint("已開啟列印視窗：請選擇「另存為 PDF」");
     } catch (e: any) {
