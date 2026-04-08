@@ -76,7 +76,6 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
       <thead>${headHtml}</thead>
       <tbody>${rowsHtml}</tbody>
     </table>
-    <div class="note">提示：在列印視窗選擇「另存為 PDF」即可下載。</div>
     <script>
       window.addEventListener('load', function () {
         setTimeout(function () { window.print(); }, 200);
