@@ -17,6 +17,7 @@ import {
 } from "@/lib/tutorMonthlyPayroll";
 import { loadLatestTutorRates, loadMultiStudentFirstAmount } from "@/lib/payrollSettings";
 import { readYmParts } from "@/lib/intlFormatParts";
+import DownloadTutorMonthlyPdfButton from "@/components/DownloadTutorMonthlyPdfButton";
 
 export const dynamic = "force-dynamic";
 
@@ -200,6 +201,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
     "_",
   );
   const csvFilename = `${tutorNamePart}_${ym}_monthly_lesson_record.csv`;
+  const pdfFilename = `${tutorNamePart}_${ym}_monthly_lesson_record.pdf`;
 
   return (
     <div className="min-h-screen bg-slate-100 pt-5 pb-10">
@@ -284,7 +286,10 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               </p>
             ) : null}
 
-            <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <div
+              id="tutorMonthlyLessonRecordExport"
+              className="overflow-x-auto rounded-lg border border-slate-200"
+            >
               <table className="min-w-[1040px] w-full border-collapse text-sm">
                 <thead className="bg-slate-50 text-left text-slate-800">
                   <tr>
@@ -418,15 +423,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           </div>
         </div>
       </div>
-      {groupedRows.length > 0 ? (
-        <a
-          href={csvHref}
-          download={csvFilename}
-          className="fixed bottom-6 right-6 z-50 inline-flex items-center rounded-full bg-[#1d76c2] px-5 py-3 text-sm font-semibold text-white shadow-lg ring-1 ring-[#145a94] transition hover:bg-[#165f9d] hover:shadow-xl"
-        >
-          Download Excel
-        </a>
-      ) : null}
+      {groupedRows.length > 0 ? <DownloadTutorMonthlyPdfButton fileName={pdfFilename} /> : null}
     </div>
   );
 }
