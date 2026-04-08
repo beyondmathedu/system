@@ -1,8 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 type Props = {
   fileName: string;
@@ -30,36 +28,66 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
       if (!head?.length) throw new Error("PDF 表頭為空");
       if (!body?.length) throw new Error("PDF 沒有資料可匯出");
 
-      setHint("正在生成 PDF…");
+      setHint("正在開啟列印視窗（可另存為 PDF）…");
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-      const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
-      doc.setFontSize(10);
-      autoTable(doc, {
-        head: [head],
-        body,
-        theme: "grid",
-        styles: { fontSize: 9, cellPadding: 3, overflow: "linebreak" },
-        headStyles: { fillColor: [29, 118, 194], textColor: 255 },
-        margin: { top: 24, left: 18, right: 18, bottom: 18 },
-        tableWidth: "auto",
+      const w = window.open("", "_blank", "noopener,noreferrer");
+      if (!w) throw new Error("瀏覽器阻擋彈出視窗，請允許 Pop-up 後再試");
+
+      const escapeHtml = (s: string) =>
+        s
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+
+      const rowsHtml = body
+        .map(
+          (r) =>
+            `<tr>${r
+              .map((c) => `<td>${escapeHtml(String(c ?? ""))}</td>`)
+              .join("")}</tr>`,
+        )
+        .join("");
+
+      const headHtml = `<tr>${head.map((h) => `<th>${escapeHtml(String(h ?? ""))}</th>`).join("")}</tr>`;
+
+      w.document.open();
+      w.document.write(`<!doctype html>
+<html lang="zh-HK">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(safeFileName)}</title>
+    <style>
+      @page { size: A4 portrait; margin: 12mm; }
+      html, body { background: #fff; }
+      body { font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", Arial, sans-serif; color: #111; }
+      h1 { font-size: 14px; margin: 0 0 8px 0; }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      th, td { border: 1px solid #d0d7de; padding: 6px 6px; font-size: 10px; vertical-align: top; word-break: break-word; }
+      th { background: #1d76c2; color: #fff; font-weight: 700; }
+      .note { margin-top: 8px; font-size: 10px; color: #555; }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(safeFileName.replace(/\\.pdf$/i, ""))}</h1>
+    <table>
+      <thead>${headHtml}</thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <div class="note">提示：在列印視窗選擇「另存為 PDF」即可下載。</div>
+    <script>
+      window.addEventListener('load', function () {
+        setTimeout(function () { window.print(); }, 200);
       });
+    </script>
+  </body>
+</html>`);
+      w.document.close();
 
-      const ua = navigator.userAgent || "";
-      const isIOS =
-        /iPad|iPhone|iPod/.test(ua) ||
-        // iPadOS 13+ 可能會顯示成 Mac
-        (ua.includes("Mac") && typeof document !== "undefined" && "ontouchend" in document);
-
-      if (isIOS) {
-        setHint("已生成 PDF（iOS 會用新分頁開啟預覽）…");
-        const blob = doc.output("blob");
-        const url = URL.createObjectURL(blob);
-        window.open(url, "_blank", "noopener,noreferrer");
-        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      } else {
-        doc.save(safeFileName);
-      }
+      setHint("已開啟列印視窗：請選擇「另存為 PDF」");
     } catch (e: any) {
       setErr(String(e?.message ?? e ?? "PDF 生成失敗"));
     } finally {
