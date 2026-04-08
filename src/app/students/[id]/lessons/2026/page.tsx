@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
-import { supabase } from "@/lib/supabase";
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { loadLessonYearState, saveLessonYearState } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
@@ -190,13 +190,13 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         return;
       }
       const nextPath = `/students/${encodeURIComponent(studentId)}/lessons/${targetYear}`;
-      const { data: auth } = await supabase.auth.getUser();
+      const { data: auth } = await supabaseBrowser.auth.getUser();
       const user = auth.user;
       if (!user) {
         window.location.href = `/login?next=${encodeURIComponent(nextPath)}`;
         return;
       }
-      const { data: profile } = await supabase
+      const { data: profile } = await supabaseBrowser
         .from("user_profiles")
         .select("role, student_id")
         .eq("user_id", user.id)
@@ -325,7 +325,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       setStudentLoaded(false);
       setStudentNotFound(false);
       void (async () => {
-        const { data } = await supabase
+        const { data } = await supabaseBrowser
           .from("students")
           .select("id, name_zh, name_en, nickname_en, grade, school")
           .eq("id", studentId)
