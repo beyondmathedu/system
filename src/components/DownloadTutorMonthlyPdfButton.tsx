@@ -9,6 +9,7 @@ type Props = {
 export default function DownloadTutorMonthlyPdfButton({ fileName }: Props) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [hint, setHint] = useState("");
 
   const safeFileName = useMemo(() => {
     return String(fileName ?? "")
@@ -19,6 +20,7 @@ export default function DownloadTutorMonthlyPdfButton({ fileName }: Props) {
   async function onDownload() {
     if (busy) return;
     setErr("");
+    setHint("");
     setBusy(true);
     try {
       const el = document.getElementById("tutorMonthlyLessonRecordExport");
@@ -45,7 +47,30 @@ export default function DownloadTutorMonthlyPdfButton({ fileName }: Props) {
         pagebreak: { mode: ["css", "legacy"] },
       };
 
-      await html2pdf().set(opt).from(el).save();
+      const ua = navigator.userAgent || "";
+      const isIOS =
+        /iPad|iPhone|iPod/.test(ua) ||
+        // iPadOS 13+ 可能會顯示成 Mac
+        (ua.includes("Mac") && typeof document !== "undefined" && "ontouchend" in document);
+
+      if (isIOS) {
+        // iOS/Safari 常阻擋自動下載：改為生成後開新分頁預覽
+        setHint("正在生成 PDF（iOS 會用新分頁開啟預覽）…");
+        await html2pdf()
+          .set(opt)
+          .from(el)
+          .toPdf()
+          .get("pdf")
+          .then((pdf: any) => {
+            const blob: Blob = pdf.output("blob");
+            const url = URL.createObjectURL(blob);
+            window.open(url, "_blank", "noopener,noreferrer");
+            window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+          });
+      } else {
+        setHint("正在生成 PDF…");
+        await html2pdf().set(opt).from(el).save();
+      }
     } catch (e: any) {
       setErr(String(e?.message ?? e ?? "PDF 生成失敗"));
     } finally {
@@ -58,6 +83,11 @@ export default function DownloadTutorMonthlyPdfButton({ fileName }: Props) {
       {err ? (
         <div className="max-w-[70vw] rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 shadow">
           {err}
+        </div>
+      ) : null}
+      {hint ? (
+        <div className="max-w-[70vw] rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow">
+          {hint}
         </div>
       ) : null}
       <button
