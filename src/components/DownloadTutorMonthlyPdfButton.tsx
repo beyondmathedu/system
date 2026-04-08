@@ -1,12 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 type Props = {
   fileName: string;
+  head: string[];
+  body: Array<Array<string | number>>;
 };
 
-export default function DownloadTutorMonthlyPdfButton({ fileName }: Props) {
+export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: Props) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [hint, setHint] = useState("");
@@ -23,29 +27,23 @@ export default function DownloadTutorMonthlyPdfButton({ fileName }: Props) {
     setHint("");
     setBusy(true);
     try {
-      const el = document.getElementById("tutorMonthlyLessonRecordExport");
-      if (!el) throw new Error("找不到匯出內容容器（tutorMonthlyLessonRecordExport）");
+      if (!head?.length) throw new Error("PDF 表頭為空");
+      if (!body?.length) throw new Error("PDF 沒有資料可匯出");
 
-      // 先讓 React 有機會 render「Generating…」
+      setHint("正在生成 PDF…");
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-      const mod: any = await import("html2pdf.js");
-      const html2pdf = mod?.default ?? mod;
-
-      // html2pdf 會把指定 DOM 轉成 PDF（含多頁）
-      const opt: any = {
-        margin: [8, 6, 10, 6],
-        filename: safeFileName,
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: {
-          scale: 2,
-          useCORS: true,
-          backgroundColor: "#ffffff",
-          letterRendering: true,
-        },
-        jsPDF: { unit: "pt", format: "a4", orientation: "landscape" },
-        pagebreak: { mode: ["css", "legacy"] },
-      };
+      const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
+      doc.setFontSize(10);
+      autoTable(doc, {
+        head: [head],
+        body,
+        theme: "grid",
+        styles: { fontSize: 9, cellPadding: 3, overflow: "linebreak" },
+        headStyles: { fillColor: [29, 118, 194], textColor: 255 },
+        margin: { top: 24, left: 18, right: 18, bottom: 18 },
+        tableWidth: "auto",
+      });
 
       const ua = navigator.userAgent || "";
       const isIOS =
@@ -54,22 +52,13 @@ export default function DownloadTutorMonthlyPdfButton({ fileName }: Props) {
         (ua.includes("Mac") && typeof document !== "undefined" && "ontouchend" in document);
 
       if (isIOS) {
-        // iOS/Safari 常阻擋自動下載：改為生成後開新分頁預覽
-        setHint("正在生成 PDF（iOS 會用新分頁開啟預覽）…");
-        await html2pdf()
-          .set(opt)
-          .from(el)
-          .toPdf()
-          .get("pdf")
-          .then((pdf: any) => {
-            const blob: Blob = pdf.output("blob");
-            const url = URL.createObjectURL(blob);
-            window.open(url, "_blank", "noopener,noreferrer");
-            window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-          });
+        setHint("已生成 PDF（iOS 會用新分頁開啟預覽）…");
+        const blob = doc.output("blob");
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank", "noopener,noreferrer");
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
       } else {
-        setHint("正在生成 PDF…");
-        await html2pdf().set(opt).from(el).save();
+        doc.save(safeFileName);
       }
     } catch (e: any) {
       setErr(String(e?.message ?? e ?? "PDF 生成失敗"));

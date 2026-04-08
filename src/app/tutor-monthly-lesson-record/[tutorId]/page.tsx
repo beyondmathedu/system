@@ -202,6 +202,17 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
   );
   const csvFilename = `${tutorNamePart}_${ym}_monthly_lesson_record.csv`;
   const pdfFilename = `${tutorNamePart}_${ym}_monthly_lesson_record.pdf`;
+  const pdfHead = csvRows[0].map((c) => String(c));
+  const pdfBody = csvRows
+    .slice(1)
+    .map((r) =>
+      r.map((c) => {
+        if (typeof c === "string" && c.startsWith("=\"") && c.endsWith("\"")) {
+          return c.slice(2, -1);
+        }
+        return c;
+      }),
+    );
 
   return (
     <div className="min-h-screen bg-slate-100 pt-5 pb-10">
@@ -423,7 +434,9 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           </div>
         </div>
       </div>
-      {groupedRows.length > 0 ? <DownloadTutorMonthlyPdfButton fileName={pdfFilename} /> : null}
+      {groupedRows.length > 0 ? (
+        <DownloadTutorMonthlyPdfButton fileName={pdfFilename} head={pdfHead} body={pdfBody} />
+      ) : null}
     </div>
   );
 }
