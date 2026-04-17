@@ -695,7 +695,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
               ) : null}
 
               <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <table className="bm-freeze-table min-w-[1900px] w-full border-collapse text-left text-sm">
+                <table className="min-w-[1900px] w-full border-collapse text-left text-sm">
                   <thead className="bg-slate-50">
                     <tr className="border-b border-slate-200 text-xs font-bold uppercase tracking-wider text-slate-700">
                       <SortableHeader label="學號" columnKey="id" sortConfig={sortConfig} setSortConfig={setSortConfig} />

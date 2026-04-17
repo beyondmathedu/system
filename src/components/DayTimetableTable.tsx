@@ -143,7 +143,7 @@ export default function DayTimetableTable({
           編輯（未設定則用預設：B、M前 5；M後、Hope 6；Hope 2 為 5）。
         </p>
       ) : null}
-      <table className="bm-freeze-table min-w-[960px] w-full border-collapse text-sm">
+      <table className="min-w-[960px] w-full border-collapse text-sm">
         <thead className="bg-slate-50">
           <tr>
             <th

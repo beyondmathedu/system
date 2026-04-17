@@ -63,6 +63,7 @@ export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
             step={1}
             value={value}
             onChange={(e) => setValue(e.target.value)}
+            suppressHydrationWarning
             className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1.5 font-mono text-sm tabular-nums outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/25"
           />
         </label>

@@ -289,7 +289,7 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
                 尚未有記錄，請選擇生效日期並完成星期／時間／Room，再按「加入記錄」。
               </p>
             ) : (
-              <table className="bm-freeze-table w-full min-w-[520px] border-collapse text-sm">
+              <table className="w-full min-w-[520px] border-collapse text-sm">
                 <thead>
                   <tr className="divide-x divide-slate-200 border-b border-slate-200 bg-slate-50 text-left text-xs font-bold text-slate-700">
                     <th className="whitespace-nowrap px-3 py-2">生效日期（月/日）</th>

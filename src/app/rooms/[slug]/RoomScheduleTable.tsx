@@ -369,7 +369,7 @@ export default function RoomScheduleTable({
         </p>
       ) : null}
       <div className="overflow-x-auto rounded-xl border border-slate-200">
-        <table className="bm-freeze-table min-w-[960px] w-full border-collapse text-left text-sm">
+        <table className="min-w-[960px] w-full border-collapse text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-600">
               <th className="whitespace-nowrap px-3 py-2">學號</th>

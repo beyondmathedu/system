@@ -301,7 +301,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               id="tutorMonthlyLessonRecordExport"
               className="overflow-x-auto rounded-lg border border-slate-200"
             >
-              <table className="bm-freeze-table min-w-[1040px] w-full border-collapse text-sm">
+              <table className="min-w-[1040px] w-full border-collapse text-sm">
                 <thead className="bg-slate-50 text-left text-slate-800">
                   <tr>
                     <th className="border border-slate-200 px-3 py-2 font-semibold">{entry.englishName}</th>

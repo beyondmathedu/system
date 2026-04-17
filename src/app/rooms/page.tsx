@@ -405,7 +405,7 @@ export default function RoomsIndexPage() {
           <div className="p-6">
             {rows.length > 0 ? (
               <div className="mb-8 overflow-x-auto rounded-xl border border-slate-200">
-                <table className="bm-freeze-table w-full min-w-[820px] border-collapse text-left text-sm">
+                <table className="w-full min-w-[820px] border-collapse text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-700">
                       <th className="px-4 py-3">ID</th>

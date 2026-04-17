@@ -1514,7 +1514,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
             <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
               <div className="overflow-x-auto">
-                <table className="bm-freeze-table w-full min-w-[1180px] divide-y divide-slate-200">
+                <table className="w-full min-w-[1180px] divide-y divide-slate-200">
                   <thead className="bg-slate-50">
                     <tr className="divide-x divide-slate-200">
                       <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">

@@ -431,7 +431,7 @@ export default function StudentsPage() {
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="bm-freeze-table min-w-[1500px] divide-y divide-slate-200">
+            <table className="min-w-[1500px] divide-y divide-slate-200">
               <thead className="bg-slate-50">
                 <tr className="divide-x divide-slate-200">
                   <th className="whitespace-nowrap px-6 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
