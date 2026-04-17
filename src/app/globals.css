@@ -24,3 +24,23 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Excel-like freeze: sticky first row and first column */
+.bm-freeze-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.bm-freeze-table thead th:first-child {
+  left: 0;
+  z-index: 40;
+}
+
+.bm-freeze-table tbody td:first-child,
+.bm-freeze-table tbody th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 20;
+  background: inherit;
+}

@@ -655,7 +655,7 @@ export default function TeacherPage() {
             {selectionError ? <p className="mt-2 text-sm text-red-600">{selectionError}</p> : null}
 
             <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
+              <table className="bm-freeze-table w-full min-w-[1080px] border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-700">
                     <th className="whitespace-nowrap px-4 py-3">
