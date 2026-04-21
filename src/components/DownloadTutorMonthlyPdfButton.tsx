@@ -116,7 +116,7 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
         type="button"
         onClick={() => void onDownload()}
         disabled={busy}
-        className="inline-flex items-center rounded-full bg-[#1d76c2] px-5 py-3 text-sm font-semibold text-white shadow-lg ring-1 ring-[#145a94] transition hover:bg-[#165f9d] hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
+        className="inline-flex w-36 items-center justify-center rounded-full bg-[#1d76c2] px-4 py-3 text-sm font-semibold text-white shadow-lg ring-1 ring-[#145a94] transition hover:bg-[#165f9d] hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
       >
         {busy ? "Generating PDF..." : "Download PDF"}
       </button>

@@ -11,7 +11,9 @@ export function resolveStudentInactiveEffectiveDate(input: {
 }): string | null {
   const grade = String(input.grade ?? "").trim();
   const manual = String(input.manualInactiveEffective ?? "").trim() || null;
-  const auto = grade === "中六" ? `${input.year}-05-01` : null;
+  // Backwards-compatible: legacy "中六" and new "F6"
+  const compact = grade.replace(/\s+/g, "").toUpperCase();
+  const auto = compact === "F6" || grade === "中六" ? `${input.year}-05-01` : null;
   if (manual && auto) return manual < auto ? manual : auto;
   return manual || auto;
 }

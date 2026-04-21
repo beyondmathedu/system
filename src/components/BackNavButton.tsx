@@ -9,7 +9,7 @@ type BackNavButtonProps = {
 
 export default function BackNavButton({
   className = "",
-  ariaLabel = "返回上一頁",
+  ariaLabel = "Go back",
   fallbackHref = "/students",
   children = "←",
 }: BackNavButtonProps) {

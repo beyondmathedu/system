@@ -299,18 +299,18 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
 
             <div
               id="tutorMonthlyLessonRecordExport"
-              className="overflow-x-auto rounded-lg border border-slate-200"
+              className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200"
             >
               <table className="min-w-[1040px] w-full border-collapse text-sm">
                 <thead className="bg-slate-50 text-left text-slate-800">
                   <tr>
-                    <th className="border border-slate-200 px-3 py-2 font-semibold">{entry.englishName}</th>
-                    <th className="border border-slate-200 px-3 py-2 font-semibold">Date</th>
-                    <th className="border border-slate-200 px-3 py-2 font-semibold">Time</th>
-                    <th className="border border-slate-200 px-2 py-2 text-right font-semibold">Hour</th>
-                    <th className="border border-slate-200 px-2 py-2 text-right font-semibold">Subtotal</th>
-                    <th className="border border-slate-200 px-2 py-2 font-semibold">Grade</th>
-                    <th className="border border-slate-200 px-3 py-2 font-semibold">Student Name</th>
+                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">{entry.englishName}</th>
+                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Date</th>
+                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Time</th>
+                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-2 py-2 text-right font-semibold">Hour</th>
+                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-2 py-2 text-right font-semibold">Subtotal</th>
+                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-2 py-2 font-semibold">Grade</th>
+                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Student Name</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -434,6 +434,17 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           </div>
         </div>
       </div>
+      {groupedRows.length > 0 ? (
+        <div className="fixed right-6 bottom-20 z-50">
+          <a
+            href={csvHref}
+            download={csvFilename}
+            className="inline-flex w-36 items-center justify-center rounded-full bg-[#1d76c2] px-4 py-3 text-sm font-semibold text-white shadow-lg ring-1 ring-[#145a94] transition hover:bg-[#165f9d] hover:shadow-xl"
+          >
+            Download Excel
+          </a>
+        </div>
+      ) : null}
       {groupedRows.length > 0 ? (
         <DownloadTutorMonthlyPdfButton fileName={pdfFilename} head={pdfHead} body={pdfBody} />
       ) : null}

@@ -25,7 +25,7 @@ export default function PageDatePicker({ basePath, year, month, day }: Props) {
 
   return (
     <label className="inline-flex items-center gap-2">
-      <span className="sr-only">選擇年／月／日</span>
+      <span className="sr-only">Select date</span>
       <input
         suppressHydrationWarning
         type="date"

@@ -43,7 +43,7 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
     };
   }, []);
 
-  const base = "rounded-md px-3 py-1.5 font-medium";
+  const base = "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 font-medium";
   const idle = "bg-white/15 hover:bg-white/25";
   const active = "bg-white/30 font-semibold";
 
@@ -61,9 +61,9 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
               href="/"
               className="text-2xl font-bold tracking-tight sm:text-3xl hover:opacity-90"
             >
-              Beyond Math 系統化
+              Beyond Math Management
             </Link>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto text-sm whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <Link
             href="/daily-time-table"
             className={`${base} ${highlight === "dashboard" ? active : idle}`}
@@ -74,7 +74,7 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
             href="/regular-class-timetable"
             className={`${base} ${idle}`}
           >
-            恆常班時間表
+            Regular Class Timetable
           </Link>
           <Link
             href="/students"
@@ -83,14 +83,14 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
             Students
           </Link>
           <Link href="/students-lesson-time-fee-record" className={`${base} ${idle}`}>
-            學生上課時間及學費記錄
+            Student Lesson Time & Fee Records
           </Link>
           <div className="relative group">
             <Link
               href="/rooms"
               className={`${base} ${highlight === "room" ? active : idle} inline-flex items-center gap-0.5`}
             >
-              Room
+              Rooms
               <span className="ml-0.5 text-[10px] opacity-80">▼</span>
             </Link>
             <div className="pointer-events-none invisible absolute left-0 top-full z-50 pt-1 opacity-0 transition group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100">
@@ -111,7 +111,7 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
             href="/tutor"
             className={`${base} ${highlight === "reports" ? active : idle}`}
           >
-            Tutor
+            Tutors
           </Link>
               <Link href="/tutor-monthly-lesson-record" className={`${base} ${idle}`}>
                 Tutor Monthly Lesson Record

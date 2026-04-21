@@ -368,14 +368,14 @@ export default function RoomScheduleTable({
           儲存失敗：{saveError}
         </p>
       ) : null}
-      <div className="overflow-x-auto rounded-xl border border-slate-200">
+      <div className="max-h-[70vh] overflow-auto rounded-xl border border-slate-200">
         <table className="min-w-[960px] w-full border-collapse text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-600">
-              <th className="whitespace-nowrap px-3 py-2">學號</th>
-              <th className="whitespace-nowrap px-3 py-2">姓名</th>
-              <th className="whitespace-nowrap px-3 py-2">年級</th>
-              <th className="whitespace-nowrap px-3 py-2">出席</th>
+              <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-3 py-2">學號</th>
+              <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-3 py-2">姓名</th>
+              <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-3 py-2">年級</th>
+              <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-3 py-2">出席</th>
               <RoomSortableHeader label="日期" columnKey="dateIso" sortConfig={sortConfig} setSortConfig={setSortConfig} />
               <RoomSortableHeader label="星期" columnKey="weekday" sortConfig={sortConfig} setSortConfig={setSortConfig} />
               <RoomSortableHeader label="時間" columnKey="sortTime" sortConfig={sortConfig} setSortConfig={setSortConfig} />
@@ -516,7 +516,7 @@ type RoomSortableHeaderProps = {
 function RoomSortableHeader({ label, columnKey, sortConfig, setSortConfig }: RoomSortableHeaderProps) {
   const selectedDirection = sortConfig?.key === columnKey ? sortConfig.direction : "";
   return (
-    <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-bold tracking-wider text-slate-600">
+    <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-3 py-2 text-left text-xs font-bold tracking-wider text-slate-600">
       <div className="flex items-center gap-1.5 whitespace-nowrap">
         <span className="whitespace-nowrap">{label}</span>
         <select

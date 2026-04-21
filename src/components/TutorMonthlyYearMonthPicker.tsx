@@ -28,7 +28,7 @@ export default function TutorMonthlyYearMonthPicker({ tutorId, year, month }: Pr
 
   return (
     <label className="inline-flex items-center gap-2">
-      <span className="sr-only">選擇年／月</span>
+      <span className="sr-only">Select year and month</span>
       <input
         suppressHydrationWarning
         type="month"

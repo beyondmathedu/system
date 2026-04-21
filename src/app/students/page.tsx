@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import AppTopNav from "@/components/AppTopNav";
@@ -61,6 +61,11 @@ export default function StudentsPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [dataError, setDataError] = useState("");
+
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomScrollRef = useRef<HTMLDivElement | null>(null);
+  const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
+  const [bottomScrollClientWidth, setBottomScrollClientWidth] = useState(0);
 
   const filteredStudents = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -141,7 +146,7 @@ export default function StudentsPage() {
       .order("id", { ascending: true });
 
     if (error) {
-      setDataError("讀取學生資料失敗，請確認 Supabase 設定與資料表。");
+      setDataError("Failed to load student records. Please check your Supabase configuration and tables.");
       setIsLoading(false);
       return;
     }
@@ -162,6 +167,46 @@ export default function StudentsPage() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    const tableEl = tableScrollRef.current;
+    const bottomEl = bottomScrollRef.current;
+    if (!tableEl || !bottomEl) return;
+
+    let syncing = false;
+
+    const updateMetrics = () => {
+      setBottomScrollWidth(tableEl.scrollWidth);
+      setBottomScrollClientWidth(tableEl.clientWidth);
+    };
+
+    const onTableScroll = () => {
+      if (syncing) return;
+      syncing = true;
+      bottomEl.scrollLeft = tableEl.scrollLeft;
+      syncing = false;
+    };
+
+    const onBottomScroll = () => {
+      if (syncing) return;
+      syncing = true;
+      tableEl.scrollLeft = bottomEl.scrollLeft;
+      syncing = false;
+    };
+
+    updateMetrics();
+    tableEl.addEventListener("scroll", onTableScroll, { passive: true });
+    bottomEl.addEventListener("scroll", onBottomScroll, { passive: true });
+
+    const ro = new ResizeObserver(() => updateMetrics());
+    ro.observe(tableEl);
+
+    return () => {
+      tableEl.removeEventListener("scroll", onTableScroll);
+      bottomEl.removeEventListener("scroll", onBottomScroll);
+      ro.disconnect();
+    };
+  }, [sortedStudents.length]);
+
   const onFieldChange = (field: keyof StudentForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
@@ -180,7 +225,7 @@ export default function StudentsPage() {
         .eq("id", editingId);
 
       if (error) {
-      setFormError(`儲存編輯失敗：${error.message}`);
+        setFormError(`Failed to save changes: ${error.message}`);
         return;
       }
 
@@ -196,7 +241,7 @@ export default function StudentsPage() {
       .insert([{ id: nextStudentId, ...mapFormToRow(form) }]);
 
     if (error) {
-      setFormError(`新增學生失敗：${error.message}`);
+      setFormError(`Failed to add student: ${error.message}`);
       return;
     }
 
@@ -206,13 +251,13 @@ export default function StudentsPage() {
 
   const startEditSelected = () => {
     if (selectedIds.length !== 1) {
-      setSelectionError("請先只勾選 1 位學生再編輯。");
+      setSelectionError("Please select exactly 1 student to edit.");
       return;
     }
 
     const target = studentById.get(selectedIds[0]);
     if (!target) {
-      setSelectionError("找不到要編輯的學生資料。");
+      setSelectionError("Could not find the selected student record.");
       return;
     }
 
@@ -244,7 +289,7 @@ export default function StudentsPage() {
 
     const { error } = await supabase.from("students").delete().in("id", selectedIds);
     if (error) {
-      setSelectionError("刪除失敗，請稍後重試。");
+      setSelectionError("Delete failed. Please try again later.");
       setShowDeleteConfirm(false);
       return;
     }
@@ -266,64 +311,64 @@ export default function StudentsPage() {
 
         <div className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
-            <h1 className="text-2xl font-bold tracking-tight">All Student Info</h1>
+            <h1 className="text-2xl font-bold tracking-tight">All Student Information</h1>
             <p className="mt-1 text-sm text-blue-100">
-              填寫下方表單即可新增學生資料（單筆錄入）。
+              Fill in the form below to add a student (single entry).
             </p>
             <p className="mt-1 text-xs text-blue-100/90">
-              系統學號：{editingId ?? nextStudentId}（自動編號，從 00001 開始）
+              System ID: {editingId ?? nextStudentId} (auto-numbered, starting from 00001)
             </p>
           </div>
 
           <div className="p-6">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <InputField
-                label="學生姓名(中)"
+                label="Student name (Chinese)"
                 value={form.nameZh}
                 onChange={(v) => onFieldChange("nameZh", v)}
               />
               <InputField
-                label="學生姓名(英)"
+                label="Student name (English)"
                 value={form.nameEn}
                 onChange={(v) => onFieldChange("nameEn", v)}
               />
               <InputField
-                label="暱稱/英文名"
+                label="Nickname / English name"
                 value={form.nicknameEn}
                 onChange={(v) => onFieldChange("nicknameEn", v)}
               />
               <InputField
-                label="出生日期"
+                label="Date of birth"
                 type="date"
                 value={form.birthDate}
                 onChange={(v) => onFieldChange("birthDate", v)}
               />
               <InputField
-                label="聯絡電話"
+                label="Contact number"
                 value={form.studentPhone}
                 onChange={(v) => onFieldChange("studentPhone", v)}
               />
               <InputField
-                label="電子郵件"
+                label="Email"
                 type="email"
                 value={form.email}
                 onChange={(v) => onFieldChange("email", v)}
               />
               <InputField
-                label="就讀學校"
+                label="School"
                 value={form.school}
                 onChange={(v) => onFieldChange("school", v)}
               />
               <InputField
-                label="就讀年級"
+                label="Year group"
                 value={form.grade}
                 onChange={(v) => onFieldChange("grade", v)}
                 type="select"
-                options={["中一", "中二", "中三", "中四", "中五", "中六"]}
+                options={["F1", "F2", "F3", "F4", "F5", "F6"]}
               />
               <fieldset className="block">
                 <legend className="mb-1 block text-sm font-semibold text-slate-700">
-                  學校教授數學語言
+                  Language of maths instruction at school
                 </legend>
                 <div className="flex h-[42px] items-center gap-6 rounded-lg border border-slate-300 bg-white px-3">
                   <label className="inline-flex items-center gap-2 text-sm text-slate-800">
@@ -335,7 +380,7 @@ export default function StudentsPage() {
                       onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
                       className="h-4 w-4 accent-[#1d76c2]"
                     />
-                    中文
+                    Chinese
                   </label>
                   <label className="inline-flex items-center gap-2 text-sm text-slate-800">
                     <input
@@ -346,7 +391,7 @@ export default function StudentsPage() {
                       onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
                       className="h-4 w-4 accent-[#1d76c2]"
                     />
-                    英文
+                    English
                   </label>
                 </div>
               </fieldset>
@@ -359,7 +404,7 @@ export default function StudentsPage() {
                 className="rounded-lg px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
                 style={{ backgroundImage: PRIMARY_GRADIENT }}
               >
-                {editingId ? "儲存編輯" : "新增學生"}
+                {editingId ? "Save changes" : "Add student"}
               </button>
               {editingId && (
                 <button
@@ -371,7 +416,7 @@ export default function StudentsPage() {
                   }}
                   className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
-                  取消編輯
+                  Cancel
                 </button>
               )}
             </div>
@@ -388,20 +433,20 @@ export default function StudentsPage() {
                 htmlFor="student-search"
                 className="mb-2 block text-sm font-semibold text-slate-700"
               >
-                按學號 / 中文名 / 英文名 / 暱稱搜尋
+                Search by ID / Chinese name / English name / nickname
               </label>
               <input
                 id="student-search"
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="例如：00001、王小明、Tom"
+                placeholder="e.g. 00001, 王小明, Tom"
                 className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-0 transition focus:border-blue-500 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15)]"
               />
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               <div>
-                已選取：<span className="font-semibold text-slate-900">{selectedIds.length}</span> 位學生
+                Selected: <span className="font-semibold text-slate-900">{selectedIds.length}</span>
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
@@ -409,14 +454,14 @@ export default function StudentsPage() {
                   onClick={startEditSelected}
                   className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
-                  編輯
+                  Edit
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowDeleteConfirm(true)}
                   className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100"
                 >
-                  刪除
+                  Delete
                 </button>
               </div>
               {selectionError && (
@@ -430,11 +475,11 @@ export default function StudentsPage() {
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
+          <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto">
             <table className="min-w-[1500px] divide-y divide-slate-200">
               <thead className="bg-slate-50">
                 <tr className="divide-x divide-slate-200">
-                  <th className="whitespace-nowrap px-6 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                  <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-6 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
                     <input
                       type="checkbox"
                       checked={allVisibleSelected}
@@ -455,16 +500,22 @@ export default function StudentsPage() {
                       className="h-4 w-4 accent-[#1d76c2]"
                     />
                   </th>
-                  <SortableHeader label="學號" columnKey="id" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="學生姓名(中)" columnKey="nameZh" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="學生姓名(英)" columnKey="nameEn" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="暱稱/英文名" columnKey="nicknameEn" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="出生日期" columnKey="birthDate" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="聯絡電話" columnKey="studentPhone" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="電子郵件" columnKey="email" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="就讀學校" columnKey="school" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="就讀年級" columnKey="grade" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="學校教授數學語言" columnKey="mathLanguage" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader
+                    label="ID"
+                    columnKey="id"
+                    sortConfig={sortConfig}
+                    setSortConfig={setSortConfig}
+                    thClassName="w-[110px]"
+                  />
+                  <SortableHeader label="Chinese name" columnKey="nameZh" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader label="English name" columnKey="nameEn" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader label="Nickname / English name" columnKey="nicknameEn" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader label="Date of birth" columnKey="birthDate" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader label="Contact number" columnKey="studentPhone" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader label="Email" columnKey="email" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader label="School" columnKey="school" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader label="Year group" columnKey="grade" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  <SortableHeader label="Maths instruction" columnKey="mathLanguage" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -535,15 +586,27 @@ export default function StudentsPage() {
             </table>
           </div>
 
+          {bottomScrollWidth > bottomScrollClientWidth ? (
+            <div className="border-t border-slate-200 bg-slate-50 px-4 py-2">
+              <div
+                ref={bottomScrollRef}
+                className="h-3 overflow-x-auto overflow-y-hidden rounded bg-white ring-1 ring-slate-200"
+                aria-label="Horizontal scroll"
+              >
+                <div style={{ width: bottomScrollWidth, height: 1 }} />
+              </div>
+            </div>
+          ) : null}
+
           {isLoading ? (
             <div className="border-t border-slate-200 px-6 py-8 text-center text-sm text-slate-500">
-              讀取學生資料中...
+              Loading student records…
             </div>
           ) : sortedStudents.length === 0 ? (
             <div className="border-t border-slate-200 px-6 py-8 text-center text-sm text-slate-500">
               {students.length === 0
-                ? "目前沒有學生資料，請先在上方表單新增。"
-                : `找不到符合 "${query}" 的學生。`}
+                ? "No student records yet. Add one using the form above."
+                : `No students found matching "${query}".`}
             </div>
           ) : null}
         </div>
@@ -552,9 +615,9 @@ export default function StudentsPage() {
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
-            <h2 className="text-lg font-bold text-slate-900">確認刪除</h2>
+            <h2 className="text-lg font-bold text-slate-900">Confirm delete</h2>
             <p className="mt-2 text-sm text-slate-600">
-              你確定要刪除已選取的 {selectedIds.length} 位學生資料嗎？
+              Are you sure you want to delete the selected {selectedIds.length} student record(s)?
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -562,14 +625,14 @@ export default function StudentsPage() {
                 onClick={() => setShowDeleteConfirm(false)}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
-                取消
+                Cancel
               </button>
               <button
                 type="button"
                 onClick={deleteSelectedStudents}
                 className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700"
               >
-                刪除
+                Delete
               </button>
             </div>
           </div>
@@ -597,7 +660,7 @@ function InputField({ label, value, onChange, type = "text", options = [] }: Inp
           onChange={(event) => onChange(event.target.value)}
           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
         >
-          <option value="">請選擇</option>
+          <option value="">Select</option>
           {options.map((option) => (
             <option key={option} value={option}>
               {option}
@@ -626,17 +689,23 @@ type SortableHeaderProps = {
   columnKey: keyof Student;
   sortConfig: SortConfig;
   setSortConfig: (config: SortConfig) => void;
+  thClassName?: string;
 };
 
-function SortableHeader({ label, columnKey, sortConfig, setSortConfig }: SortableHeaderProps) {
+function SortableHeader({ label, columnKey, sortConfig, setSortConfig, thClassName }: SortableHeaderProps) {
   const selectedDirection = sortConfig?.key === columnKey ? sortConfig.direction : "";
 
   return (
-    <th className="whitespace-nowrap px-6 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+    <th
+      className={[
+        "sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-3 py-2 text-left text-[11px] font-bold tracking-wider text-slate-700",
+        thClassName ?? "",
+      ].join(" ")}
+    >
       <div className="flex items-center gap-1.5 whitespace-nowrap">
         <span className="whitespace-nowrap">{label}</span>
         <select
-          aria-label={`${label} 排序`}
+          aria-label={`Sort by ${label}`}
           value={selectedDirection}
           onChange={(event) => {
             const direction = event.target.value as SortDirection | "";
@@ -646,7 +715,7 @@ function SortableHeader({ label, columnKey, sortConfig, setSortConfig }: Sortabl
             }
             setSortConfig({ key: columnKey, direction });
           }}
-          className="rounded border border-slate-300 bg-white px-1 py-0.5 text-[11px] text-slate-700"
+          className="h-6 rounded border border-slate-300 bg-white px-1 py-0.5 text-[11px] text-slate-700"
         >
           <option value="">▽</option>
           <option value="asc">↑</option>

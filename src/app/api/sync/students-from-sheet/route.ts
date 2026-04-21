@@ -43,6 +43,21 @@ function normalizeBirthDate(v: unknown): string {
 }
 
 function normalizeRow(raw: SheetStudentRow) {
+  const gradeRaw = str(raw.grade);
+  const grade =
+    gradeRaw === "中一"
+      ? "F1"
+      : gradeRaw === "中二"
+        ? "F2"
+        : gradeRaw === "中三"
+          ? "F3"
+          : gradeRaw === "中四"
+            ? "F4"
+            : gradeRaw === "中五"
+              ? "F5"
+              : gradeRaw === "中六"
+                ? "F6"
+                : gradeRaw;
   return {
     id: str(raw.id).toUpperCase(),
     name_zh: str(raw.name_zh),
@@ -52,7 +67,7 @@ function normalizeRow(raw: SheetStudentRow) {
     student_phone: str(raw.student_phone),
     email: str(raw.email),
     school: str(raw.school),
-    grade: str(raw.grade),
+    grade,
     math_language: str(raw.math_language) || "英文",
   };
 }

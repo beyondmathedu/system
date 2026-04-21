@@ -236,6 +236,13 @@ export default function StudentsLessonTimeFeeRecordPage() {
 
   const sortedStudents = useMemo(() => {
     const gradeOrder: Record<string, number> = {
+      F1: 1,
+      F2: 2,
+      F3: 3,
+      F4: 4,
+      F5: 5,
+      F6: 6,
+      // legacy values (should be removed after DB migration)
       中一: 1,
       中二: 2,
       中三: 3,
@@ -247,7 +254,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     const getRec = (id: string) => recordsByStudentId[id];
 
     return [...students].sort((a, b) => {
-      // 默认：中一->中六，再按學號
+      // default: F1 -> F6, then by student ID
       if (!sortConfig) {
         const ga = gradeOrder[a.grade] ?? 999;
         const gb = gradeOrder[b.grade] ?? 999;
@@ -694,7 +701,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                 </div>
               ) : null}
 
-              <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200">
                 <table className="min-w-[1900px] w-full border-collapse text-left text-sm">
                   <thead className="bg-slate-50">
                     <tr className="border-b border-slate-200 text-xs font-bold uppercase tracking-wider text-slate-700">
@@ -705,13 +712,16 @@ export default function StudentsLessonTimeFeeRecordPage() {
                       <SortableHeader label="應交" columnKey="expected" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                       <SortableHeader label="已交" columnKey="submitted" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                       {Array.from({ length: L_COUNT }, (_, i) => (
-                        <th key={i} className="whitespace-nowrap px-2 py-3 text-center text-[11px]">
+                        <th
+                          key={i}
+                          className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-2 py-3 text-center text-[11px]"
+                        >
                           L{i + 1}
                         </th>
                       ))}
-                      <th className="whitespace-nowrap px-4 py-3 text-left">補堂數目</th>
-                      <th className="whitespace-nowrap px-4 py-3 text-left">Remarks</th>
-                      <th className="whitespace-nowrap px-4 py-3 text-left">月尾Send學費</th>
+                      <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left">補堂數目</th>
+                      <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left">Remarks</th>
+                      <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left">月尾Send學費</th>
                     </tr>
                   </thead>
 
@@ -881,7 +891,7 @@ function SortableHeader({ label, columnKey, sortConfig, setSortConfig }: Sortabl
   const selectedDirection = sortConfig?.key === columnKey ? sortConfig.direction : "";
 
   return (
-    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+    <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
       <div className="flex items-center gap-1.5 whitespace-nowrap">
         <span className="whitespace-nowrap">{label}</span>
         <select

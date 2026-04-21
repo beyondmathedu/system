@@ -260,6 +260,13 @@ export function filterRowsByRoomAndMonth(
 export const LESSON_TYPE_DISPLAY_PRIORITY: Record<string, number> = { 恆常: 1, 補堂: 2, 加堂: 3 };
 const TYPE_PRIORITY = LESSON_TYPE_DISPLAY_PRIORITY;
 const GRADE_PRIORITY: Record<string, number> = {
+  F1: 1,
+  F2: 2,
+  F3: 3,
+  F4: 4,
+  F5: 5,
+  F6: 6,
+  // legacy values (should be removed after DB migration)
   中一: 1,
   中二: 2,
   中三: 3,
