@@ -49,20 +49,19 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
 
   return (
     <>
-      <div className="mb-0 h-[82px] sm:h-[78px]" />
       <nav
-        className="fixed left-0 right-0 top-0 z-40"
+        className="fixed inset-x-0 top-0 z-[60] m-0"
         style={{ backgroundImage: PRIMARY_GRADIENT }}
       >
         <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
           <div className="overflow-visible">
             <div className="flex flex-col gap-3 px-6 py-4 text-white sm:flex-row sm:items-center sm:justify-between">
-            <Link
-              href="/"
-              className="text-2xl font-bold tracking-tight sm:text-3xl hover:opacity-90"
-            >
-              Beyond Math Management
-            </Link>
+            <div className="inline-flex items-center gap-3 whitespace-nowrap text-2xl font-bold tracking-tight sm:text-3xl">
+              <Link href="/home" className="inline-flex items-center hover:opacity-90" aria-label="Go to home">
+                <img src="/logo.png" alt="Beyond Math logo" className="h-9 w-9 rounded object-contain sm:h-10 sm:w-10" />
+              </Link>
+              <span>Beyond Math Management</span>
+            </div>
             <div className="flex flex-nowrap items-center gap-2 overflow-x-auto text-sm whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <Link
             href="/daily-time-table"
@@ -74,13 +73,13 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
             href="/regular-class-timetable"
             className={`${base} ${idle}`}
           >
-            Regular Class Timetable
+            Regular Timetable
           </Link>
           <Link
             href="/students"
             className={`${base} ${highlight === "students" ? active : idle}`}
           >
-            Students
+            Student Info
           </Link>
           <Link href="/students-lesson-time-fee-record" className={`${base} ${idle}`}>
             Student Lesson Time & Fee Records
@@ -114,13 +113,14 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
             Tutors
           </Link>
               <Link href="/tutor-monthly-lesson-record" className={`${base} ${idle}`}>
-                Tutor Monthly Lesson Record
+                Tutor Monthly Record
               </Link>
             </div>
           </div>
         </div>
       </div>
       </nav>
+      <div className="h-[56px] sm:h-[56px]" />
     </>
   );
 }

@@ -27,7 +27,7 @@ export default async function TutorMonthlyLessonRecordPage() {
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
-            <h1 className="text-2xl font-bold tracking-tight">Tutor Monthly Lesson Record</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Tutor Monthly Record</h1>
             <p className="mt-1 text-sm text-blue-100">
               選擇導師查看該月由課表展開的上堂明細。列表含 Active、Occasional、Inactive，排序與 Tutor 頁預設相同（Active → Occasional
               → Inactive，再依編號）。

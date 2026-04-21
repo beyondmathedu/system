@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import AppTopNav from "@/components/AppTopNav";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
+import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 
 type Student = {
   id: string;
@@ -35,8 +36,22 @@ type StudentRow = {
   grade: string | null;
   math_language: string | null;
 };
+type VisibilityRow = {
+  student_id: string | null;
+  mode: string | null;
+  effective_date: string | null;
+};
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
+const TEXTBOOK_PUBLISHER_OPTIONS = [
+  "Chung Tai",
+  "Ephhk",
+  "HKEP",
+  "Modern",
+  "Oxford",
+  "Pearson",
+  "Aristo",
+] as const;
 
 type StudentForm = Omit<Student, "id">;
 
@@ -58,6 +73,7 @@ export default function StudentsPage() {
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<StudentForm>(emptyForm);
   const [formError, setFormError] = useState("");
+  const [formNotice, setFormNotice] = useState("");
   const [selectionError, setSelectionError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
@@ -65,6 +81,10 @@ export default function StudentsPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [dataError, setDataError] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
+  const [manualInactiveEffectiveById, setManualInactiveEffectiveById] = useState<Map<string, string>>(
+    new Map(),
+  );
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomScrollRef = useRef<HTMLDivElement | null>(null);
@@ -80,12 +100,36 @@ export default function StudentsPage() {
 
   const filteredStudents = useMemo(() => {
     const keyword = query.trim().toLowerCase();
+    const todayHkIso = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Hong_Kong",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const year = Number(todayHkIso.slice(0, 4)) || new Date().getFullYear();
 
     if (!keyword) {
-      return students;
+      return students.filter((student) => {
+        if (statusFilter === "all") return true;
+        const eff = resolveStudentInactiveEffectiveDate({
+          grade: student.grade,
+          manualInactiveEffective: manualInactiveEffectiveById.get(student.id) ?? null,
+          year,
+        });
+        const isInactive = Boolean(eff && eff <= todayHkIso);
+        return statusFilter === "inactive" ? isInactive : !isInactive;
+      });
     }
 
     return students.filter((student) => {
+      const eff = resolveStudentInactiveEffectiveDate({
+        grade: student.grade,
+        manualInactiveEffective: manualInactiveEffectiveById.get(student.id) ?? null,
+        year,
+      });
+      const isInactive = Boolean(eff && eff <= todayHkIso);
+      if (statusFilter === "inactive" && !isInactive) return false;
+      if (statusFilter === "active" && isInactive) return false;
       return (
         student.id.toLowerCase().includes(keyword) ||
         normalizeStudentId(student.id).toLowerCase().includes(keyword) ||
@@ -96,7 +140,7 @@ export default function StudentsPage() {
         student.studentPhone.toLowerCase().includes(keyword)
       );
     });
-  }, [query, students]);
+  }, [manualInactiveEffectiveById, query, statusFilter, students]);
 
   const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
@@ -143,12 +187,12 @@ export default function StudentsPage() {
   async function loadStudents() {
     setIsLoading(true);
     setDataError("");
-    const { data, error } = await supabase
-      .from("students")
-      .select("*")
-      .order("id", { ascending: true });
+    const [{ data, error }, { data: visibilityRows, error: visibilityError }] = await Promise.all([
+      supabase.from("students").select("*").order("id", { ascending: true }),
+      supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
+    ]);
 
-    if (error) {
+    if (error || visibilityError) {
       setDataError("Failed to load student records. Please check your Supabase configuration and tables.");
       setIsLoading(false);
       return;
@@ -160,6 +204,14 @@ export default function StudentsPage() {
       const mappedIdSet = new Set(mapped.map((student) => student.id));
       return prev.filter((id) => mappedIdSet.has(id));
     });
+    const inactiveMap = new Map<string, string>();
+    for (const row of (visibilityRows ?? []) as VisibilityRow[]) {
+      const mode = String(row.mode ?? "").toLowerCase();
+      const sid = String(row.student_id ?? "");
+      const eff = String(row.effective_date ?? "");
+      if (mode === "inactive" && sid && eff) inactiveMap.set(sid, eff);
+    }
+    setManualInactiveEffectiveById(inactiveMap);
     setIsLoading(false);
   }
 
@@ -325,6 +377,7 @@ export default function StudentsPage() {
 
   const saveStudentAsync = async () => {
     setFormError("");
+    setFormNotice("");
 
     if (editingId) {
       const { error } = await supabase
@@ -341,6 +394,7 @@ export default function StudentsPage() {
       setEditingId(null);
       setForm(emptyForm);
       setSelectedIds([]);
+      setFormNotice("Student record updated successfully.");
       return;
     }
 
@@ -355,6 +409,7 @@ export default function StudentsPage() {
 
     await loadStudents();
     setForm(emptyForm);
+    setFormNotice("Student record added successfully.");
   };
 
   const startEditSelected = () => {
@@ -380,7 +435,10 @@ export default function StudentsPage() {
       studentPhone: target.studentPhone,
       email: target.email,
       school: target.school,
-      grade: target.grade,
+      textbookPublisher: TEXTBOOK_PUBLISHER_OPTIONS.includes(target.textbookPublisher as (typeof TEXTBOOK_PUBLISHER_OPTIONS)[number])
+        ? target.textbookPublisher
+        : "",
+      grade: formatGradeDisplay(target.grade),
       mathLanguage: target.mathLanguage,
     });
   };
@@ -394,6 +452,7 @@ export default function StudentsPage() {
       setShowDeleteConfirm(false);
       return;
     }
+    setFormNotice("");
 
     const { error } = await supabase.from("students").delete().in("id", selectedIds);
     if (error) {
@@ -403,9 +462,15 @@ export default function StudentsPage() {
     }
 
     await loadStudents();
+    const deletedCount = selectedIds.length;
     setSelectedIds([]);
     setSelectionError("");
     setShowDeleteConfirm(false);
+    setFormNotice(
+      deletedCount === 1
+        ? "Student record deleted successfully."
+        : `${deletedCount} student records deleted successfully.`,
+    );
     if (editingId && selectedIds.includes(editingId)) {
       setEditingId(null);
       setForm(emptyForm);
@@ -472,7 +537,7 @@ export default function StudentsPage() {
                 value={form.textbookPublisher}
                 onChange={(v) => onFieldChange("textbookPublisher", v)}
                 type="select"
-                options={["Chung Tai", "Ephhk", "HKEP", "Modern", "Oxford", "Pearson", "Aristo"]}
+                options={[...TEXTBOOK_PUBLISHER_OPTIONS]}
               />
               <InputField
                 label="Grade"
@@ -481,12 +546,12 @@ export default function StudentsPage() {
                 type="select"
                 options={["F.1", "F.2", "F.3", "F.4", "F.5", "F.6"]}
               />
-              <div className="md:col-span-2 xl:col-span-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between md:gap-4">
-                <fieldset className="block md:flex-1">
+              <div className="md:col-span-2 xl:col-span-3 flex flex-col gap-3 md:flex-row md:items-end md:gap-4">
+                <fieldset className="block md:basis-[45%] md:flex-none">
                   <legend className="mb-1 block text-sm font-semibold text-slate-700">
                     Maths instruction language
                   </legend>
-                  <div className="flex h-[42px] items-center gap-6 rounded-lg border border-slate-300 bg-white px-3">
+                  <div className="flex h-[42px] items-center gap-4 rounded-lg border border-slate-300 bg-white px-3">
                     <label className="inline-flex items-center gap-2 text-sm text-slate-800">
                       <input
                         type="radio"
@@ -512,14 +577,20 @@ export default function StudentsPage() {
                   </div>
                 </fieldset>
 
-                <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-3 md:w-auto md:pb-[2px]">
+                <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-3 md:basis-[55%] md:flex-none md:pr-[1%] md:pb-[2px]">
+                  {formNotice ? (
+                    <p className="mr-auto text-sm font-medium text-emerald-700">{formNotice}</p>
+                  ) : null}
                   <button
                     type="button"
                     onClick={saveStudent}
-                    className="rounded-lg px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+                    className="inline-flex items-center gap-2 rounded-lg px-6 py-2.5 text-base font-semibold text-white transition hover:opacity-90"
                     style={{ backgroundImage: PRIMARY_GRADIENT }}
                   >
-                    {editingId ? "Save changes" : "Add student record"}
+                    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                      <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
+                    </svg>
+                    <span>{editingId ? "Save changes" : "Add student record"}</span>
                   </button>
                   {editingId && (
                     <button
@@ -528,8 +599,9 @@ export default function StudentsPage() {
                         setEditingId(null);
                         setForm(emptyForm);
                         setFormError("");
+                        setFormNotice("");
                       }}
-                      className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      className="rounded-lg border border-slate-300 bg-white px-6 py-2.5 text-base font-semibold text-slate-700 transition hover:bg-slate-50"
                     >
                       Cancel
                     </button>
@@ -544,13 +616,18 @@ export default function StudentsPage() {
         </div>
 
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="md:col-span-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-center">
+            <div className="md:col-span-5">
               <label
                 htmlFor="student-search"
                 className="mb-2 block text-sm font-semibold text-slate-700"
               >
-                Search by ID / Chinese name / English name / nickname / Contact number / Textbook publisher
+                <span className="inline-flex items-center gap-2">
+                  <svg viewBox="0 0 20 20" className="h-4 w-4 text-slate-500" fill="currentColor" aria-hidden="true">
+                    <path d="M8.5 2.75a5.75 5.75 0 104.02 9.86l2.93 2.93a.75.75 0 101.06-1.06l-2.93-2.93A5.75 5.75 0 008.5 2.75zm-4.25 5.75a4.25 4.25 0 118.5 0 4.25 4.25 0 01-8.5 0z" />
+                  </svg>
+                  <span>Search by ID / Chinese name / English name / nickname / Contact number</span>
+                </span>
               </label>
               <input
                 id="student-search"
@@ -561,32 +638,79 @@ export default function StudentsPage() {
                 className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-0 transition focus:border-blue-500 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15)]"
               />
             </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              <div>
-                Selected: <span className="font-semibold text-slate-900">{selectedIds.length}</span>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
+            <div className="md:col-span-4">
+              <div className="flex items-center justify-start gap-3 overflow-x-auto md:justify-center">
                 <button
                   type="button"
-                  onClick={startEditSelected}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  onClick={() => setStatusFilter("all")}
+                  className={`whitespace-nowrap rounded-md border px-5 py-2.5 text-sm font-semibold transition ${
+                    statusFilter === "all"
+                      ? "border-[#1d76c2] bg-[#1d76c2] text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
                 >
-                  Edit
+                  All Students
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                  onClick={() => setStatusFilter("active")}
+                  className={`whitespace-nowrap rounded-md border px-5 py-2.5 text-sm font-semibold transition ${
+                    statusFilter === "active"
+                      ? "border-[#1d76c2] bg-[#1d76c2] text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
                 >
-                  Delete
+                  Active Students
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("inactive")}
+                  className={`whitespace-nowrap rounded-md border px-5 py-2.5 text-sm font-semibold transition ${
+                    statusFilter === "inactive"
+                      ? "border-[#1d76c2] bg-[#1d76c2] text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  Inactive Students
                 </button>
               </div>
-              {selectionError && (
-                <p className="mt-2 text-xs font-medium text-red-600">{selectionError}</p>
-              )}
-              {dataError && (
-                <p className="mt-2 text-xs font-medium text-red-600">{dataError}</p>
-              )}
+            </div>
+            <div className="md:col-span-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    Selected: <span className="font-semibold text-slate-900">{selectedIds.length}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={startEditSelected}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                      <path d="M14.69 2.86a2 2 0 112.83 2.83l-8.4 8.4a1 1 0 01-.46.26l-3.32.83a.75.75 0 01-.9-.9l.83-3.32a1 1 0 01.26-.46l8.4-8.4zM4.75 16.25a.75.75 0 100 1.5h10.5a.75.75 0 000-1.5H4.75z" />
+                    </svg>
+                    <span>Edit</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+                  >
+                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                      <path d="M7.5 2.75A1.75 1.75 0 005.75 4.5v.25H4a.75.75 0 000 1.5h.5l.73 9.1A2 2 0 007.22 17.2h5.56a2 2 0 001.99-1.85l.73-9.1H16a.75.75 0 000-1.5h-1.75V4.5A1.75 1.75 0 0012.5 2.75h-5zM12.75 4.5v.25h-5.5V4.5a.25.25 0 01.25-.25h5a.25.25 0 01.25.25z" />
+                    </svg>
+                    <span>Delete</span>
+                  </button>
+                  </div>
+                </div>
+                {selectionError && (
+                  <p className="mt-2 text-xs font-medium text-red-600">{selectionError}</p>
+                )}
+                {dataError && (
+                  <p className="mt-2 text-xs font-medium text-red-600">{dataError}</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -928,7 +1052,7 @@ function mapFormToRow(form: StudentForm) {
   const studentPhone = form.studentPhone.trim();
   const email = form.email.trim();
   const school = form.school.trim();
-  const textbookPublisher = form.textbookPublisher.trim();
+  const textbookPublisher = String(form.textbookPublisher ?? "").trim();
   const grade = normalizeGradeCode(form.grade);
   const mathLanguage = form.mathLanguage.trim();
   return {

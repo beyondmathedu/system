@@ -26,6 +26,7 @@ type Teacher = {
   name: string;
   nameZh: string;
   nameEn: string;
+  birthDate: string;
   status: TeacherStatus;
   colorHex: string;
 };
@@ -35,6 +36,7 @@ type TeacherRow = {
   name?: string;
   name_zh?: string;
   name_en?: string;
+  birth_date?: string | null;
   status?: string;
   color_hex?: string | null;
 };
@@ -108,6 +110,7 @@ function mapRowToTeacher(row: TeacherRow): Teacher {
     name: primary,
     nameZh,
     nameEn,
+    birthDate: (row.birth_date ?? "").trim(),
     status: TEACHER_STATUS_OPTIONS.includes(status as TeacherStatus)
       ? (status as TeacherStatus)
       : "工作中",
@@ -120,6 +123,7 @@ export default function TeacherPage() {
   const [query, setQuery] = useState("");
   const [teacherName, setTeacherName] = useState("");
   const [teacherNameEn, setTeacherNameEn] = useState("");
+  const [teacherBirthDate, setTeacherBirthDate] = useState("");
   const [teacherStatus, setTeacherStatus] = useState<TeacherStatus>("工作中");
   const [tutorColorHex, setTutorColorHex] = useState(DEFAULT_TUTOR_COLOR);
   const [hexTextDraft, setHexTextDraft] = useState(DEFAULT_TUTOR_COLOR);
@@ -144,7 +148,8 @@ export default function TeacherPage() {
         t.id.toLowerCase().includes(keyword) ||
         t.name.toLowerCase().includes(keyword) ||
         t.nameZh.toLowerCase().includes(keyword) ||
-        t.nameEn.toLowerCase().includes(keyword),
+        t.nameEn.toLowerCase().includes(keyword) ||
+        t.birthDate.toLowerCase().includes(keyword),
     );
   }, [query, teachers]);
 
@@ -208,7 +213,7 @@ export default function TeacherPage() {
     setDataError("");
     const { data, error } = await supabase
       .from("tutors")
-      .select("id, name, name_zh, name_en, status, color_hex")
+      .select("id, name, name_zh, name_en, birth_date, status, color_hex")
       .order("id");
     if (error) {
       setDataError(error.message);
@@ -251,6 +256,7 @@ export default function TeacherPage() {
     setEditingId(null);
     setTeacherName("");
     setTeacherNameEn("");
+    setTeacherBirthDate("");
     setTeacherStatus("工作中");
     setTutorColorHex(DEFAULT_TUTOR_COLOR);
     setHexTextDraft(DEFAULT_TUTOR_COLOR);
@@ -280,6 +286,7 @@ export default function TeacherPage() {
   async function onSubmitTeacher() {
     const nameZh = teacherName.trim();
     const nameEn = teacherNameEn.trim();
+    const birthDate = teacherBirthDate.trim();
     if (!nameZh && !nameEn) {
       setFormError("請輸入中文姓名或英文全名至少一項。");
       return;
@@ -303,6 +310,7 @@ export default function TeacherPage() {
           name,
           name_zh: nameZh,
           name_en: nameEn,
+          birth_date: birthDate || null,
           status: teacherStatus,
           color_hex: tutorColorHex,
         })
@@ -357,7 +365,15 @@ export default function TeacherPage() {
       const { error: insertErr } = await supabase
         .from("tutors")
         .insert([
-          { id: newId, name, name_zh: nameZh, name_en: nameEn, status: teacherStatus, color_hex: tutorColorHex },
+          {
+            id: newId,
+            name,
+            name_zh: nameZh,
+            name_en: nameEn,
+            birth_date: birthDate || null,
+            status: teacherStatus,
+            color_hex: tutorColorHex,
+          },
         ]);
 
       if (!insertErr) {
@@ -413,6 +429,7 @@ export default function TeacherPage() {
     setEditingId(target.id);
     setTeacherName(target.nameZh);
     setTeacherNameEn(target.nameEn);
+    setTeacherBirthDate(target.birthDate);
     setTeacherStatus(target.status);
     const hex = resolveTutorColorHex(target.colorHex);
     setTutorColorHex(hex);
@@ -485,6 +502,16 @@ export default function TeacherPage() {
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
                   placeholder="e.g. Samuel Chan"
                   autoComplete="name"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Date of birth</span>
+                <input
+                  type="date"
+                  value={teacherBirthDate}
+                  onChange={(event) => setTeacherBirthDate(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
                 />
               </label>
 
@@ -631,7 +658,7 @@ export default function TeacherPage() {
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜尋 ID／中文／英文全名（例如：T001、王小明、Samuel）"
+                placeholder="搜尋 ID／中文／英文全名／出生日期（例如：T001、王小明、Samuel、1990-01-01）"
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] sm:max-w-[520px]"
               />
               <div className="flex items-center gap-2">
@@ -682,6 +709,9 @@ export default function TeacherPage() {
                       sortConfig={sortConfig}
                       setSortConfig={setSortConfig}
                     />
+                    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">
+                      Date of birth
+                    </th>
                     <TeacherSortableHeader label="初中價" columnKey="junior" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                     <TeacherSortableHeader label="高中價" columnKey="senior" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                     <TeacherSortableHeader label="單人價" columnKey="single" sortConfig={sortConfig} setSortConfig={setSortConfig} />
@@ -711,6 +741,7 @@ export default function TeacherPage() {
                         <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-800">{teacher.id}</td>
                         <td className="px-4 py-3 text-sm text-slate-700">{teacher.nameZh || "—"}</td>
                         <td className="max-w-[220px] px-4 py-3 text-sm text-slate-700">{teacher.nameEn || "—"}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">{teacher.birthDate || "—"}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-sm tabular-nums text-slate-700">
                           {formatRateDisplay(teacher.junior ?? 0)}
                         </td>

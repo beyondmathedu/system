@@ -29,29 +29,7 @@ function LoginForm() {
     }
     let target = next && next.startsWith("/") ? next : "";
     if (target === "/") target = "";
-    if (!target) {
-      const {
-        data: { user },
-      } = await supabaseBrowser.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabaseBrowser
-          .from("user_profiles")
-          .select("role, student_id")
-          .eq("user_id", user.id)
-          .maybeSingle();
-        const role = String((profile as any)?.role ?? "").toLowerCase();
-        if (role === "student") {
-          const sid = String((profile as any)?.student_id ?? "").trim();
-          target = sid ? `/students/${encodeURIComponent(sid)}/lessons/2026` : "/daily-time-table";
-        } else if (role === "tutor") {
-          target = "/daily-time-table";
-        } else {
-          target = "/daily-time-table";
-        }
-      } else {
-        target = "/daily-time-table";
-      }
-    }
+    if (!target) target = "/daily-time-table";
     router.replace(target);
     router.refresh();
   }
@@ -64,7 +42,7 @@ function LoginForm() {
         </p>
         <h1 className="text-xl font-bold text-slate-900">登入</h1>
         <p className="mt-1 text-sm text-slate-600">
-          用於課堂排課、學生課堂記錄、房間使用與 Tutor Monthly Lesson Record 管理。
+          用於課堂排課、學生課堂記錄、房間使用與 Tutor Monthly Record 管理。
         </p>
         <form className="mt-5 space-y-4" onSubmit={onSubmit}>
           <div>
