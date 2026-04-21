@@ -14,31 +14,11 @@ export type TutorPayRates = {
 
 type Band = "junior" | "senior";
 
-const JUNIOR_ZH = new Set([
-  "中一",
-  "中二",
-  "中三",
-  "初一",
-  "初二",
-  "初三",
-]);
-const SENIOR_ZH = new Set([
-  "中四",
-  "中五",
-  "中六",
-  "高一",
-  "高二",
-  "高三",
-]);
-
-/** 初中／高中；無法辨識時視為初中（年級字串以 Set／regex 判斷，O(1) 字級別） */
+/** 初中／高中；無法辨識時視為初中（標準代碼 F1~F6） */
 export function classifyGradeBand(grade: string): Band {
   const raw = grade.trim();
   if (!raw) return "junior";
   const g = raw.replace(/\s+/g, "");
-
-  if (JUNIOR_ZH.has(g)) return "junior";
-  if (SENIOR_ZH.has(g)) return "senior";
 
   const compact = g.toUpperCase().replace(/\./g, "");
   const fm = /^F([1-6])$/i.exec(compact);
@@ -57,7 +37,7 @@ export function classifyGradeBand(grade: string): Band {
 
 /**
  * 年級權重（越大 = 年級越高），用於多人時段決定誰拿「第一席位」金額。
- * 小學 1–6 低於 中一至中六（7–12）；無法辨識時為 0（排最後）。
+ * 小學 1–6 低於 F1~F6（7–12）；無法辨識時為 0（排最後）。
  */
 export function gradeRank(grade: string): number {
   const raw = grade.trim();
@@ -71,21 +51,6 @@ export function gradeRank(grade: string): number {
     五: 5,
     六: 6,
   };
-
-  const zhung = /^中([一二三四五六])$/.exec(g);
-  if (zhung) return 6 + (zhDigit[zhung[1]] ?? 0);
-
-  const chu = /^初([一二三])$/.exec(g);
-  if (chu) {
-    const n = ({ 一: 1, 二: 2, 三: 3 } as const)[chu[1] as "一" | "二" | "三"];
-    return n ? 6 + n : 0;
-  }
-
-  const gou = /^高([一二三])$/.exec(g);
-  if (gou) {
-    const n = ({ 一: 4, 二: 5, 三: 6 } as const)[gou[1] as "一" | "二" | "三"];
-    return n ? 6 + n : 0;
-  }
 
   const siu = /^小([一二三四五六])$/.exec(g);
   if (siu) return zhDigit[siu[1]] ?? 0;

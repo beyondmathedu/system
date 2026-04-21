@@ -86,7 +86,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                 </h1>
                 <p className="mt-1 text-sm text-blue-100">{room.description}</p>
                 <p className="mt-2 text-xs text-blue-100/90">
-                  資料來自各學生課表與 Supabase；排序：日期 → 時間 → 類型（恆常／補堂／加堂）→ 年級（中六→中一）。
+                  資料來自各學生課表與 Supabase；排序：日期 → 時間 → 類型（恆常／補堂／加堂）→ 年級（F.6→F.1）。
                 </p>
               </div>
             </div>

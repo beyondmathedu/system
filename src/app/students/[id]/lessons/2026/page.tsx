@@ -10,6 +10,7 @@ import { readYmdParts } from "@/lib/intlFormatParts";
 import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
+import { formatGradeDisplay } from "@/lib/grade";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const ROOM_OPTIONS = ["B", "M前", "M後", "Hope", "Hope 2"];
@@ -923,7 +924,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
               </div>
               <div>
                 <p className="text-xs font-semibold tracking-wider text-slate-500">就讀年級</p>
-                <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.grade || "—"}</p>
+                <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(studentSummary.grade) || "—"}</p>
               </div>
               <div className="md:col-span-2">
                 <p className="text-xs font-semibold tracking-wider text-slate-500">就讀學校</p>

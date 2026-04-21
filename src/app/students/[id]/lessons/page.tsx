@@ -20,6 +20,7 @@ import AppTopNav from "@/components/AppTopNav";
 import ExamDateField from "./ExamDateField";
 import LessonScheduleGrid from "./LessonScheduleGrid";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
+import { formatGradeDisplay } from "@/lib/grade";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 
@@ -263,7 +264,7 @@ export default function StudentLessonsPage() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">就讀年級</p>
-                  <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.grade || "—"}</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(studentSummary.grade) || "—"}</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">就讀學校</p>

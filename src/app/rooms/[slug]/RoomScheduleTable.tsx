@@ -12,6 +12,7 @@ import {
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
 import { loadTutorVisibility } from "@/lib/tutorVisibility";
+import { formatGradeDisplay } from "@/lib/grade";
 
 type Props = {
   rows: RoomScheduleRow[];
@@ -406,7 +407,7 @@ export default function RoomScheduleTable({
                   })()}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-slate-800">{r.studentName}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.grade || "—"}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-700">{formatGradeDisplay(r.grade) || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-center text-slate-800">
                   <input
                     type="checkbox"

@@ -18,6 +18,7 @@ import {
 import { loadLatestTutorRates, loadMultiStudentFirstAmount } from "@/lib/payrollSettings";
 import { readYmParts } from "@/lib/intlFormatParts";
 import DownloadTutorMonthlyPdfButton from "@/components/DownloadTutorMonthlyPdfButton";
+import { formatGradeDisplay } from "@/lib/grade";
 
 export const dynamic = "force-dynamic";
 
@@ -360,7 +361,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                               <td className="border border-slate-200 px-2 py-2 text-right font-medium tabular-nums">
                                 {st.studentId ? st.amount : "—"}
                               </td>
-                              <td className="border border-slate-200 px-2 py-2">{st.grade || "—"}</td>
+                              <td className="border border-slate-200 px-2 py-2">{formatGradeDisplay(st.grade) || "—"}</td>
                               <td className="border border-slate-200 px-3 py-2">
                                 {st.studentId ? (
                                   <>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import AppTopNav from "@/components/AppTopNav";
 import { normalizeStudentId } from "@/lib/studentId";
+import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 
 type Student = {
   id: string;
@@ -15,6 +16,7 @@ type Student = {
   studentPhone: string;
   email: string;
   school: string;
+  textbookPublisher: string;
   grade: string;
   mathLanguage: string;
 };
@@ -29,6 +31,7 @@ type StudentRow = {
   student_phone: string | null;
   email: string | null;
   school: string | null;
+  textbook_publisher: string | null;
   grade: string | null;
   math_language: string | null;
 };
@@ -45,8 +48,9 @@ const emptyForm: StudentForm = {
   studentPhone: "",
   email: "",
   school: "",
+  textbookPublisher: "",
   grade: "",
-  mathLanguage: "英文",
+  mathLanguage: "English",
 };
 
 export default function StudentsPage() {
@@ -64,8 +68,15 @@ export default function StudentsPage() {
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomScrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomTrackRef = useRef<HTMLDivElement | null>(null);
+  const sideScrollRef = useRef<HTMLDivElement | null>(null);
+  const sideTrackRef = useRef<HTMLDivElement | null>(null);
   const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
   const [bottomScrollClientWidth, setBottomScrollClientWidth] = useState(0);
+  const [sideScrollHeight, setSideScrollHeight] = useState(0);
+  const [sideScrollClientHeight, setSideScrollClientHeight] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
 
   const filteredStudents = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -80,7 +91,9 @@ export default function StudentsPage() {
         normalizeStudentId(student.id).toLowerCase().includes(keyword) ||
         student.nameZh.toLowerCase().includes(keyword) ||
         student.nameEn.toLowerCase().includes(keyword) ||
-        student.nicknameEn.toLowerCase().includes(keyword)
+        student.nicknameEn.toLowerCase().includes(keyword) ||
+        student.textbookPublisher.toLowerCase().includes(keyword) ||
+        student.studentPhone.toLowerCase().includes(keyword)
       );
     });
   }, [query, students]);
@@ -89,14 +102,6 @@ export default function StudentsPage() {
 
   const sortedStudents = useMemo(() => {
     const copied = [...filteredStudents];
-    const gradeOrder: Record<string, number> = {
-      中一: 1,
-      中二: 2,
-      中三: 3,
-      中四: 4,
-      中五: 5,
-      中六: 6,
-    };
 
     if (!sortConfig) {
       copied.sort((a, b) => {
@@ -112,9 +117,7 @@ export default function StudentsPage() {
       const { key } = sortConfig;
 
       if (key === "grade") {
-        result =
-          (gradeOrder[a.grade] ?? Number.MAX_SAFE_INTEGER) -
-          (gradeOrder[b.grade] ?? Number.MAX_SAFE_INTEGER);
+        result = gradeRank(a.grade) - gradeRank(b.grade);
       } else if (key === "birthDate") {
         result = new Date(a.birthDate).getTime() - new Date(b.birthDate).getTime();
       } else {
@@ -170,42 +173,147 @@ export default function StudentsPage() {
   useEffect(() => {
     const tableEl = tableScrollRef.current;
     const bottomEl = bottomScrollRef.current;
-    if (!tableEl || !bottomEl) return;
+    const sideEl = sideScrollRef.current;
+    if (!tableEl) return;
 
     let syncing = false;
 
     const updateMetrics = () => {
       setBottomScrollWidth(tableEl.scrollWidth);
       setBottomScrollClientWidth(tableEl.clientWidth);
+      setSideScrollHeight(tableEl.scrollHeight);
+      setSideScrollClientHeight(tableEl.clientHeight);
     };
 
     const onTableScroll = () => {
       if (syncing) return;
       syncing = true;
-      bottomEl.scrollLeft = tableEl.scrollLeft;
-      syncing = false;
-    };
-
-    const onBottomScroll = () => {
-      if (syncing) return;
-      syncing = true;
-      tableEl.scrollLeft = bottomEl.scrollLeft;
+      setScrollLeft(tableEl.scrollLeft);
+      setScrollTop(tableEl.scrollTop);
       syncing = false;
     };
 
     updateMetrics();
+    setScrollLeft(tableEl.scrollLeft);
+    setScrollTop(tableEl.scrollTop);
     tableEl.addEventListener("scroll", onTableScroll, { passive: true });
-    bottomEl.addEventListener("scroll", onBottomScroll, { passive: true });
 
     const ro = new ResizeObserver(() => updateMetrics());
     ro.observe(tableEl);
 
     return () => {
       tableEl.removeEventListener("scroll", onTableScroll);
-      bottomEl.removeEventListener("scroll", onBottomScroll);
       ro.disconnect();
     };
   }, [sortedStudents.length]);
+
+  const bottomThumb = useMemo(() => {
+    const trackEl = bottomTrackRef.current;
+    const trackWidth = trackEl?.clientWidth ?? 0;
+    if (!trackWidth || !bottomScrollWidth || !bottomScrollClientWidth) return { size: 0, offset: 0 };
+    const ratio = bottomScrollClientWidth / bottomScrollWidth;
+    const size = Math.max(28, Math.floor(trackWidth * ratio));
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+    const offset = Math.round((scrollLeft / maxScroll) * maxOffset);
+    return { size, offset };
+  }, [bottomScrollClientWidth, bottomScrollWidth, scrollLeft]);
+
+  const sideThumb = useMemo(() => {
+    const trackEl = sideTrackRef.current;
+    const trackHeight = trackEl?.clientHeight ?? 0;
+    if (!trackHeight || !sideScrollHeight || !sideScrollClientHeight) return { size: 0, offset: 0 };
+    const ratio = sideScrollClientHeight / sideScrollHeight;
+    const size = Math.max(28, Math.floor(trackHeight * ratio));
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+    const offset = Math.round((scrollTop / maxScroll) * maxOffset);
+    return { size, offset };
+  }, [sideScrollClientHeight, sideScrollHeight, scrollTop]);
+
+  const onBottomTrackMouseDown = (e: React.MouseEvent) => {
+    const track = bottomTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const { size } = bottomThumb;
+    const trackWidth = rect.width;
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+
+    const targetOffset = Math.min(maxOffset, Math.max(0, x - size / 2));
+    tableEl.scrollLeft = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
+  };
+
+  const onSideTrackMouseDown = (e: React.MouseEvent) => {
+    const track = sideTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const { size } = sideThumb;
+    const trackHeight = rect.height;
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+
+    const targetOffset = Math.min(maxOffset, Math.max(0, y - size / 2));
+    tableEl.scrollTop = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
+  };
+
+  const startDragBottomThumb = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const track = bottomTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const startX = e.clientX;
+    const startOffset = bottomThumb.offset;
+    const size = bottomThumb.size;
+    const trackWidth = rect.width;
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dx));
+      tableEl.scrollLeft = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const startDragSideThumb = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const track = sideTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const startY = e.clientY;
+    const startOffset = sideThumb.offset;
+    const size = sideThumb.size;
+    const trackHeight = rect.height;
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+
+    const onMove = (ev: MouseEvent) => {
+      const dy = ev.clientY - startY;
+      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dy));
+      tableEl.scrollTop = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   const onFieldChange = (field: keyof StudentForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -333,7 +441,7 @@ export default function StudentsPage() {
                 onChange={(v) => onFieldChange("nameEn", v)}
               />
               <InputField
-                label="Nickname / English name"
+                label="Nickname"
                 value={form.nicknameEn}
                 onChange={(v) => onFieldChange("nicknameEn", v)}
               />
@@ -360,65 +468,74 @@ export default function StudentsPage() {
                 onChange={(v) => onFieldChange("school", v)}
               />
               <InputField
-                label="Year group"
+                label="Textbook publisher"
+                value={form.textbookPublisher}
+                onChange={(v) => onFieldChange("textbookPublisher", v)}
+                type="select"
+                options={["Chung Tai", "Ephhk", "HKEP", "Modern", "Oxford", "Pearson", "Aristo"]}
+              />
+              <InputField
+                label="Grade"
                 value={form.grade}
                 onChange={(v) => onFieldChange("grade", v)}
                 type="select"
-                options={["F1", "F2", "F3", "F4", "F5", "F6"]}
+                options={["F.1", "F.2", "F.3", "F.4", "F.5", "F.6"]}
               />
-              <fieldset className="block">
-                <legend className="mb-1 block text-sm font-semibold text-slate-700">
-                  Language of maths instruction at school
-                </legend>
-                <div className="flex h-[42px] items-center gap-6 rounded-lg border border-slate-300 bg-white px-3">
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-800">
-                    <input
-                      type="radio"
-                      name="mathLanguage"
-                      value="中文"
-                      checked={form.mathLanguage === "中文"}
-                      onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
-                      className="h-4 w-4 accent-[#1d76c2]"
-                    />
-                    Chinese
-                  </label>
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-800">
-                    <input
-                      type="radio"
-                      name="mathLanguage"
-                      value="英文"
-                      checked={form.mathLanguage === "英文"}
-                      onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
-                      className="h-4 w-4 accent-[#1d76c2]"
-                    />
-                    English
-                  </label>
-                </div>
-              </fieldset>
-            </div>
+              <div className="md:col-span-2 xl:col-span-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between md:gap-4">
+                <fieldset className="block md:flex-1">
+                  <legend className="mb-1 block text-sm font-semibold text-slate-700">
+                    Maths instruction language
+                  </legend>
+                  <div className="flex h-[42px] items-center gap-6 rounded-lg border border-slate-300 bg-white px-3">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                      <input
+                        type="radio"
+                        name="mathLanguage"
+                        value="Chinese"
+                        checked={form.mathLanguage === "Chinese"}
+                        onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
+                        className="h-4 w-4 accent-[#1d76c2]"
+                      />
+                      Chinese
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                      <input
+                        type="radio"
+                        name="mathLanguage"
+                        value="English"
+                        checked={form.mathLanguage === "English"}
+                        onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
+                        className="h-4 w-4 accent-[#1d76c2]"
+                      />
+                      English
+                    </label>
+                  </div>
+                </fieldset>
 
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={saveStudent}
-                className="rounded-lg px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
-                style={{ backgroundImage: PRIMARY_GRADIENT }}
-              >
-                {editingId ? "Save changes" : "Add student"}
-              </button>
-              {editingId && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingId(null);
-                    setForm(emptyForm);
-                    setFormError("");
-                  }}
-                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-              )}
+                <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-3 md:w-auto md:pb-[2px]">
+                  <button
+                    type="button"
+                    onClick={saveStudent}
+                    className="rounded-lg px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+                    style={{ backgroundImage: PRIMARY_GRADIENT }}
+                  >
+                    {editingId ? "Save changes" : "Add student record"}
+                  </button>
+                  {editingId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(null);
+                        setForm(emptyForm);
+                        setFormError("");
+                      }}
+                      className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
             {formError && (
               <p className="mt-2 text-sm font-medium text-red-600">{formError}</p>
@@ -433,14 +550,14 @@ export default function StudentsPage() {
                 htmlFor="student-search"
                 className="mb-2 block text-sm font-semibold text-slate-700"
               >
-                Search by ID / Chinese name / English name / nickname
+                Search by ID / Chinese name / English name / nickname / Contact number / Textbook publisher
               </label>
               <input
                 id="student-search"
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="e.g. 00001, 王小明, Tom"
+                placeholder="e.g. 00001, 王小明, Tom, 91234567, Oxford"
                 className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-0 transition focus:border-blue-500 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15)]"
               />
             </div>
@@ -475,125 +592,173 @@ export default function StudentsPage() {
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto">
-            <table className="min-w-[1500px] divide-y divide-slate-200">
-              <thead className="bg-slate-50">
-                <tr className="divide-x divide-slate-200">
-                  <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-6 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={(event) => {
-                        if (event.target.checked) {
-                          setSelectionError("");
-                          setSelectedIds((prev) => {
-                            const merged = new Set([...prev, ...sortedStudents.map((s) => s.id)]);
-                            return Array.from(merged);
-                          });
-                        } else {
-                          setSelectionError("");
-                          setSelectedIds((prev) =>
-                            prev.filter((id) => !visibleIdSet.has(id)),
-                          );
-                        }
-                      }}
-                      className="h-4 w-4 accent-[#1d76c2]"
+          <div className="flex">
+            <div
+              ref={tableScrollRef}
+              className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              <table className="min-w-[1500px] divide-y divide-slate-200">
+                <thead className="bg-slate-50">
+                  <tr className="divide-x divide-slate-200">
+                    <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-6 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={(event) => {
+                          if (event.target.checked) {
+                            setSelectionError("");
+                            setSelectedIds((prev) => {
+                              const merged = new Set([...prev, ...sortedStudents.map((s) => s.id)]);
+                              return Array.from(merged);
+                            });
+                          } else {
+                            setSelectionError("");
+                            setSelectedIds((prev) =>
+                              prev.filter((id) => !visibleIdSet.has(id)),
+                            );
+                          }
+                        }}
+                        className="h-4 w-4 accent-[#1d76c2]"
+                      />
+                    </th>
+                    <SortableHeader
+                      label="ID"
+                      columnKey="id"
+                      sortConfig={sortConfig}
+                      setSortConfig={setSortConfig}
+                      thClassName="w-[110px]"
                     />
-                  </th>
-                  <SortableHeader
-                    label="ID"
-                    columnKey="id"
-                    sortConfig={sortConfig}
-                    setSortConfig={setSortConfig}
-                    thClassName="w-[110px]"
+                    <SortableHeader label="Chinese name" columnKey="nameZh" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader
+                      label="English name"
+                      columnKey="nameEn"
+                      sortConfig={sortConfig}
+                      setSortConfig={setSortConfig}
+                      thClassName="w-[170px]"
+                    />
+                    <SortableHeader label="Nickname" columnKey="nicknameEn" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader label="Date of birth" columnKey="birthDate" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader label="Contact number" columnKey="studentPhone" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader label="Email" columnKey="email" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader label="School" columnKey="school" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader label="Textbook publisher" columnKey="textbookPublisher" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader label="Grade" columnKey="grade" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader label="Maths instruction" columnKey="mathLanguage" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sortedStudents.map((student) => {
+                    const studentIdDisplay = normalizeStudentId(student.id);
+                    return (
+                      <tr
+                        key={student.id}
+                        className="divide-x divide-slate-100 bg-white hover:bg-slate-50"
+                      >
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={selectedIdSet.has(student.id)}
+                            onChange={(event) => {
+                              if (event.target.checked) {
+                                setSelectionError("");
+                                setSelectedIds((prev) => [...prev, student.id]);
+                              } else {
+                                setSelectionError("");
+                                setSelectedIds((prev) => prev.filter((id) => id !== student.id));
+                              }
+                            }}
+                            className="h-4 w-4 accent-[#1d76c2]"
+                          />
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">
+                          <Link
+                            href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons`}
+                            className="text-[#1d76c2] hover:underline"
+                          >
+                            {studentIdDisplay}
+                          </Link>
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          {student.nameZh}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-700 align-top">
+                          <span className="inline-block max-w-[20ch] break-words whitespace-normal leading-5">
+                            {student.nameEn}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          {student.nicknameEn}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          {student.birthDate}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-700 align-top">
+                          <span className="inline-block max-w-[9ch] break-all whitespace-normal leading-5">
+                            {student.studentPhone}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          {student.email}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          {student.school}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          {student.textbookPublisher}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          {formatGradeDisplay(student.grade)}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                          {student.mathLanguage}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {sideScrollHeight > sideScrollClientHeight ? (
+              <div className="border-l border-slate-200 bg-slate-50 px-2 py-2">
+                <div
+                  ref={sideScrollRef}
+                  className="sr-only"
+                  aria-hidden
+                />
+                <div
+                  ref={sideTrackRef}
+                  role="scrollbar"
+                  aria-label="Vertical scrollbar"
+                  className="relative w-2.5 select-none rounded bg-white ring-1 ring-slate-200"
+                  style={{ height: "calc(70vh - 16px)" }}
+                  onMouseDown={onSideTrackMouseDown}
+                >
+                  <div
+                    className="absolute left-0 right-0 rounded bg-slate-400/80 hover:bg-slate-500"
+                    style={{ height: sideThumb.size, transform: `translateY(${sideThumb.offset}px)` }}
+                    onMouseDown={startDragSideThumb}
                   />
-                  <SortableHeader label="Chinese name" columnKey="nameZh" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="English name" columnKey="nameEn" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="Nickname / English name" columnKey="nicknameEn" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="Date of birth" columnKey="birthDate" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="Contact number" columnKey="studentPhone" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="Email" columnKey="email" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="School" columnKey="school" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="Year group" columnKey="grade" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                  <SortableHeader label="Maths instruction" columnKey="mathLanguage" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {sortedStudents.map((student) => {
-                  const studentIdDisplay = normalizeStudentId(student.id);
-                  return (
-                    <tr
-                      key={student.id}
-                      className="divide-x divide-slate-100 bg-white hover:bg-slate-50"
-                    >
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={selectedIdSet.has(student.id)}
-                          onChange={(event) => {
-                            if (event.target.checked) {
-                              setSelectionError("");
-                              setSelectedIds((prev) => [...prev, student.id]);
-                            } else {
-                              setSelectionError("");
-                              setSelectedIds((prev) => prev.filter((id) => id !== student.id));
-                            }
-                          }}
-                          className="h-4 w-4 accent-[#1d76c2]"
-                        />
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">
-                        <Link
-                          href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons`}
-                          className="text-[#1d76c2] hover:underline"
-                        >
-                          {studentIdDisplay}
-                        </Link>
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        {student.nameZh}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        {student.nameEn}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        {student.nicknameEn}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        {student.birthDate}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-slate-700 align-top">
-                        <span className="inline-block max-w-[9ch] break-all whitespace-normal leading-5">
-                          {student.studentPhone}
-                        </span>
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        {student.email}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        {student.school}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        {student.grade}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
-                        {student.mathLanguage}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {bottomScrollWidth > bottomScrollClientWidth ? (
             <div className="border-t border-slate-200 bg-slate-50 px-4 py-2">
+              <div ref={bottomScrollRef} className="sr-only" aria-hidden />
               <div
-                ref={bottomScrollRef}
-                className="h-3 overflow-x-auto overflow-y-hidden rounded bg-white ring-1 ring-slate-200"
-                aria-label="Horizontal scroll"
+                ref={bottomTrackRef}
+                role="scrollbar"
+                aria-label="Horizontal scrollbar"
+                className="relative h-2.5 select-none rounded bg-white ring-1 ring-slate-200"
+                onMouseDown={onBottomTrackMouseDown}
               >
-                <div style={{ width: bottomScrollWidth, height: 1 }} />
+                <div
+                  className="absolute bottom-0 top-0 rounded bg-slate-400/80 hover:bg-slate-500"
+                  style={{ width: bottomThumb.size, transform: `translateX(${bottomThumb.offset}px)` }}
+                  onMouseDown={startDragBottomThumb}
+                />
               </div>
             </div>
           ) : null}
@@ -749,8 +914,9 @@ function mapRowToStudent(row: StudentRow): Student {
     studentPhone: row.student_phone ?? "",
     email: row.email ?? "",
     school: row.school ?? "",
-    grade: row.grade ?? "",
-    mathLanguage: row.math_language ?? "英文",
+    textbookPublisher: row.textbook_publisher ?? "",
+    grade: normalizeGradeCode(row.grade),
+    mathLanguage: row.math_language ?? "English",
   };
 }
 
@@ -762,7 +928,8 @@ function mapFormToRow(form: StudentForm) {
   const studentPhone = form.studentPhone.trim();
   const email = form.email.trim();
   const school = form.school.trim();
-  const grade = form.grade.trim();
+  const textbookPublisher = form.textbookPublisher.trim();
+  const grade = normalizeGradeCode(form.grade);
   const mathLanguage = form.mathLanguage.trim();
   return {
     name_zh: nameZh ? nameZh : null,
@@ -772,6 +939,7 @@ function mapFormToRow(form: StudentForm) {
     student_phone: studentPhone ? studentPhone : null,
     email: email ? email : null,
     school: school ? school : null,
+    textbook_publisher: textbookPublisher ? textbookPublisher : null,
     grade: grade ? grade : null,
     math_language: mathLanguage ? mathLanguage : null,
   };

@@ -13,7 +13,6 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -55,26 +54,6 @@ function LoginForm() {
     }
     router.replace(target);
     router.refresh();
-  }
-
-  async function onForgotPassword() {
-    setError("");
-    setNotice("");
-    const mail = email.trim();
-    if (!mail) {
-      setError("請先輸入 Email，再按忘記密碼。");
-      return;
-    }
-    setLoading(true);
-    const { error: resetErr } = await supabaseBrowser.auth.resetPasswordForEmail(mail, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    setLoading(false);
-    if (resetErr) {
-      setError(resetErr.message || "無法發送重設密碼郵件");
-      return;
-    }
-    setNotice("已發送重設密碼郵件，請到信箱按連結。");
   }
 
   return (
@@ -131,21 +110,12 @@ function LoginForm() {
             </div>
           </div>
           {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-          {notice ? <p className="text-sm text-emerald-700">{notice}</p> : null}
           <button
             type="submit"
             disabled={loading}
             className="w-full rounded-lg bg-[#1d76c2] px-4 py-2 font-semibold text-white hover:bg-[#165f9d] disabled:opacity-60"
           >
             {loading ? "登入中..." : "登入"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void onForgotPassword()}
-            disabled={loading}
-            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            忘記密碼
           </button>
         </form>
       </div>

@@ -10,6 +10,7 @@ import {
 } from "@/lib/dayTimetableGrid";
 import { deleteTimetableDayRemark, upsertTimetableDayRemark } from "@/lib/studentLessonStorage";
 import { normalizeStudentId } from "@/lib/studentId";
+import { formatGradeDisplay } from "@/lib/grade";
 
 const TD_BASE = "h-9 border border-slate-300 px-2 py-1 text-sm text-slate-800";
 const TD_BASE_WIDE = "h-9 border border-slate-300 px-3 py-1 text-sm text-slate-700";
@@ -265,7 +266,7 @@ export default function DayTimetableTable({
                               )}
                             </td>
                             <td className={`${gradeSurf.className} w-16 ${noGridCls}`} style={gradeSurf.style}>
-                              {item?.grade ?? ""}
+                              {formatGradeDisplay(item?.grade ?? "")}
                             </td>
                             <td className={`${examSurf.className} w-28 ${noGridCls}`} style={examSurf.style}>
                               {item ? formatExamDateSlashed(examById[item.studentId] ?? "") : ""}

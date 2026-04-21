@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { normalizeGradeCode } from "@/lib/grade";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -43,21 +44,7 @@ function normalizeBirthDate(v: unknown): string {
 }
 
 function normalizeRow(raw: SheetStudentRow) {
-  const gradeRaw = str(raw.grade);
-  const grade =
-    gradeRaw === "中一"
-      ? "F1"
-      : gradeRaw === "中二"
-        ? "F2"
-        : gradeRaw === "中三"
-          ? "F3"
-          : gradeRaw === "中四"
-            ? "F4"
-            : gradeRaw === "中五"
-              ? "F5"
-              : gradeRaw === "中六"
-                ? "F6"
-                : gradeRaw;
+  const grade = normalizeGradeCode(raw.grade == null ? "" : String(raw.grade));
   return {
     id: str(raw.id).toUpperCase(),
     name_zh: str(raw.name_zh),
@@ -68,7 +55,7 @@ function normalizeRow(raw: SheetStudentRow) {
     email: str(raw.email),
     school: str(raw.school),
     grade,
-    math_language: str(raw.math_language) || "英文",
+    math_language: str(raw.math_language) || "English",
   };
 }
 

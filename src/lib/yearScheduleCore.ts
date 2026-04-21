@@ -4,6 +4,7 @@
  */
 
 import { readYmdParts } from "@/lib/intlFormatParts";
+import { gradeRank } from "@/lib/grade";
 
 export type YearLessonRecord = {
   id?: string;
@@ -259,22 +260,6 @@ export function filterRowsByRoomAndMonth(
 /** 數字愈小愈前排（日課表、房間聚合等顯示順序） */
 export const LESSON_TYPE_DISPLAY_PRIORITY: Record<string, number> = { 恆常: 1, 補堂: 2, 加堂: 3 };
 const TYPE_PRIORITY = LESSON_TYPE_DISPLAY_PRIORITY;
-const GRADE_PRIORITY: Record<string, number> = {
-  F1: 1,
-  F2: 2,
-  F3: 3,
-  F4: 4,
-  F5: 5,
-  F6: 6,
-  // legacy values (should be removed after DB migration)
-  中一: 1,
-  中二: 2,
-  中三: 3,
-  中四: 4,
-  中五: 5,
-  中六: 6,
-};
-
 export function sortAggregatedRoomRows<
   T extends {
     dateIso: string;
@@ -290,8 +275,8 @@ export function sortAggregatedRoomRows<
     const pA = TYPE_PRIORITY[a.lessonType] ?? 9;
     const pB = TYPE_PRIORITY[b.lessonType] ?? 9;
     if (pA !== pB) return pA - pB;
-    const gA = GRADE_PRIORITY[a.grade] ?? 0;
-    const gB = GRADE_PRIORITY[b.grade] ?? 0;
+    const gA = gradeRank(a.grade);
+    const gB = gradeRank(b.grade);
     return gB - gA;
   });
   return copied;

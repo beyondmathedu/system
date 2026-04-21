@@ -16,6 +16,7 @@ import { readMonthPart, readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 import { normalizeStudentId } from "@/lib/studentId";
+import { formatGradeDisplay, gradeRank } from "@/lib/grade";
 
 type StudentRow = {
   id: string;
@@ -235,29 +236,13 @@ export default function StudentsLessonTimeFeeRecordPage() {
   }
 
   const sortedStudents = useMemo(() => {
-    const gradeOrder: Record<string, number> = {
-      F1: 1,
-      F2: 2,
-      F3: 3,
-      F4: 4,
-      F5: 5,
-      F6: 6,
-      // legacy values (should be removed after DB migration)
-      中一: 1,
-      中二: 2,
-      中三: 3,
-      中四: 4,
-      中五: 5,
-      中六: 6,
-    };
-
     const getRec = (id: string) => recordsByStudentId[id];
 
     return [...students].sort((a, b) => {
       // default: F1 -> F6, then by student ID
       if (!sortConfig) {
-        const ga = gradeOrder[a.grade] ?? 999;
-        const gb = gradeOrder[b.grade] ?? 999;
+        const ga = gradeRank(a.grade);
+        const gb = gradeRank(b.grade);
         if (ga !== gb) return ga - gb;
         return a.id.localeCompare(b.id);
       }
@@ -275,7 +260,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
           result = (a.name_zh ?? "").localeCompare(b.name_zh ?? "", "zh-Hant");
           break;
         case "grade":
-          result = (gradeOrder[a.grade] ?? 999) - (gradeOrder[b.grade] ?? 999);
+          result = gradeRank(a.grade) - gradeRank(b.grade);
           break;
         case "weekday":
           result = (ra?.weekday ?? "").localeCompare(rb?.weekday ?? "", "zh-Hant");
@@ -824,7 +809,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
         )}
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700">
-        {student.grade || "—"}
+        {formatGradeDisplay(student.grade) || "—"}
       </td>
 
       <td className="px-2 py-3 text-center">
