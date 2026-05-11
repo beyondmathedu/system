@@ -1,15 +1,25 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { FALLBACK_ROOM_NAV_LINKS, type RoomNavItem } from "@/lib/roomConstants";
 import { supabase } from "@/lib/supabase";
 
-export type HighlightKey = "dashboard" | "students" | "reports" | "rooms" | "room" | null;
+export type HighlightKey =
+  | "dashboard"
+  | "daily-timetable"
+  | "regular-timetable"
+  | "students"
+  | "reports"
+  | "rooms"
+  | "room"
+  | null;
 
 export default function AppTopNav({ highlight = null }: { highlight?: HighlightKey }) {
   const [roomLinks, setRoomLinks] = useState<RoomNavItem[]>(FALLBACK_ROOM_NAV_LINKS);
+  const pathname = usePathname();
 
   useEffect(() => {
     let mounted = true;
@@ -43,9 +53,22 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
     };
   }, []);
 
-  const base = "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 font-medium";
+  const base =
+    "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 font-medium transition active:bg-white/30 active:font-semibold";
   const idle = "bg-white/15 hover:bg-white/25";
   const active = "bg-white/30 font-semibold";
+  const isMatch = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+
+  const activeMap: Record<Exclude<HighlightKey, null>, boolean> = {
+    dashboard: pathname === "/home",
+    "daily-timetable": isMatch("/daily-time-table"),
+    "regular-timetable": isMatch("/regular-class-timetable"),
+    students: isMatch("/students") || isMatch("/students-lesson-time-fee-record"),
+    reports: isMatch("/tutor") || isMatch("/teacher") || isMatch("/tutor-monthly-lesson-record"),
+    rooms: isMatch("/rooms"),
+    room: isMatch("/rooms"),
+  };
+  const isActive = (key: Exclude<HighlightKey, null>) => activeMap[key] || highlight === key;
 
   return (
     <>
@@ -65,29 +88,33 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
             <div className="flex flex-nowrap items-center gap-2 overflow-x-auto overflow-y-hidden sm:overflow-visible text-sm whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <Link
             href="/daily-time-table"
-            className={`${base} ${highlight === "dashboard" ? active : idle}`}
+            className={`${base} ${isActive("daily-timetable") ? active : idle}`}
           >
             Daily Timetable
           </Link>
           <Link
             href="/regular-class-timetable"
-            className={`${base} ${idle}`}
+            className={`${base} ${isActive("regular-timetable") ? active : idle}`}
+            aria-current={isActive("regular-timetable") ? "page" : undefined}
           >
             Regular Timetable
           </Link>
           <Link
             href="/students"
-            className={`${base} ${highlight === "students" ? active : idle}`}
+            className={`${base} ${isActive("students") ? active : idle}`}
           >
             Student Info
           </Link>
-          <Link href="/students-lesson-time-fee-record" className={`${base} ${idle}`}>
+          <Link
+            href="/students-lesson-time-fee-record"
+            className={`${base} ${isMatch("/students-lesson-time-fee-record") ? active : idle}`}
+          >
             Student Lesson Time & Fee Records
           </Link>
           <div className="relative group">
             <Link
               href="/rooms"
-              className={`${base} ${highlight === "room" ? active : idle} inline-flex items-center gap-0.5`}
+              className={`${base} ${isActive("room") ? active : idle} inline-flex items-center gap-0.5`}
             >
               Rooms
               <span className="ml-0.5 text-[10px] opacity-80">▼</span>
@@ -108,11 +135,14 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
           </div>
           <Link
             href="/tutor"
-            className={`${base} ${highlight === "reports" ? active : idle}`}
+            className={`${base} ${isActive("reports") ? active : idle}`}
           >
             Tutors
           </Link>
-              <Link href="/tutor-monthly-lesson-record" className={`${base} ${idle}`}>
+              <Link
+                href="/tutor-monthly-lesson-record"
+                className={`${base} ${isMatch("/tutor-monthly-lesson-record") ? active : idle}`}
+              >
                 Tutor Monthly Record
               </Link>
             </div>

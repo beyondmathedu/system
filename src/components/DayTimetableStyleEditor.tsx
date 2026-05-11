@@ -85,7 +85,7 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
         </button>
       </div>
       <p className="mt-1 text-xs text-slate-600">{te.intro}</p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {field(
           te.rescheduleBg,
           "",
@@ -101,13 +101,13 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
               onChange={(e) =>
                 setSettings((p) => ({ ...p, rescheduleCellBgHex: normalizeHexInput(e.target.value) }))
               }
-              className="h-9 w-14 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+              className="h-9 w-10 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
             />
             <input
               type="text"
               value={settings.rescheduleCellBgHex}
               onChange={(e) => setSettings((p) => ({ ...p, rescheduleCellBgHex: e.target.value }))}
-              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs"
+              className="w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs"
               spellCheck={false}
             />
           </div>,
@@ -125,13 +125,13 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
               onChange={(e) =>
                 setSettings((p) => ({ ...p, extraCellBgHex: normalizeHexInput(e.target.value) }))
               }
-              className="h-9 w-14 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+              className="h-9 w-10 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
             />
             <input
               type="text"
               value={settings.extraCellBgHex}
               onChange={(e) => setSettings((p) => ({ ...p, extraCellBgHex: e.target.value }))}
-              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs"
+              className="w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs"
               spellCheck={false}
             />
           </div>,
@@ -151,13 +151,13 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
               onChange={(e) =>
                 setSettings((p) => ({ ...p, feeUnpaidStripeHex: normalizeHexInput(e.target.value) }))
               }
-              className="h-9 w-14 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+              className="h-9 w-10 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
             />
             <input
               type="text"
               value={settings.feeUnpaidStripeHex}
               onChange={(e) => setSettings((p) => ({ ...p, feeUnpaidStripeHex: e.target.value }))}
-              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs"
+              className="w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs"
               spellCheck={false}
             />
           </div>,
@@ -177,30 +177,16 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
               onChange={(e) =>
                 setSettings((p) => ({ ...p, feeArrearsStripeHex: normalizeHexInput(e.target.value) }))
               }
-              className="h-9 w-14 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+              className="h-9 w-10 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
             />
             <input
               type="text"
               value={settings.feeArrearsStripeHex}
               onChange={(e) => setSettings((p) => ({ ...p, feeArrearsStripeHex: e.target.value }))}
-              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs"
+              className="w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs"
               spellCheck={false}
             />
           </div>,
-        )}
-        {field(
-          te.lookback,
-          te.lookbackHint,
-          <input
-            type="number"
-            min={2}
-            max={24}
-            value={settings.feeLookbackMonths}
-            onChange={(e) =>
-              setSettings((p) => ({ ...p, feeLookbackMonths: Number(e.target.value) || p.feeLookbackMonths }))
-            }
-            className="w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
-          />,
         )}
         {field(
           te.threshold,

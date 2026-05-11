@@ -115,7 +115,7 @@ export const dayTimetableStyleEditorStrings = {
     lookback: "Fee lookback months (incl. current)",
     lookbackHint: "2–24",
     threshold: "Heavy unpaid threshold",
-    thresholdHint: "Unpaid months in window ≥ this",
+    thresholdHint: "Unpaid months ≥ this",
     save: "Save",
     saving: "Saving…",
     saved: "Saved.",

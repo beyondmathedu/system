@@ -38,14 +38,17 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="dashboard" />
+        <AppTopNav highlight="daily-timetable" />
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">{payload.titleDate} Daily Timetable</h1>
             <p className="mt-1 text-sm text-blue-100">
-              同一時段、同一房間多名學生時，顯示順序為：恆常 → 補堂 → 加堂（同類型依學號）。排課與課表內 Lesson Summary
-              同步顯示。考試日期欄取自各生在學生獨立課堂頁填寫的日期。恆常堂＝導師在 Tutor 頁顏色；補堂／加堂底色與學費色帶可在下方「課表顏色與學費標示」調整。
+              When multiple students share the same room and time slot, entries are ordered as: regular lessons
+              {" \u2192 "}rescheduled lessons{" \u2192 "}extra lessons (same type sorted by student ID). Lesson summaries are
+              synchronized with scheduling. Exam dates come from each student's lesson page. Regular lesson colors
+              follow Tutor settings; rescheduled/extra backgrounds and fee highlights can be changed below in
+              “Timetable colours & fee highlights”.
             </p>
           </div>
 
@@ -56,21 +59,21 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
                   href={`${base}?year=${prev.y}&month=${prev.m}&day=${prev.d}`}
                   className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  昨天
+                  Previous day
                 </Link>
-                <span className="text-slate-500">日期</span>
+                <span className="text-slate-500">Date</span>
                 <PageDatePicker basePath={base} year={year} month={month} day={day} />
                 <Link
                   href={`${base}?year=${next.y}&month=${next.m}&day=${next.d}`}
                   className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  明天
+                  Next day
                 </Link>
               </div>
               <div className="text-right text-xs text-slate-600">
-                <p>選擇年／月／日</p>
+                <p>Year / month / day</p>
                 <p className="mt-0.5 font-semibold text-slate-800">
-                  {year}年{String(month).padStart(2, "0")}月{String(day).padStart(2, "0")}日
+                  {year}-{String(month).padStart(2, "0")}-{String(day).padStart(2, "0")}
                 </p>
               </div>
             </div>
@@ -78,14 +81,17 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
 
           <div className="p-4 sm:p-6">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <DayTimetableStyleEditor initial={payload.timetableStyle} />
-              <div className="mb-3 mt-6 text-sm font-bold text-slate-700">每日課堂記錄</div>
+              <div className="mb-3 text-sm font-bold text-slate-700">Daily lesson records</div>
               <DayTimetableTable
                 key={payload.dateIso}
                 payload={payload}
-                emptyMessage="這一天沒有課堂。"
+                emptyMessage="No lessons on this day."
                 showPeriodSeparatorOnly
+                uiLocale="en"
               />
+              <div className="mt-6">
+                <DayTimetableStyleEditor initial={payload.timetableStyle} uiLocale="en" />
+              </div>
             </div>
           </div>
         </div>

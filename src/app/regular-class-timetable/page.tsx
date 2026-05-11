@@ -38,7 +38,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="dashboard" />
+        <AppTopNav highlight="regular-timetable" />
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
@@ -80,8 +80,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
 
           <div className="p-4 sm:p-6">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <DayTimetableStyleEditor initial={payload.timetableStyle} uiLocale="en" />
-              <div className="mb-3 mt-6 text-sm font-bold text-slate-700">Regular lessons (selected day)</div>
+              <div className="mb-3 text-sm font-bold text-slate-700">Regular lessons (selected day)</div>
               <DayTimetableTable
                 key={payload.dateIso}
                 payload={payload}
@@ -89,6 +88,9 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
                 showRegularCapacitySummary
                 uiLocale="en"
               />
+              <div className="mt-6">
+                <DayTimetableStyleEditor initial={payload.timetableStyle} uiLocale="en" />
+              </div>
             </div>
           </div>
         </div>
