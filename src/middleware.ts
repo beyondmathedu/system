@@ -21,10 +21,14 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  await supabase.auth.getUser();
+  // Refresh session from cookies without a round-trip to Auth (getUser hits the server every time).
+  // Server Components still call getUser() / profile where verification matters.
+  await supabase.auth.getSession();
   return response;
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|login|reset-password|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };

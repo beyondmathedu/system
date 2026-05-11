@@ -22,6 +22,10 @@ import { formatGradeDisplay } from "@/lib/grade";
 
 export const dynamic = "force-dynamic";
 
+/** 人工高於此金額時，MPF 導師顯示僱主供款（人工的 5%） */
+const MPF_RELEVANT_INCOME_THRESHOLD = 7100;
+const MPF_EMPLOYER_CONTRIBUTION_RATE = 0.05;
+
 function hkTodayYm() {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Hong_Kong",
@@ -105,6 +109,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
       time: string;
       hours: number;
       subtotal: number;
+      studentIdSet: Set<string>;
       students: Array<{ studentId: string; studentName: string; grade: string; amount: number }>;
     };
     const byKey = new Map<string, Group>();
@@ -120,6 +125,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           time: r.time,
           hours: r.hours,
           subtotal: 0,
+          studentIdSet: new Set([r.studentId]),
           students: [{ studentId: r.studentId, studentName: r.studentName, grade: r.grade, amount: 0 }],
         };
         byKey.set(groupKey, next);
@@ -127,7 +133,8 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
         continue;
       }
       // 同一時段若同一學生重複出現，只保留一次，且不重複計小計
-      if (!found.students.some((st) => st.studentId === r.studentId)) {
+      if (!found.studentIdSet.has(r.studentId)) {
+        found.studentIdSet.add(r.studentId);
         found.students.push({ studentId: r.studentId, studentName: r.studentName, grade: r.grade, amount: 0 });
       }
     }
@@ -138,7 +145,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           .sort((a, b) => {
             const ra = gradeRank(a.grade);
             const rb = gradeRank(b.grade);
-            if (rb !== ra) return rb - ra;
+            if (ra !== rb) return ra - rb;
             return a.studentId.localeCompare(b.studentId);
           });
         if (sorted.length === 0) {
@@ -156,17 +163,26 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           g.students = sorted.map(({ band, ...rest }) => rest);
           g.subtotal = g.students.reduce((sum, st) => sum + (Number(st.amount) || 0), 0);
         }
+        g.studentIdSet.clear();
       }
     return ordered;
   })();
   const monthTotal = groupedRows.reduce((sum, g) => sum + g.subtotal, 0);
+  const showMpfEmployerLines =
+    entry.mpfEnabled && monthTotal > MPF_RELEVANT_INCOME_THRESHOLD;
+  const mpfEmployerAmount = showMpfEmployerLines
+    ? Math.round(monthTotal * MPF_EMPLOYER_CONTRIBUTION_RATE * 100) / 100
+    : 0;
+  const salaryPlusMpf = showMpfEmployerLines
+    ? Math.round((monthTotal + mpfEmployerAmount) * 100) / 100
+    : monthTotal;
   const monthHourTotal = Math.round(groupedRows.reduce((sum, g) => sum + (Number(g.hours) || 0), 0) * 100) / 100;
   const ratesMissing = rates.single === 0 && rates.junior === 0 && rates.senior === 0;
   const prev = shiftMonth(year, month, -1);
   const next = shiftMonth(year, month, 1);
   const base = `/tutor-monthly-lesson-record/${encodeURIComponent(tutorId)}`;
   const csvRows: Array<Array<string | number>> = [];
-  csvRows.push([entry.englishName, "Date", "Time", "Hour", "Subtotal", "Grade", "Student Name"]);
+  csvRows.push([entry.displayName, "Date", "Time", "Hour", "Subtotal", "Grade", "Student Name"]);
   let csvYearShown = false;
   for (let gi = 0; gi < groupedRows.length; gi++) {
     const g = groupedRows[gi];
@@ -176,7 +192,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
     for (let si = 0; si < students.length; si++) {
       const st = students[si];
       csvRows.push([
-        !csvYearShown ? `${year}年` : "",
+        !csvYearShown ? `${year}` : "",
         si === 0 && showDate ? csvDateText(g.dateIso) : "",
         si === 0 ? formatLessonTimeRangeLine(g.time, g.hours) ?? g.time : "",
         si === 0 ? g.hours : "",
@@ -189,6 +205,18 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
   }
   csvRows.push(["", "", "Total", monthHourTotal, "—", "", ""]);
   csvRows.push(["", "", "Monthly Salary", "—", monthTotal, "", ""]);
+  if (showMpfEmployerLines) {
+    csvRows.push([
+      "",
+      "",
+      "Employer MPF Contribution (5% of Relevant Income)",
+      "—",
+      mpfEmployerAmount,
+      "",
+      "",
+    ]);
+    csvRows.push(["", "", "Monthly Salary + Employer MPF Contribution", "—", salaryPlusMpf, "", ""]);
+  }
   csvRows.push(["", "", "", "", "", "", ""]);
   csvRows.push(["", "Beyond Math Education Centre Limited", "", "", "", "", ""]);
   csvRows.push(["", "", "", "", "", "", ""]);
@@ -197,7 +225,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
     "\uFEFF" + csvRows.map((r) => r.map((c) => toCsvCell(c)).join(",")).join("\r\n");
   const csvHref = `data:text/csv;charset=utf-8,${encodeURIComponent(csvContent)}`;
   const ym = `${year}-${String(month).padStart(2, "0")}`;
-  const tutorNamePart = `${entry.englishName || tutorId},${entry.displayName || tutorId}`.replace(
+  const tutorNamePart = `${entry.displayName || tutorId},${entry.englishName || tutorId}`.replace(
     /[\\/:*?"<>|]+/g,
     "_",
   );
@@ -224,12 +252,10 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <Link href="/tutor-monthly-lesson-record" className="text-blue-100 hover:text-white hover:underline">
-                ← 所有導師
+                ← All Tutors
               </Link>
             </div>
-            <h1 className="mt-2 text-2xl font-bold tracking-tight">
-              {entry.displayName} — Monthly Lesson Record
-            </h1>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight">{entry.displayName} — Monthly Lesson Record</h1>
             <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-blue-100">
               <span
                 className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${tutorNavStatusBadgeClass(entry.status)}`}
@@ -239,17 +265,19 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               <span className="font-mono text-blue-50">{entry.id}</span>
             </p>
             <p className="mt-2 text-sm text-blue-100">
-              {year} 年 {month} 月：由全校學生課表展開，導師欄位與您在 Tutor 頁的英文／中文／暱稱任一相符者會列入（不含「取消」堂數）。
+              {year}/{month}: expanded from all student schedules. Lessons are included when the tutor field matches
+              any of this tutor's English name / Chinese name / nickname on the Tutor page (excluding cancelled lessons).
             </p>
             <p className="mt-2 max-w-3xl text-xs leading-relaxed text-blue-100/95">
-              小計：同一日、課表「時間」相同＝同一時段。<strong>僅 1 位學生</strong>用本頁下方 Tutor 的<strong>單人價{" "}
-              {rates.single}</strong>；<strong>2 位或以上</strong>時，<strong>年級最高者</strong>＝
-              <strong>{multiStudentFirstAmount}</strong>（可在{" "}
+              Subtotal rule: same date + same schedule time = same timeslot. If there is <strong>1 student</strong>,
+              use the tutor <strong>Single Student Rate {rates.single}</strong>. If there are <strong>2 or more
+              students</strong>, the <strong>lowest-grade student</strong> uses
+              <strong> {multiStudentFirstAmount}</strong> (editable in{" "}
               <Link href="/tutor-monthly-lesson-record" className="underline hover:text-white">
-                Tutor Monthly 主頁
+                Tutor Monthly home
               </Link>{" "}
-              更改），其餘每位依年級為<strong>初中 {rates.junior}</strong>或<strong>高中 {rates.senior}</strong>
-              。年級無法辨識時當初中。時數可由時間區間推算，否則 1.5。
+              ). Others use <strong>Junior {rates.junior}</strong> or <strong>Senior {rates.senior}</strong> by
+              grade. Unrecognized grade defaults to Junior. Hours are inferred from time range; otherwise 1.5.
             </p>
           </div>
 
@@ -260,23 +288,23 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                   href={`${base}?year=${prev.y}&month=${prev.m}`}
                   className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  上一月
+                  Previous Month
                 </Link>
-                <span className="text-slate-500">年月</span>
+                <span className="text-slate-500">Year/Month</span>
                 <TutorMonthlyYearMonthPicker tutorId={tutorId} year={year} month={month} />
                 <Link
                   href={`${base}?year=${next.y}&month=${next.m}`}
                   className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  下一月
+                  Next Month
                 </Link>
               </div>
               <div className="text-right text-xs text-slate-600">
                 <p>
-                  共 {groupedRows.length} 節（{normalizedRowsForPay.length} 人次）
+                  {groupedRows.length} sessions ({normalizedRowsForPay.length} student-slots)
                 </p>
                 {normalizedRowsForPay.length > 0 ? (
-                  <p className="mt-0.5 font-semibold text-slate-800">本月小計 {monthTotal}</p>
+                  <p className="mt-0.5 font-semibold text-slate-800">Monthly subtotal {monthTotal}</p>
                 ) : null}
               </div>
             </div>
@@ -285,11 +313,12 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           <div className="p-4 sm:p-6">
             {ratesMissing ? (
               <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                此導師在「最新價格」中尚無紀錄：請到{" "}
+                No record found for this tutor in latest rates. Please go to the{" "}
                 <Link href="/tutor" className="font-medium text-[#1d76c2] hover:underline">
                   Tutor
                 </Link>{" "}
-                頁編輯並儲存<strong>初中價、高中價、單人價</strong>，小計才會正確。
+                page and save <strong>Junior Rate, Senior Rate, and Single Student Rate</strong> so subtotals can be
+                calculated correctly.
               </p>
             ) : null}
             {loadError ? (
@@ -305,7 +334,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               <table className="min-w-[1040px] w-full border-collapse text-sm">
                 <thead className="bg-slate-50 text-left text-slate-800">
                   <tr>
-                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">{entry.englishName}</th>
+                    <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">{entry.displayName}</th>
                     <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Date</th>
                     <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Time</th>
                     <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-2 py-2 text-right font-semibold">Hour</th>
@@ -321,7 +350,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                         colSpan={7}
                         className="border border-slate-200 px-4 py-8 text-center text-slate-500"
                       >
-                        這個月沒有符合此導師名稱的課堂紀錄。
+                        No lesson records matched this tutor for the selected month.
                       </td>
                     </tr>
                   ) : (
@@ -342,7 +371,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                                   rowSpan={totalStudentRows}
                                   className="border border-slate-200 px-3 py-2 align-top text-slate-700"
                                 >
-                                  {year}年
+                                  {year}
                                 </td>
                               ) : null}
                               {sIdx === 0 ? (
@@ -405,6 +434,36 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                       <td className="border border-slate-200 px-3 py-2" />
                       <td className="border border-slate-200 px-3 py-2" />
                     </tr>
+                    {showMpfEmployerLines ? (
+                      <>
+                        <tr className="bg-slate-50 font-semibold text-slate-900">
+                          <td className="border border-slate-200 px-3 py-2" />
+                          <td className="border border-slate-200 px-3 py-2" />
+                          <td className="border border-slate-200 px-3 py-2 text-right">
+                            Employer MPF Contribution (5% of Relevant Income)
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-right tabular-nums">—</td>
+                          <td className="border border-slate-200 px-2 py-2 text-right tabular-nums">
+                            {mpfEmployerAmount}
+                          </td>
+                          <td className="border border-slate-200 px-3 py-2" />
+                          <td className="border border-slate-200 px-3 py-2" />
+                        </tr>
+                        <tr className="bg-slate-50 font-semibold text-slate-900">
+                          <td className="border border-slate-200 px-3 py-2" />
+                          <td className="border border-slate-200 px-3 py-2" />
+                          <td className="border border-slate-200 px-3 py-2 text-right">
+                            Monthly Salary + Employer MPF Contribution
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-right tabular-nums">—</td>
+                          <td className="border border-slate-200 px-2 py-2 text-right tabular-nums">
+                            {salaryPlusMpf}
+                          </td>
+                          <td className="border border-slate-200 px-3 py-2" />
+                          <td className="border border-slate-200 px-3 py-2" />
+                        </tr>
+                      </>
+                    ) : null}
                     <tr className="bg-slate-50 text-slate-900">
                       <td className="border border-slate-200 px-3 py-2" />
                       <td colSpan={6} className="border border-slate-200 px-3 py-2" />

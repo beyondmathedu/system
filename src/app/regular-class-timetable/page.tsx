@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
+import DayTimetableStyleEditor from "@/components/DayTimetableStyleEditor";
 import DayTimetableTable from "@/components/DayTimetableTable";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
@@ -41,11 +42,12 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
-            <h1 className="text-2xl font-bold tracking-tight">{payload.titleDate} 恆常班時間表</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{payload.titleDate} Regular Class Timetable</h1>
             <p className="mt-1 text-sm text-blue-100">
-              版面與 Daily Timetable 相同，但<strong className="font-semibold">只顯示恆常排課</strong>
-              （不含補堂、加堂）。每個時段下方有各房「恆常／上限／餘額」，上限在{" "}
-              <span className="font-semibold">Rooms</span> 設定。考試日期欄與 Daily 相同。
+              Same layout as Daily Timetable, but <strong className="font-semibold">regular lessons only</strong>{" "}
+              (no reschedule or extra). Each slot shows per room: regular count / capacity / remaining; capacity is set on{" "}
+              <span className="font-semibold">Rooms</span>. Exam dates and fee stripes match Daily; edit colours in
+              “Timetable colours & fee highlights” below (shared with Daily).
             </p>
           </div>
 
@@ -56,21 +58,21 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
                   href={`${base}?year=${prev.y}&month=${prev.m}&day=${prev.d}`}
                   className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  昨天
+                  Previous day
                 </Link>
-                <span className="text-slate-500">日期</span>
+                <span className="text-slate-500">Date</span>
                 <PageDatePicker basePath={base} year={year} month={month} day={day} />
                 <Link
                   href={`${base}?year=${next.y}&month=${next.m}&day=${next.d}`}
                   className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  明天
+                  Next day
                 </Link>
               </div>
               <div className="text-right text-xs text-slate-600">
-                <p>選擇年／月／日</p>
+                <p>Year / month / day</p>
                 <p className="mt-0.5 font-semibold text-slate-800">
-                  {year}年{String(month).padStart(2, "0")}月{String(day).padStart(2, "0")}日
+                  {year}-{String(month).padStart(2, "0")}-{String(day).padStart(2, "0")}
                 </p>
               </div>
             </div>
@@ -78,12 +80,14 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
 
           <div className="p-4 sm:p-6">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="mb-3 text-sm font-bold text-slate-700">恆常班課堂（當日）</div>
+              <DayTimetableStyleEditor initial={payload.timetableStyle} uiLocale="en" />
+              <div className="mb-3 mt-6 text-sm font-bold text-slate-700">Regular lessons (selected day)</div>
               <DayTimetableTable
                 key={payload.dateIso}
                 payload={payload}
-                emptyMessage="這一天沒有恆常排課。"
+                emptyMessage="No regular lessons on this day."
                 showRegularCapacitySummary
+                uiLocale="en"
               />
             </div>
           </div>

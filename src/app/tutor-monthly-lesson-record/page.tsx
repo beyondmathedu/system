@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 const SECTION_ORDER: TutorNavStatus[] = ["工作中", "放假中", "已解僱"];
 
 export default async function TutorMonthlyLessonRecordPage() {
-  const [tutors, firstSeatAmount] = await Promise.all([
+  const [{ tutors, mpfFilterApplied }, firstSeatAmount] = await Promise.all([
     fetchTutorsForMonthlyLessonNav(),
     loadMultiStudentFirstAmount(),
   ]);
@@ -29,12 +29,27 @@ export default async function TutorMonthlyLessonRecordPage() {
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">Tutor Monthly Record</h1>
             <p className="mt-1 text-sm text-blue-100">
-              選擇導師查看該月由課表展開的上堂明細。列表含 Active、Occasional、Inactive，排序與 Tutor 頁預設相同（Active → Occasional
-              → Inactive，再依編號）。
+              Choose a tutor to view monthly lesson details expanded from schedules.{" "}
+              {mpfFilterApplied ? (
+                <>
+                  Only tutors with <strong className="text-white">MPF = Yes</strong> on the{" "}
+                  <Link href="/tutor" className="underline hover:text-white">
+                    Tutor
+                  </Link>{" "}
+                  page are listed.
+                </>
+              ) : (
+                <>
+                  Add the <span className="font-mono text-blue-50">mpf_enabled</span> column in Supabase to limit this
+                  list to MPF tutors only.
+                </>
+              )}{" "}
+              Status groups follow the Tutor page (Active → Occasional → Inactive, then by ID).
             </p>
             <p className="mt-2 text-xs text-blue-100/95">
-              小計：單人用 Tutor 頁<strong>單人價</strong>；多人時<strong>年級最高者</strong>用下方設定（目前 ${firstSeatAmount}），其餘用該導師
-              <strong>初中／高中價</strong>。
+              Subtotal rule: single-student lessons use the Tutor page <strong>Single Student Rate</strong>; for
+              multi-student lessons, the <strong>lowest-grade student</strong> uses the setting below (currently
+              ${firstSeatAmount}), and others use that tutor's <strong>Junior/Senior Rate</strong>.
             </p>
           </div>
 
@@ -44,7 +59,22 @@ export default async function TutorMonthlyLessonRecordPage() {
 
           <div className="p-6">
             {tutors.length === 0 ? (
-              <p className="text-sm text-slate-600">目前沒有導師資料。</p>
+              <p className="text-sm text-slate-600">
+                {mpfFilterApplied ? (
+                  <>
+                    No tutors have MPF enabled yet. Turn on MPF for the tutors you need on the{" "}
+                    <Link href="/tutor" className="font-medium text-[#1d76c2] hover:underline">
+                      Tutor
+                    </Link>{" "}
+                    page.
+                  </>
+                ) : (
+                  <>
+                    No tutor records yet, or the <span className="font-mono">mpf_enabled</span> column is missing so
+                    the list could not be loaded.
+                  </>
+                )}
+              </p>
             ) : (
               <div className="space-y-8">
                 {SECTION_ORDER.map((status) => {

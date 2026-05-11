@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
+import DayTimetableStyleEditor from "@/components/DayTimetableStyleEditor";
 import DayTimetableTable from "@/components/DayTimetableTable";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
@@ -44,7 +45,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
             <h1 className="text-2xl font-bold tracking-tight">{payload.titleDate} Daily Timetable</h1>
             <p className="mt-1 text-sm text-blue-100">
               同一時段、同一房間多名學生時，顯示順序為：恆常 → 補堂 → 加堂（同類型依學號）。排課與課表內 Lesson Summary
-              同步顯示。考試日期欄取自各生在學生獨立課堂頁填寫的日期。格子底色＝該堂導師在 Tutor 頁設定的顏色；補堂仍為淺綠標示。
+              同步顯示。考試日期欄取自各生在學生獨立課堂頁填寫的日期。恆常堂＝導師在 Tutor 頁顏色；補堂／加堂底色與學費色帶可在下方「課表顏色與學費標示」調整。
             </p>
           </div>
 
@@ -77,7 +78,8 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
 
           <div className="p-4 sm:p-6">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="mb-3 text-sm font-bold text-slate-700">每日課堂記錄</div>
+              <DayTimetableStyleEditor initial={payload.timetableStyle} />
+              <div className="mb-3 mt-6 text-sm font-bold text-slate-700">每日課堂記錄</div>
               <DayTimetableTable
                 key={payload.dateIso}
                 payload={payload}

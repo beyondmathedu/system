@@ -29,6 +29,7 @@ type Teacher = {
   birthDate: string;
   status: TeacherStatus;
   colorHex: string;
+  mpfEnabled: boolean;
 };
 
 type TeacherRow = {
@@ -39,6 +40,7 @@ type TeacherRow = {
   birth_date?: string | null;
   status?: string;
   color_hex?: string | null;
+  mpf_enabled?: boolean | null;
 };
 
 type TeacherRateRow = {
@@ -97,6 +99,10 @@ function resolveTutorColorHex(raw: string | null | undefined): string {
   return n ?? DEFAULT_TUTOR_COLOR;
 }
 
+function isMissingMpfColumnError(message: string): boolean {
+  return /\bmpf_enabled\b/i.test(message) && /\bdoes not exist\b/i.test(message);
+}
+
 function mapRowToTeacher(row: TeacherRow): Teacher {
   const status = (row.status ?? "工作中").trim();
   const zh = (row.name_zh ?? "").trim();
@@ -115,6 +121,7 @@ function mapRowToTeacher(row: TeacherRow): Teacher {
       ? (status as TeacherStatus)
       : "工作中",
     colorHex: (row.color_hex ?? "").trim(),
+    mpfEnabled: Boolean(row.mpf_enabled),
   };
 }
 
@@ -125,6 +132,7 @@ export default function TeacherPage() {
   const [teacherNameEn, setTeacherNameEn] = useState("");
   const [teacherBirthDate, setTeacherBirthDate] = useState("");
   const [teacherStatus, setTeacherStatus] = useState<TeacherStatus>("工作中");
+  const [teacherMpfEnabled, setTeacherMpfEnabled] = useState(false);
   const [tutorColorHex, setTutorColorHex] = useState(DEFAULT_TUTOR_COLOR);
   const [hexTextDraft, setHexTextDraft] = useState(DEFAULT_TUTOR_COLOR);
   const [rateJunior, setRateJunior] = useState("");
@@ -211,10 +219,16 @@ export default function TeacherPage() {
 
   async function loadTeachers() {
     setDataError("");
-    const { data, error } = await supabase
-      .from("tutors")
-      .select("id, name, name_zh, name_en, birth_date, status, color_hex")
-      .order("id");
+    const fullSelect =
+      "id, name, name_zh, name_en, birth_date, status, color_hex, mpf_enabled";
+    const baseSelect = "id, name, name_zh, name_en, birth_date, status, color_hex";
+
+    let { data, error } = await supabase.from("tutors").select(fullSelect).order("id");
+    if (error && isMissingMpfColumnError(error.message)) {
+      const retry = await supabase.from("tutors").select(baseSelect).order("id");
+      data = retry.data as typeof data;
+      error = retry.error;
+    }
     if (error) {
       setDataError(error.message);
       return;
@@ -258,6 +272,7 @@ export default function TeacherPage() {
     setTeacherNameEn("");
     setTeacherBirthDate("");
     setTeacherStatus("工作中");
+    setTeacherMpfEnabled(false);
     setTutorColorHex(DEFAULT_TUTOR_COLOR);
     setHexTextDraft(DEFAULT_TUTOR_COLOR);
     setRateJunior("");
@@ -278,7 +293,7 @@ export default function TeacherPage() {
       senior < 0 ||
       single < 0
     ) {
-      return { ok: false as const, message: "請輸入有效價錢（不可小於 0）。" };
+      return { ok: false as const, message: "Please enter valid rates (must be >= 0)." };
     }
     return { ok: true as const, junior, senior, single };
   }
@@ -288,7 +303,7 @@ export default function TeacherPage() {
     const nameEn = teacherNameEn.trim();
     const birthDate = teacherBirthDate.trim();
     if (!nameZh && !nameEn) {
-      setFormError("請輸入中文姓名或英文全名至少一項。");
+      setFormError("Please enter at least nickname or English name.");
       return;
     }
     const name = nameEn || nameZh;
@@ -304,7 +319,7 @@ export default function TeacherPage() {
     setIsSaving(true);
 
     if (editingId) {
-      const { error: updateErr } = await supabase
+      let { error: updateErr } = await supabase
         .from("tutors")
         .update({
           name,
@@ -313,12 +328,29 @@ export default function TeacherPage() {
           birth_date: birthDate || null,
           status: teacherStatus,
           color_hex: tutorColorHex,
+          mpf_enabled: teacherMpfEnabled,
         })
         .eq("id", editingId);
 
+      if (updateErr && isMissingMpfColumnError(updateErr.message)) {
+        updateErr = (
+          await supabase
+            .from("tutors")
+            .update({
+              name,
+              name_zh: nameZh,
+              name_en: nameEn,
+              birth_date: birthDate || null,
+              status: teacherStatus,
+              color_hex: tutorColorHex,
+            })
+            .eq("id", editingId)
+        ).error;
+      }
+
       if (updateErr) {
         setIsSaving(false);
-        setFormError(`儲存失敗：${updateErr.message}`);
+        setFormError(`Save failed: ${updateErr.message}`);
         return;
       }
 
@@ -335,7 +367,7 @@ export default function TeacherPage() {
 
       setIsSaving(false);
       if (rateErr) {
-        setFormError(`老師已更新，但價錢新增失敗：${rateErr.message}`);
+        setFormError(`Tutor updated, but failed to add rates: ${rateErr.message}`);
         await Promise.all([loadTeachers(), loadLatestRates()]);
         return;
       }
@@ -362,19 +394,34 @@ export default function TeacherPage() {
       }
 
       const newId = getNextTeacherIdFromTextId(latestRow?.id);
-      const { error: insertErr } = await supabase
-        .from("tutors")
-        .insert([
-          {
-            id: newId,
-            name,
-            name_zh: nameZh,
-            name_en: nameEn,
-            birth_date: birthDate || null,
-            status: teacherStatus,
-            color_hex: tutorColorHex,
-          },
-        ]);
+      let { error: insertErr } = await supabase.from("tutors").insert([
+        {
+          id: newId,
+          name,
+          name_zh: nameZh,
+          name_en: nameEn,
+          birth_date: birthDate || null,
+          status: teacherStatus,
+          color_hex: tutorColorHex,
+          mpf_enabled: teacherMpfEnabled,
+        },
+      ]);
+
+      if (insertErr && isMissingMpfColumnError(insertErr.message)) {
+        insertErr = (
+          await supabase.from("tutors").insert([
+            {
+              id: newId,
+              name,
+              name_zh: nameZh,
+              name_en: nameEn,
+              birth_date: birthDate || null,
+              status: teacherStatus,
+              color_hex: tutorColorHex,
+            },
+          ])
+        ).error;
+      }
 
       if (!insertErr) {
         insertedTeacherId = newId;
@@ -391,7 +438,7 @@ export default function TeacherPage() {
 
     if (!insertedTeacherId) {
       setIsSaving(false);
-      setFormError(`新增失敗：${lastErrorMessage || "請稍後再試"}`);
+      setFormError(`Add failed: ${lastErrorMessage || "Please try again later."}`);
       return;
     }
 
@@ -409,7 +456,7 @@ export default function TeacherPage() {
     if (rateErr) {
       await supabase.from("tutors").delete().eq("id", insertedTeacherId);
       setIsSaving(false);
-      setFormError(`新增失敗：價錢寫入失敗（已回復老師資料）- ${rateErr.message}`);
+      setFormError(`Add failed: rate insert failed (tutor row rolled back) - ${rateErr.message}`);
       return;
     }
 
@@ -420,7 +467,7 @@ export default function TeacherPage() {
 
   function startEditSelected() {
     if (selectedIds.length !== 1) {
-      setSelectionError("請先只選取 1 位老師再按編輯。");
+      setSelectionError("Please select exactly 1 tutor before editing.");
       return;
     }
     const target = teacherById.get(selectedIds[0]);
@@ -431,6 +478,7 @@ export default function TeacherPage() {
     setTeacherNameEn(target.nameEn);
     setTeacherBirthDate(target.birthDate);
     setTeacherStatus(target.status);
+    setTeacherMpfEnabled(target.mpfEnabled);
     const hex = resolveTutorColorHex(target.colorHex);
     setTutorColorHex(hex);
     setHexTextDraft(hex);
@@ -448,12 +496,12 @@ export default function TeacherPage() {
 
   async function deleteSelected() {
     if (selectedIds.length === 0) {
-      setSelectionError("請先勾選要刪除的老師。");
+      setSelectionError("Please select tutor(s) to delete first.");
       return;
     }
     const { error } = await supabase.from("tutors").delete().in("id", selectedIds);
     if (error) {
-      setSelectionError(`刪除失敗：${error.message}`);
+      setSelectionError(`Delete failed: ${error.message}`);
       return;
     }
     setSelectionError("");
@@ -469,32 +517,34 @@ export default function TeacherPage() {
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
-            <h1 className="text-2xl font-bold tracking-tight">Tutor 資料</h1>
-            <p className="mt-1 text-sm text-blue-100">老師ID 自動編號：T001 起。新增導師時同步建立 Tutor Rates。</p>
+            <h1 className="text-2xl font-bold tracking-tight">Tutor Records</h1>
+            <p className="mt-1 text-sm text-blue-100">
+              Tutor IDs are auto-numbered from T001. Adding a tutor also creates Tutor Rates.
+            </p>
           </div>
 
           <div className="p-6">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px_1fr_1fr_1fr_1fr_1fr_200px_160px_auto] md:items-end">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[104px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,154px)_minmax(92px,1fr)_minmax(92px,1fr)_112px_minmax(0,132px)_56px_minmax(110px,148px)_auto] md:items-end">
               <div>
-                <p className="mb-1 text-sm font-semibold text-slate-700">老師ID</p>
+                <p className="mb-1 text-sm font-semibold text-slate-700">Tutor ID</p>
                 <p className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
                   {editingId ?? nextTeacherId}
                 </p>
               </div>
 
               <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">老師姓名</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Nickname</span>
                 <input
                   type="text"
                   value={teacherName}
                   onChange={(event) => setTeacherName(event.target.value)}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-                  placeholder="例如：王小明"
+                  placeholder="e.g. Chan Tai Man"
                 />
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">英文全名</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">English Name</span>
                 <input
                   type="text"
                   value={teacherNameEn}
@@ -516,7 +566,7 @@ export default function TeacherPage() {
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">初中價</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Junior Rate</span>
                 <div className="relative">
                   <span
                     className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium tabular-nums text-slate-500"
@@ -536,7 +586,7 @@ export default function TeacherPage() {
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">高中價</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Senior Rate</span>
                 <div className="relative">
                   <span
                     className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium tabular-nums text-slate-500"
@@ -556,7 +606,7 @@ export default function TeacherPage() {
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">單人價</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Single Student Rate</span>
                 <div className="relative">
                   <span
                     className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium tabular-nums text-slate-500"
@@ -575,9 +625,9 @@ export default function TeacherPage() {
                 </div>
               </label>
 
-              <div className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">顏色</span>
-                <div className="flex items-center gap-2">
+              <div className="block min-w-0 md:max-w-[132px]">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Color</span>
+                <div className="flex min-w-0 items-center gap-1.5">
                   <input
                     type="color"
                     value={tutorColorHex}
@@ -586,9 +636,9 @@ export default function TeacherPage() {
                       setTutorColorHex(v);
                       setHexTextDraft(v);
                     }}
-                    className="h-10 w-11 shrink-0 cursor-pointer rounded-md border border-slate-300 bg-white p-1"
-                    title="選擇顏色"
-                    aria-label="選擇導師顏色"
+                    className="h-9 w-9 shrink-0 cursor-pointer rounded-md border border-slate-300 bg-white p-0.5"
+                    title="Choose color"
+                    aria-label="Choose tutor color"
                   />
                   <input
                     type="text"
@@ -604,14 +654,26 @@ export default function TeacherPage() {
                       }
                     }}
                     spellCheck={false}
-                    className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 py-2 font-mono text-xs text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                    className="w-[5.5rem] shrink-0 rounded-md border border-slate-300 bg-white px-1.5 py-1.5 font-mono text-[11px] leading-tight text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
                     placeholder="#1d76c2"
                   />
                 </div>
               </div>
 
-              <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">狀態</span>
+              <label className="block min-w-0 md:max-w-[56px]">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">MPF</span>
+                <select
+                  value={teacherMpfEnabled ? "yes" : "no"}
+                  onChange={(event) => setTeacherMpfEnabled(event.target.value === "yes")}
+                  className="w-full min-w-0 rounded-md border border-slate-300 bg-white px-1 py-1.5 text-center text-xs font-semibold text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                >
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </label>
+
+              <label className="block min-w-0">
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Status</span>
                 <select
                   value={teacherStatus}
                   onChange={(event) => setTeacherStatus(event.target.value as TeacherStatus)}
@@ -625,14 +687,15 @@ export default function TeacherPage() {
                 </select>
               </label>
 
-              <div className="flex gap-2">
+              <div className="flex justify-end gap-2 justify-self-end">
                 <button
                   type="button"
                   onClick={() => void onSubmitTeacher()}
                   disabled={isSaving}
-                  className="h-10 rounded-lg bg-[#1d76c2] px-4 text-sm font-semibold text-white hover:bg-[#1663a3] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-[#1d76c2] px-4 text-sm font-semibold text-white hover:bg-[#1663a3] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {editingId ? "儲存老師" : "新增老師"}
+                  {editingId ? <SaveIcon /> : <AddIcon />}
+                  {editingId ? "Save Tutor" : "Add Tutor"}
                 </button>
                 {editingId ? (
                   <button
@@ -640,7 +703,7 @@ export default function TeacherPage() {
                     onClick={resetForm}
                     className="h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                   >
-                    取消
+                    Cancel
                   </button>
                 ) : null}
               </div>
@@ -649,7 +712,7 @@ export default function TeacherPage() {
             {formError ? <p className="mt-3 text-sm text-red-600">{formError}</p> : null}
             {dataError ? (
               <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                讀取 tutors 表失敗：{dataError}
+                Failed to load tutors table: {dataError}
               </p>
             ) : null}
 
@@ -658,34 +721,37 @@ export default function TeacherPage() {
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜尋 ID／中文／英文全名／出生日期（例如：T001、王小明、Samuel、1990-01-01）"
+                placeholder="Search ID / Nickname / English / Date of birth (e.g. T001, Chan Tai Man, Samuel, 1990-01-01)"
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] sm:max-w-[520px]"
               />
               <div className="flex items-center gap-2">
-                <p className="text-sm text-slate-600">已選取：{selectedIds.length} 位老師</p>
+                <p className="text-sm text-slate-600">Selected: {selectedIds.length} tutor(s)</p>
                 <button
                   type="button"
                   onClick={startEditSelected}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  編輯
+                  <EditIcon />
+                  Edit
                 </button>
                 <button
                   type="button"
                   onClick={() => void deleteSelected()}
-                  className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-700"
                 >
-                  刪除
+                  <DeleteIcon />
+                  Delete
                 </button>
               </div>
             </div>
             {selectionError ? <p className="mt-2 text-sm text-red-600">{selectionError}</p> : null}
 
-            <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
+            <div className="mt-6 overflow-hidden rounded-xl border border-slate-200">
+              <div className="max-h-[70vh] overflow-auto">
+                <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-700">
-                    <th className="whitespace-nowrap px-4 py-3">
+                  <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold tracking-wider text-slate-700">
+                    <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-4 py-3">
                       <input
                         type="checkbox"
                         checked={Boolean(firstFilteredTeacherId) && selectedIds.length === 1 && selectedIds[0] === firstFilteredTeacherId}
@@ -694,31 +760,34 @@ export default function TeacherPage() {
                             setSelectedIds([]);
                             return;
                           }
-                          // 單選模式下，「全選」改為選取目前列表第一筆，避免多選造成邏輯混亂
+                          // In single-select mode, "select all" selects the first visible row.
                           setSelectedIds(firstFilteredTeacherId ? [firstFilteredTeacherId] : []);
                         }}
                         className="h-4 w-4 accent-[#1d76c2]"
-                        aria-label="全選老師"
+                        aria-label="Select tutor"
                       />
                     </th>
-                    <TeacherSortableHeader label="老師ID" columnKey="id" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                    <TeacherSortableHeader label="老師姓名" columnKey="name" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <TeacherSortableHeader label="Tutor ID" columnKey="id" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <TeacherSortableHeader label="Nickname" columnKey="name" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                     <TeacherSortableHeader
-                      label="英文全名"
+                      label="English Name"
                       columnKey="nameEn"
                       sortConfig={sortConfig}
                       setSortConfig={setSortConfig}
                     />
-                    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">
+                    <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
                       Date of birth
                     </th>
-                    <TeacherSortableHeader label="初中價" columnKey="junior" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                    <TeacherSortableHeader label="高中價" columnKey="senior" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                    <TeacherSortableHeader label="單人價" columnKey="single" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">
-                      顏色
+                    <TeacherSortableHeader label="Junior Rate" columnKey="junior" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <TeacherSortableHeader label="Senior Rate" columnKey="senior" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <TeacherSortableHeader label="Single Student Rate" columnKey="single" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                      Color
                     </th>
-                    <TeacherSortableHeader label="狀態" columnKey="status" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                      MPF
+                    </th>
+                    <TeacherSortableHeader label="Status" columnKey="status" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -735,7 +804,7 @@ export default function TeacherPage() {
                               else setSelectedIds([]);
                             }}
                             className="h-4 w-4 accent-[#1d76c2]"
-                            aria-label={`勾選 ${teacher.id}`}
+                            aria-label={`Select ${teacher.id}`}
                           />
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-800">{teacher.id}</td>
@@ -762,6 +831,18 @@ export default function TeacherPage() {
                           <span
                             className={[
                               "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold",
+                              teacher.mpfEnabled
+                                ? "border-blue-200 bg-blue-50 text-blue-700"
+                                : "border-slate-200 bg-slate-100 text-slate-700",
+                            ].join(" ")}
+                          >
+                            {teacher.mpfEnabled ? "Yes" : "No"}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
+                          <span
+                            className={[
+                              "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold",
                               getTeacherStatusBadgeClass(teacher.status),
                             ].join(" ")}
                           >
@@ -772,15 +853,16 @@ export default function TeacherPage() {
                     );
                   })}
                 </tbody>
-              </table>
-              {!isLoading && filteredTeachers.length === 0 ? (
-                <div className="border-t border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
-                  {teachers.length === 0 ? "目前沒有老師資料，請先新增。" : `找不到符合「${query}」的老師。`}
-                </div>
-              ) : null}
-              {isLoading ? (
-                <div className="border-t border-slate-200 px-4 py-6 text-center text-sm text-slate-500">讀取老師資料中...</div>
-              ) : null}
+                </table>
+                {!isLoading && filteredTeachers.length === 0 ? (
+                  <div className="border-t border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+                    {teachers.length === 0 ? "No tutor records yet. Add one first." : `No tutors found matching "${query}".`}
+                  </div>
+                ) : null}
+                {isLoading ? (
+                  <div className="border-t border-slate-200 px-4 py-6 text-center text-sm text-slate-500">Loading tutor records...</div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -796,6 +878,50 @@ type TeacherSortableHeaderProps = {
   setSortConfig: (config: TeacherSortConfig) => void;
 };
 
+function AddIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden>
+      <path d="M10 4.25v11.5M4.25 10h11.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SaveIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden>
+      <path d="m4.5 10 3.25 3.25L15.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden>
+      <path
+        d="M13.9 3.4a1.5 1.5 0 0 1 2.1 2.1l-8.3 8.3-3.2.7.7-3.2 8.3-8.3Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden>
+      <path
+        d="M4.75 6h10.5m-9.25 0 .6 9.25A1.25 1.25 0 0 0 7.84 16.5h4.32a1.25 1.25 0 0 0 1.24-1.25L14 6m-5.75 0V4.75c0-.69.56-1.25 1.25-1.25h1c.69 0 1.25.56 1.25 1.25V6"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function TeacherSortableHeader({
   label,
   columnKey,
@@ -804,11 +930,11 @@ function TeacherSortableHeader({
 }: TeacherSortableHeaderProps) {
   const selectedDirection = sortConfig?.key === columnKey ? sortConfig.direction : "";
   return (
-    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">
+    <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
       <div className="flex items-center gap-1.5 whitespace-nowrap">
         <span>{label}</span>
         <select
-          aria-label={`${label} 排序`}
+          aria-label={`Sort ${label}`}
           value={selectedDirection}
           onChange={(event) => {
             const direction = event.target.value as SortDirection | "";

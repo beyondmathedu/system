@@ -35,13 +35,16 @@ export function classifyGradeBand(grade: string): Band {
   return "junior";
 }
 
+/** 無年級／無法辨識：排序時排最後（不拿多人第一席位金額） */
+const GRADE_RANK_UNKNOWN = 9999;
+
 /**
  * 年級權重（越大 = 年級越高），用於多人時段決定誰拿「第一席位」金額。
- * 小學 1–6 低於 F1~F6（7–12）；無法辨識時為 0（排最後）。
+ * 小學 1–6 低於 F1~F6（7–12）；無法辨識時為 {@link GRADE_RANK_UNKNOWN}（排最後）。
  */
 export function gradeRank(grade: string): number {
   const raw = grade.trim();
-  if (!raw) return 0;
+  if (!raw) return GRADE_RANK_UNKNOWN;
   const g = raw.replace(/\s+/g, "");
   const zhDigit: Record<string, number> = {
     一: 1,
@@ -62,7 +65,7 @@ export function gradeRank(grade: string): number {
   const p = /^P([1-6])$/i.exec(compact);
   if (p) return Number(p[1]);
 
-  return 0;
+  return GRADE_RANK_UNKNOWN;
 }
 
 function bandRate(band: Band, rates: TutorPayRates): number {
@@ -71,7 +74,7 @@ function bandRate(band: Band, rates: TutorPayRates): number {
 
 /**
  * 同一時段：1 人＝單人價；2 人起第一位＝firstSeatAmount，其餘依初中／高中價。
- * 排序：年級最高者拿「第一席位」金額；同年級則依學號。
+ * 排序：年級最低者拿「第一席位」金額；同年級則依學號。
  */
 function allocateSlotSubtotals(bands: Band[], rates: TutorPayRates, firstSeatAmount: number): number[] {
   const n = bands.length;
@@ -214,7 +217,7 @@ function sortRowsInPayGroup(rows: TutorMonthLessonRow[]): TutorMonthLessonRow[] 
   return [...rows].sort((a, b) => {
     const ra = gradeRank(a.grade);
     const rb = gradeRank(b.grade);
-    if (rb !== ra) return rb - ra;
+    if (ra !== rb) return ra - rb;
     return a.studentId.localeCompare(b.studentId);
   });
 }

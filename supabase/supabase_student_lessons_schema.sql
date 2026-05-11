@@ -47,8 +47,12 @@ end $$;
 create table if not exists public.student_exam_dates (
   student_id text primary key references public.students(id) on delete cascade,
   exam_date text not null default '',
+  exam_content text not null default '',
   updated_at timestamptz not null default now()
 );
+
+alter table public.student_exam_dates
+  add column if not exists exam_content text not null default '';
 
 -- Daily / Regular timetable 當日 Remarks（學生 + 日期）
 create table if not exists public.student_timetable_day_remarks (
@@ -97,6 +101,25 @@ insert into public.app_payroll_settings (id, multi_student_first_amount)
 values (1, 120)
 on conflict (id) do nothing;
 
+-- Daily / Regular timetable colours (editable on site)
+create table if not exists public.app_day_timetable_settings (
+  id smallint primary key default 1 check (id = 1),
+  reschedule_cell_bg_hex text not null default '#ede9fe',
+  extra_cell_bg_hex text not null default '#fef3c7',
+  fee_unpaid_stripe_hex text not null default '#f59e0b',
+  fee_arrears_stripe_hex text not null default '#e11d48',
+  fee_lookback_months smallint not null default 6,
+  fee_heavy_unpaid_threshold smallint not null default 3,
+  updated_at timestamptz not null default now(),
+  constraint fee_lookback_months_chk2 check (fee_lookback_months >= 2 and fee_lookback_months <= 24),
+  constraint fee_heavy_threshold_chk2 check (
+    fee_heavy_unpaid_threshold >= 1
+    and fee_heavy_unpaid_threshold <= 24
+  )
+);
+
+insert into public.app_day_timetable_settings (id) values (1) on conflict (id) do nothing;
+
 create table if not exists public.student_lesson_records (
   student_id text primary key references public.students(id) on delete cascade,
   records jsonb not null default '[]'::jsonb,
@@ -143,6 +166,7 @@ alter table public.tutors add column if not exists name_en text not null default
 alter table public.tutors add column if not exists nickname_en text not null default '';
 alter table public.tutors add column if not exists status text not null default '工作中';
 alter table public.tutors add column if not exists color_hex text not null default '';
+alter table public.tutors add column if not exists mpf_enabled boolean not null default false;
 alter table public.tutors drop constraint if exists tutors_status_check;
 alter table public.tutors
   add constraint tutors_status_check check (status in ('工作中', '放假中', '已解僱'));
@@ -205,6 +229,13 @@ alter table public.app_payroll_settings enable row level security;
 drop policy if exists "allow all app_payroll_settings" on public.app_payroll_settings;
 create policy "allow all app_payroll_settings"
   on public.app_payroll_settings for all using (true) with check (true);
+
+alter table public.app_day_timetable_settings enable row level security;
+
+drop policy if exists "allow all app_day_timetable_settings" on public.app_day_timetable_settings;
+
+create policy "allow all app_day_timetable_settings"
+  on public.app_day_timetable_settings for all using (true) with check (true);
 
 drop policy if exists "allow all student_lesson_records" on public.student_lesson_records;
 create policy "allow all student_lesson_records" on public.student_lesson_records for all using (true) with check (true);

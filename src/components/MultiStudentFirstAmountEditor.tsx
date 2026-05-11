@@ -19,7 +19,7 @@ export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
   async function save() {
     const n = Number(value);
     if (!Number.isFinite(n) || n < 0) {
-      setStatus("請輸入有效數字（≥ 0）");
+      setStatus("Please enter a valid number (>= 0).");
       return;
     }
     setSaving(true);
@@ -36,23 +36,25 @@ export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
     if (error) {
       setStatus(
         error.message.includes("relation") || error.message.includes("does not exist")
-          ? "資料表尚未建立：請在 Supabase 執行 supabase/supabase_app_payroll_settings.sql"
+          ? "Settings table is missing. Please run supabase/supabase_app_payroll_settings.sql in Supabase."
           : error.message,
       );
       return;
     }
-    setStatus("已儲存。重新整理各導師月表即可套用。");
+    setStatus("Saved. Refresh each tutor monthly record page to apply.");
   }
 
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
-      <h2 className="text-sm font-bold text-slate-900">多人時段 · 第一席位金額（全站）</h2>
+      <h2 className="text-sm font-bold text-slate-900">Multi-Student Slot - First-Seat Amount (Global)</h2>
       <p className="mt-1 text-xs leading-relaxed text-slate-600">
-        同一日、課表「時間」相同且<strong>有 2 位或以上</strong>學生時：<strong>年級最高者</strong>使用<strong>此金額</strong>（同年級則依學號）；其餘每位依該導師在{" "}
+        For lessons on the same day with the same timetable time and <strong>2 or more students</strong>: the{" "}
+        <strong>lowest grade student</strong> uses <strong>this amount</strong> (if grade is the same, student ID is used).
+        Every other student uses that tutor's{" "}
         <a href="/tutor" className="font-medium text-[#1d76c2] hover:underline">
           Tutor
         </a>{" "}
-        的<strong>初中價／高中價</strong>。僅 1 位學生時一律用<strong>單人價</strong>。
+        <strong>Junior / Senior rate</strong>. If there is only 1 student, always use the <strong>Single Student Rate</strong>.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -71,16 +73,25 @@ export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
           type="button"
           disabled={saving}
           onClick={() => void save()}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#1663a3] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {saving ? "儲存中…" : "儲存"}
+          <SaveIcon />
+          {saving ? "Saving..." : "Save"}
         </button>
       </div>
       {status ? (
-        <p className={`mt-2 text-xs ${status.startsWith("已儲存") ? "text-emerald-700" : "text-rose-700"}`}>
+        <p className={`mt-2 text-xs ${status.startsWith("Saved.") ? "text-emerald-700" : "text-rose-700"}`}>
           {status}
         </p>
       ) : null}
     </div>
+  );
+}
+
+function SaveIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden>
+      <path d="m4.5 10 3.25 3.25L15.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }

@@ -39,6 +39,8 @@ export type BuiltScheduleRow = {
   sortTime: string;
 };
 
+type BuildRangeOptions = { month?: number };
+
 function numberToWeekday(num: number) {
   switch (num) {
     case 1:
@@ -95,10 +97,11 @@ function sortTimeFromDisplay(time: string) {
   return `${String(h).padStart(2, "0")}:${min}`;
 }
 
-export function buildYearScheduleRows(
+function buildScheduleRows(
   records: YearLessonRecord[],
   state: YearLessonState,
   targetYear: number,
+  options?: BuildRangeOptions,
 ): BuiltScheduleRow[] {
   const normalized = records.map((r) => ({
     ...r,
@@ -122,10 +125,17 @@ export function buildYearScheduleRows(
   };
 
   const baseRows: Row[] = [];
-  const start = new Date(targetYear, 0, 1);
-  const end = new Date(targetYear, 11, 31);
+  const month = options?.month;
+  const hasMonth = Number.isInteger(month) && Number(month) >= 1 && Number(month) <= 12;
+  const start = hasMonth ? new Date(targetYear, Number(month) - 1, 1) : new Date(targetYear, 0, 1);
+  const end = hasMonth ? new Date(targetYear, Number(month), 0) : new Date(targetYear, 11, 31);
   let ruleIdx = 0;
   let activeRule: (typeof normalized)[0] | null = sortedRules.length > 0 ? sortedRules[0] : null;
+  const startIso = toIsoDate(start);
+  while (ruleIdx + 1 < sortedRules.length && sortedRules[ruleIdx + 1].effectiveDate <= startIso) {
+    ruleIdx += 1;
+    activeRule = sortedRules[ruleIdx];
+  }
 
   for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
     const hkNum = getHkWeekdayNumber(cur);
@@ -242,6 +252,23 @@ export function buildYearScheduleRows(
       sortTime,
     };
   });
+}
+
+export function buildYearScheduleRows(
+  records: YearLessonRecord[],
+  state: YearLessonState,
+  targetYear: number,
+): BuiltScheduleRow[] {
+  return buildScheduleRows(records, state, targetYear);
+}
+
+export function buildYearScheduleRowsForMonth(
+  records: YearLessonRecord[],
+  state: YearLessonState,
+  targetYear: number,
+  month: number,
+): BuiltScheduleRow[] {
+  return buildScheduleRows(records, state, targetYear, { month });
 }
 
 export function filterRowsByRoomAndMonth(

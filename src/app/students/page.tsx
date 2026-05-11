@@ -20,6 +20,8 @@ type Student = {
   textbookPublisher: string;
   grade: string;
   mathLanguage: string;
+  birthTs: number;
+  searchBlob: string;
 };
 type SortDirection = "asc" | "desc";
 type SortConfig = { key: keyof Student; direction: SortDirection } | null;
@@ -53,7 +55,7 @@ const TEXTBOOK_PUBLISHER_OPTIONS = [
   "Aristo",
 ] as const;
 
-type StudentForm = Omit<Student, "id">;
+type StudentForm = Omit<Student, "id" | "birthTs" | "searchBlob">;
 
 const emptyForm: StudentForm = {
   nameZh: "",
@@ -67,6 +69,27 @@ const emptyForm: StudentForm = {
   grade: "",
   mathLanguage: "English",
 };
+
+function buildStudentSearchBlob(student: {
+  id: string;
+  nameZh: string;
+  nameEn: string;
+  nicknameEn: string;
+  textbookPublisher: string;
+  studentPhone: string;
+}) {
+  return [
+    student.id,
+    normalizeStudentId(student.id),
+    student.nameZh,
+    student.nameEn,
+    student.nicknameEn,
+    student.textbookPublisher,
+    student.studentPhone,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
 
 export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
@@ -131,13 +154,7 @@ export default function StudentsPage() {
       if (statusFilter === "inactive" && !isInactive) return false;
       if (statusFilter === "active" && isInactive) return false;
       return (
-        student.id.toLowerCase().includes(keyword) ||
-        normalizeStudentId(student.id).toLowerCase().includes(keyword) ||
-        student.nameZh.toLowerCase().includes(keyword) ||
-        student.nameEn.toLowerCase().includes(keyword) ||
-        student.nicknameEn.toLowerCase().includes(keyword) ||
-        student.textbookPublisher.toLowerCase().includes(keyword) ||
-        student.studentPhone.toLowerCase().includes(keyword)
+        student.searchBlob.includes(keyword)
       );
     });
   }, [manualInactiveEffectiveById, query, statusFilter, students]);
@@ -163,7 +180,7 @@ export default function StudentsPage() {
       if (key === "grade") {
         result = gradeRank(a.grade) - gradeRank(b.grade);
       } else if (key === "birthDate") {
-        result = new Date(a.birthDate).getTime() - new Date(b.birthDate).getTime();
+        result = a.birthTs - b.birthTs;
       } else {
         result = String(a[key]).localeCompare(String(b[key]), "zh-Hant");
       }
@@ -724,7 +741,7 @@ export default function StudentsPage() {
               <table className="min-w-[1500px] divide-y divide-slate-200">
                 <thead className="bg-slate-50">
                   <tr className="divide-x divide-slate-200">
-                    <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-6 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                    <th className="sticky left-0 top-0 z-50 w-[64px] whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
                       <input
                         type="checkbox"
                         checked={allVisibleSelected}
@@ -750,9 +767,15 @@ export default function StudentsPage() {
                       columnKey="id"
                       sortConfig={sortConfig}
                       setSortConfig={setSortConfig}
-                      thClassName="w-[110px]"
+                      thClassName="left-[64px] z-40 min-w-[170px] max-w-[170px] bg-slate-50"
                     />
-                    <SortableHeader label="Chinese name" columnKey="nameZh" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <SortableHeader
+                      label="Chinese name"
+                      columnKey="nameZh"
+                      sortConfig={sortConfig}
+                      setSortConfig={setSortConfig}
+                      thClassName="left-[234px] z-40 min-w-[240px] max-w-[240px] bg-slate-50"
+                    />
                     <SortableHeader
                       label="English name"
                       columnKey="nameEn"
@@ -776,9 +799,9 @@ export default function StudentsPage() {
                     return (
                       <tr
                         key={student.id}
-                        className="divide-x divide-slate-100 bg-white hover:bg-slate-50"
+                        className="group divide-x divide-slate-100 bg-white hover:bg-slate-50"
                       >
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="sticky left-0 z-30 w-[64px] whitespace-nowrap bg-white px-4 py-4 text-sm text-slate-700 group-hover:bg-slate-50">
                           <input
                             type="checkbox"
                             checked={selectedIdSet.has(student.id)}
@@ -794,7 +817,7 @@ export default function StudentsPage() {
                             className="h-4 w-4 accent-[#1d76c2]"
                           />
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">
+                        <td className="sticky left-[64px] z-30 min-w-[170px] max-w-[170px] whitespace-nowrap bg-white px-6 py-4 text-sm font-medium text-slate-900 group-hover:bg-slate-50">
                           <Link
                             href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons`}
                             className="text-[#1d76c2] hover:underline"
@@ -802,7 +825,7 @@ export default function StudentsPage() {
                             {studentIdDisplay}
                           </Link>
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="sticky left-[234px] z-30 min-w-[240px] max-w-[240px] whitespace-nowrap bg-white px-6 py-4 text-sm text-slate-700 group-hover:bg-slate-50">
                           {student.nameZh}
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-700 align-top">
@@ -1029,19 +1052,23 @@ function getNextStudentId(students: Student[]) {
 }
 
 function mapRowToStudent(row: StudentRow): Student {
-  return {
+  const birthDate = row.birth_date ?? "";
+  const parsedBirthTs = Date.parse(birthDate);
+  const base = {
     id: row.id,
     nameZh: row.name_zh ?? "",
     nameEn: row.name_en ?? "",
     nicknameEn: row.nickname_en ?? "",
-    birthDate: row.birth_date ?? "",
+    birthDate,
     studentPhone: row.student_phone ?? "",
     email: row.email ?? "",
     school: row.school ?? "",
     textbookPublisher: row.textbook_publisher ?? "",
     grade: normalizeGradeCode(row.grade),
     mathLanguage: row.math_language ?? "English",
+    birthTs: Number.isFinite(parsedBirthTs) ? parsedBirthTs : Number.MAX_SAFE_INTEGER,
   };
+  return { ...base, searchBlob: buildStudentSearchBlob(base) };
 }
 
 function mapFormToRow(form: StudentForm) {

@@ -40,7 +40,7 @@ export default function RoomsIndexPage() {
   const [roomSlug, setRoomSlug] = useState("");
   const [roomDesc, setRoomDesc] = useState("");
   const [sortOrder, setSortOrder] = useState("0");
-  /** 恆常班每時段人數上限；空白表示用系統預設 */
+  /** Regular class max per period; blank means system default */
   const [regularPeriodMax, setRegularPeriodMax] = useState("");
 
   const [formError, setFormError] = useState("");
@@ -102,13 +102,13 @@ export default function RoomsIndexPage() {
       return rows.map((r) => ({
         href: `/rooms/${encodeURIComponent(r.slug)}`,
         title: `${r.id} ${r.name}`,
-        subtitle: r.description || `前往 ${r.name} 的月度排課汇总`,
+        subtitle: r.description || `Open monthly schedule summary for ${r.name}`,
       }));
     }
     return FALLBACK_ROOM_NAV_LINKS.map((r) => ({
       href: r.href,
       title: r.label,
-      subtitle: "預設房間（尚未建立 classrooms 表或尚無資料時使用）",
+      subtitle: "Default room (used when classrooms table is missing or empty)",
     }));
   }, [rows]);
 
@@ -156,15 +156,17 @@ export default function RoomsIndexPage() {
     const sortN = Math.floor(Number(sortOrder));
 
     if (!name) {
-      setFormError("請輸入房間名稱（須與學生課表內教室欄位一致，篩選才會命中）。");
+      setFormError(
+        "Please enter a room name (must exactly match the classroom value in student schedules for filtering to work).",
+      );
       return;
     }
     if (!slugNorm) {
-      setFormError("URL 代碼（slug）須為小寫英數與連字，例如 hope、hope-2。");
+      setFormError("URL slug must use lowercase letters, numbers, and hyphens (e.g. hope, hope-2).");
       return;
     }
     if (!Number.isFinite(sortN)) {
-      setFormError("排序請填有效整數。");
+      setFormError("Sort order must be a valid integer.");
       return;
     }
 
@@ -173,7 +175,9 @@ export default function RoomsIndexPage() {
     if (rpmRaw !== "") {
       const n = Math.floor(Number(rpmRaw));
       if (!Number.isFinite(n) || n < 1 || n > 99) {
-        setFormError("恆常每時段上限請填 1–99 的整數，或留空以使用系統預設。");
+        setFormError(
+          "Regular period max must be an integer between 1 and 99, or leave blank to use system default.",
+        );
         return;
       }
       regular_period_max = n;
@@ -190,7 +194,9 @@ export default function RoomsIndexPage() {
         const prop = await propagateClassroomNameChange(editSnapshot!.name, name);
         if (!prop.ok) {
           setIsSaving(false);
-          setFormError(`同步課表教室名稱失敗：${prop.error ?? "未知錯誤"}（未更新房間資料）`);
+          setFormError(
+            `Failed to sync classroom name in schedules: ${prop.error ?? "Unknown error"} (room data not updated).`,
+          );
           return;
         }
         if (
@@ -200,7 +206,7 @@ export default function RoomsIndexPage() {
           0
         ) {
           setFormNotice(
-            `已將課表內「${editSnapshot!.name}」改為「${name}」：lesson_records ${prop.stats.lessonRecordRows} 筆、2026 state ${prop.stats.lessons2026Rows} 筆、年度 state ${prop.stats.lessonsYearRows} 筆。`,
+            `Updated classroom name in schedules from "${editSnapshot!.name}" to "${name}": lesson_records ${prop.stats.lessonRecordRows} rows, 2026 state ${prop.stats.lessons2026Rows} rows, yearly state ${prop.stats.lessonsYearRows} rows.`,
           );
         }
       }
@@ -219,7 +225,7 @@ export default function RoomsIndexPage() {
 
       setIsSaving(false);
       if (upErr) {
-        setFormError(`儲存失敗：${upErr.message}`);
+        setFormError(`Save failed: ${upErr.message}`);
         return;
       }
 
@@ -244,7 +250,7 @@ export default function RoomsIndexPage() {
 
     setIsSaving(false);
     if (insErr) {
-      setFormError(`新增失敗：${insErr.message}`);
+      setFormError(`Create failed: ${insErr.message}`);
       return;
     }
 
@@ -268,19 +274,21 @@ export default function RoomsIndexPage() {
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
-            <h1 className="text-2xl font-bold tracking-tight">Room</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Rooms</h1>
             <p className="mt-1 text-sm text-blue-100">
-              在此新增或修改房間：每個 slug 對應一個頁面 <span className="font-mono">/rooms/你的代碼</span>
-              。修改「房間名稱」會一併更新所有學生課表與補堂／加堂裡相同的教室字串。
+              Add or edit rooms here. Each slug maps to a page like{" "}
+              <span className="font-mono">/rooms/your-slug</span>. Renaming a room will also update matching
+              classroom strings in all student schedules and makeup/extra lessons.
             </p>
           </div>
 
           <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
-            <h2 className="text-sm font-bold text-slate-800">房間資料</h2>
+            <h2 className="text-sm font-bold text-slate-800">Room Details</h2>
             <p className="mt-1 text-xs text-slate-600">
-              房間名稱須與課表 JSON 的 room 欄位完全一致；若只改 URL 代碼（slug）不會改動課表內文。
-              恆常每時段上限用於「恆常班時間表」餘額列；空白則依房名套用預設（B、M前 5；M後、Hope 6；Hope 2
-              為 5）。
+              Room name must exactly match the <span className="font-mono">room</span> field in schedule JSON.
+              Changing only the URL slug does not modify schedule content. Regular period max is used in the
+              remaining-slots row on Regular Timetable; blank uses room-based defaults (B, M front: 5; M back,
+              Hope: 6; Hope 2: 5).
             </p>
 
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[100px_minmax(0,1.2fr)_minmax(0,1fr)_88px_auto] md:items-end">
@@ -291,18 +299,18 @@ export default function RoomsIndexPage() {
                 </p>
               </div>
               <label className="block min-w-0">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">房間名稱</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Room Name</span>
                 <input
                   type="text"
                   value={roomName}
                   onChange={(e) => setRoomName(e.target.value)}
                   onBlur={onRoomNameBlur}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-                  placeholder="例如：Hope 2（與課表 room 一致）"
+                  placeholder="e.g. Hope 2 (must match schedule room)"
                 />
               </label>
               <label className="block min-w-0">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">URL 代碼 (slug)</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">URL Slug</span>
                 <input
                   type="text"
                   value={roomSlug}
@@ -313,7 +321,7 @@ export default function RoomsIndexPage() {
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-sm font-semibold text-slate-700">排序</span>
+                <span className="mb-1 block text-sm font-semibold text-slate-700">Sort</span>
                 <input
                   type="number"
                   step={1}
@@ -330,7 +338,7 @@ export default function RoomsIndexPage() {
                   disabled={isSaving}
                   className="h-10 rounded-lg bg-[#1d76c2] px-4 text-sm font-semibold text-white hover:bg-[#1663a3] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {editingId ? "儲存變更" : "新增房間"}
+                  {editingId ? "Save Changes" : "Add Room"}
                 </button>
                 {editingId ? (
                   <button
@@ -338,7 +346,7 @@ export default function RoomsIndexPage() {
                     onClick={resetForm}
                     className="h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                   >
-                    取消
+                    Cancel
                   </button>
                 ) : (
                   <button
@@ -349,7 +357,7 @@ export default function RoomsIndexPage() {
                     }}
                     className="h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                   >
-                    重設 slug／排序
+                    Reset Slug / Sort
                   </button>
                 )}
               </div>
@@ -357,24 +365,25 @@ export default function RoomsIndexPage() {
 
             {editingId ? (
               <p className="mt-2 text-xs text-amber-800">
-                已建立房間後無法修改 slug（避免舊連結錯亂）。若要新網址請新增一筆房間。
+                Slug cannot be changed after room creation (to avoid breaking old links). Add a new room if you
+                need a new URL.
               </p>
             ) : null}
 
             <label className="mt-3 block">
-              <span className="mb-1 block text-sm font-semibold text-slate-700">簡述（選填）</span>
+              <span className="mb-1 block text-sm font-semibold text-slate-700">Description (Optional)</span>
               <input
                 type="text"
                 value={roomDesc}
                 onChange={(e) => setRoomDesc(e.target.value)}
                 className="w-full max-w-3xl rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-                placeholder="顯示在房間頁標題下方"
+                placeholder="Shown below room page title"
               />
             </label>
 
             <label className="mt-3 block max-w-xs">
               <span className="mb-1 block text-sm font-semibold text-slate-700">
-                恆常每時段上限（選填）
+                  Regular Period Max (Optional)
               </span>
               <input
                 type="number"
@@ -384,9 +393,11 @@ export default function RoomsIndexPage() {
                 value={regularPeriodMax}
                 onChange={(e) => setRegularPeriodMax(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-                placeholder="留空＝預設"
+                placeholder="Leave blank for default"
               />
-              <span className="mt-1 block text-xs text-slate-500">1–99；用於 /regular-class-timetable 餘額</span>
+              <span className="mt-1 block text-xs text-slate-500">
+                1-99; used for remaining slots in /regular-class-timetable
+              </span>
             </label>
 
             {formError ? <p className="mt-3 text-sm text-red-600">{formError}</p> : null}
@@ -395,9 +406,9 @@ export default function RoomsIndexPage() {
 
           {loadError ? (
             <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-900">
-              無法讀取 classrooms：{loadError}。請確認已執行{" "}
+              Unable to load classrooms: {loadError}. Please make sure you have run{" "}
               <span className="font-mono">supabase/supabase_student_lessons_schema.sql</span>
-              ；若錯誤提及 regular_period_max，請執行{" "}
+              . If the error mentions regular_period_max, run{" "}
               <span className="font-mono">supabase/supabase_classrooms_regular_period_max.sql</span>。
             </div>
           ) : null}
@@ -409,11 +420,11 @@ export default function RoomsIndexPage() {
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-700">
                       <th className="px-4 py-3">ID</th>
-                      <th className="px-4 py-3">房間名稱</th>
+                      <th className="px-4 py-3">Room Name</th>
                       <th className="px-4 py-3">slug</th>
-                      <th className="px-4 py-3">恆常上限</th>
-                      <th className="px-4 py-3">排序</th>
-                      <th className="px-4 py-3">操作</th>
+                      <th className="px-4 py-3">Regular Max</th>
+                      <th className="px-4 py-3">Sort</th>
+                      <th className="px-4 py-3">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -432,7 +443,7 @@ export default function RoomsIndexPage() {
                             onClick={() => startEdit(r)}
                             className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                           >
-                            編輯
+                            Edit
                           </button>
                         </td>
                       </tr>
@@ -443,11 +454,13 @@ export default function RoomsIndexPage() {
             ) : null}
 
             {!isLoading && rows.length === 0 && !loadError ? (
-              <p className="mb-6 text-sm text-slate-600">尚無房間資料，請先新增，或使用下方預設連結。</p>
+              <p className="mb-6 text-sm text-slate-600">
+                No room data yet. Add one first, or use the default links below.
+              </p>
             ) : null}
-            {isLoading ? <p className="mb-6 text-sm text-slate-500">讀取房間資料中…</p> : null}
+            {isLoading ? <p className="mb-6 text-sm text-slate-500">Loading room data...</p> : null}
 
-            <h3 className="mb-3 text-sm font-bold text-slate-800">進入房間頁面</h3>
+            <h3 className="mb-3 text-sm font-bold text-slate-800">Open Room Pages</h3>
             <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {displayLinks.map((item) => (
                 <li key={item.href}>

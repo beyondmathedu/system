@@ -8,9 +8,15 @@ import {
   type DayTimetableCell,
   type DayTimetablePayload,
 } from "@/lib/dayTimetableGrid";
+import type {
+  DayTimetableFeePaymentTone,
+  DayTimetableStyleSettings,
+} from "@/lib/dayTimetableStyleSettings";
 import { deleteTimetableDayRemark, upsertTimetableDayRemark } from "@/lib/studentLessonStorage";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
+import type { DayTimetableUiLocale } from "@/lib/dayTimetableUiStrings";
+import { dayTimetableTableStrings, formatFeeHeavyLine } from "@/lib/dayTimetableUiStrings";
 
 const TD_BASE = "h-9 border border-slate-300 px-2 py-1 text-sm text-slate-800";
 const TD_BASE_WIDE = "h-9 border border-slate-300 px-3 py-1 text-sm text-slate-700";
@@ -21,35 +27,70 @@ export function formatExamDateSlashed(iso: string) {
   return `${Number(m[2])}/${Number(m[3])}`;
 }
 
+function mergeCellStyle(...parts: (CSSProperties | undefined)[]): CSSProperties | undefined {
+  const o: CSSProperties = {};
+  for (const p of parts) {
+    if (p) Object.assign(o, p);
+  }
+  return Object.keys(o).length ? o : undefined;
+}
+
+function feeStripeStyle(
+  tone: DayTimetableFeePaymentTone | undefined,
+  style: DayTimetableStyleSettings,
+): CSSProperties | undefined {
+  if (!tone || tone === "ok") return undefined;
+  const color =
+    tone === "many_months_unpaid" ? style.feeArrearsStripeHex : style.feeUnpaidStripeHex;
+  return {
+    borderLeftWidth: 4,
+    borderLeftStyle: "solid",
+    borderLeftColor: color,
+  };
+}
+
 function cellSurface(
   item: DayTimetableCell | undefined,
   textTone: "dark" | "muted",
+  feeTone: DayTimetableFeePaymentTone | undefined,
+  timetableStyle: DayTimetableStyleSettings,
 ): { className: string; style?: CSSProperties } {
+  const td = textTone === "dark" ? TD_BASE : TD_BASE_WIDE;
   if (!item) {
     return {
-      className: `${textTone === "dark" ? TD_BASE : TD_BASE_WIDE} bg-white`,
+      className: `${td} bg-white`,
     };
   }
+  const stripe = feeStripeStyle(feeTone, timetableStyle);
   if (item.lessonType === "補堂") {
     return {
-      className: `${textTone === "dark" ? TD_BASE : TD_BASE_WIDE} bg-emerald-100 text-slate-800`,
+      className: td,
+      style: mergeCellStyle({ backgroundColor: timetableStyle.rescheduleCellBgHex }, stripe),
+    };
+  }
+  if (item.lessonType === "加堂") {
+    return {
+      className: td,
+      style: mergeCellStyle({ backgroundColor: timetableStyle.extraCellBgHex }, stripe),
     };
   }
   const tutor = item.tutorDisplay.trim();
   if (!tutor || tutor === "待定" || tutor === "—") {
     return {
-      className: `${textTone === "dark" ? TD_BASE : TD_BASE_WIDE} bg-slate-100`,
+      className: `${td} bg-slate-100`,
+      style: stripe,
     };
   }
   const hex = item.tutorColorHex;
   if (!hex) {
     return {
-      className: `${textTone === "dark" ? TD_BASE : TD_BASE_WIDE} bg-slate-100`,
+      className: `${td} bg-slate-100`,
+      style: stripe,
     };
   }
   return {
-    className: textTone === "dark" ? TD_BASE : TD_BASE_WIDE,
-    style: { backgroundColor: hex },
+    className: td,
+    style: mergeCellStyle({ backgroundColor: hex }, stripe),
   };
 }
 
@@ -60,6 +101,8 @@ type Props = {
   showRegularCapacitySummary?: boolean;
   /** 只用每個時段的一條分隔線；不畫每行格線（供 Daily 頁） */
   showPeriodSeparatorOnly?: boolean;
+  /** `en`：Regular timetable page */
+  uiLocale?: DayTimetableUiLocale;
 };
 
 const COLS_PER_ROOM = 3;
@@ -69,8 +112,18 @@ export default function DayTimetableTable({
   emptyMessage,
   showRegularCapacitySummary = false,
   showPeriodSeparatorOnly = false,
+  uiLocale = "zh",
 }: Props) {
-  const { rowFrames, byTimeRoom, examById, regularPeriodMaxByRoom, dateIso } = payload;
+  const t = dayTimetableTableStrings[uiLocale];
+  const {
+    rowFrames,
+    byTimeRoom,
+    examById,
+    regularPeriodMaxByRoom,
+    dateIso,
+    feePaymentToneByStudentId,
+    timetableStyle,
+  } = payload;
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
   const [hoverStudentId, setHoverStudentId] = useState<string | null>(null);
   const [remarksById, setRemarksById] = useState<Record<string, string>>(payload.timetableRemarksById ?? {});
@@ -131,17 +184,48 @@ export default function DayTimetableTable({
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white">
       <p className="border-b border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-600">
-        <span className="font-semibold text-slate-700">考試日期</span>
-        欄：與各學生在「學生獨立課堂」頁（Students → 該生 → Lessons）所填寫的考試日期相同，由系統同步讀取。
+        <span className="font-semibold text-slate-700">{t.examBlurbTitle}</span>
+        {t.examDateBlurb}
+      </p>
+      <p className="border-b border-slate-200 bg-white px-3 py-2 text-xs leading-relaxed text-slate-600">
+        <span className="font-semibold text-slate-700">{t.coloursLegendTitle}</span>
+        {t.coloursIntroBeforeSwatches}
+        <span
+          className="mx-1 inline-block h-3 w-5 rounded-sm align-[-2px] ring-1 ring-violet-200/80"
+          style={{ backgroundColor: timetableStyle.rescheduleCellBgHex }}
+          title={t.swatchTitleResched}
+        />{" "}
+        {t.coloursBetweenSwatches}
+        <span
+          className="mx-1 inline-block h-3 w-5 rounded-sm align-[-2px] ring-1 ring-amber-200/80"
+          style={{ backgroundColor: timetableStyle.extraCellBgHex }}
+          title={t.swatchTitleExtra}
+        />{" "}
+        {t.coloursAfterExtraSwatch}
+        {t.feeIntro}
+        <span
+          className="mx-1 inline-block h-3 w-1.5 rounded-sm align-middle"
+          style={{ backgroundColor: timetableStyle.feeUnpaidStripeHex }}
+        />
+        {t.feeBetweenStripes}
+        <span
+          className="mx-1 inline-block h-3 w-1.5 rounded-sm align-middle"
+          style={{ backgroundColor: timetableStyle.feeArrearsStripeHex }}
+        />{" "}
+        {formatFeeHeavyLine(
+          uiLocale,
+          timetableStyle.feeLookbackMonths,
+          timetableStyle.feeHeavyUnpaidThreshold,
+        )}
       </p>
       {showRegularCapacitySummary ? (
         <p className="border-b border-slate-200 bg-emerald-50/80 px-3 py-2 text-xs text-slate-700">
-          <span className="font-semibold text-slate-800">餘額列</span>
-          ：各房各時段下方綠底列為「恆常人數／上限／餘額」；上限可在{" "}
+          <span className="font-semibold text-slate-800">{t.capacityLabel}</span>
+          {t.capacityBlurbBeforeLink}
           <Link href="/rooms" className="font-semibold text-[#1d76c2] underline">
             Rooms
-          </Link>{" "}
-          編輯（未設定則用預設：B、M前 5；M後、Hope 6；Hope 2 為 5）。
+          </Link>
+          {t.capacityBlurbAfterLink}
         </p>
       ) : null}
       <table className="min-w-[960px] w-full border-collapse text-sm">
@@ -151,7 +235,7 @@ export default function DayTimetableTable({
               rowSpan={2}
               className="w-14 border border-slate-300 px-2 py-2 text-left text-base font-semibold text-slate-800"
             >
-              時間
+              {t.time}
             </th>
             {ROOM_GROUPS.map((room) => (
               <th
@@ -169,20 +253,20 @@ export default function DayTimetableTable({
                 key={`name-${room}`}
                 className="border border-slate-300 px-3 py-2 text-left text-sm font-semibold text-slate-900"
               >
-                姓名
+                {t.name}
               </th>,
               <th
                 key={`grade-${room}`}
                 className="w-16 border border-slate-300 px-2 py-2 text-left text-sm font-semibold text-slate-900"
               >
-                年級
+                {t.grade}
               </th>,
               <th
                 key={`exam-${room}`}
-                title="與該學生在學生獨立課堂頁設定的考試日期相同"
+                title={t.examThTitle}
                 className="w-28 border border-slate-300 px-3 py-2 text-left text-sm font-semibold text-slate-900"
               >
-                考試日期
+                {t.examHeader}
               </th>,
             ])}
           </tr>
@@ -217,9 +301,12 @@ export default function DayTimetableTable({
                       </td>
                       {ROOM_GROUPS.map((room, roomIdx) => {
                         const item = cells[roomIdx][idx];
-                        const nameSurf = cellSurface(item, "dark");
-                        const gradeSurf = cellSurface(item, "dark");
-                        const examSurf = cellSurface(item, "muted");
+                        const feeTone = item
+                          ? feePaymentToneByStudentId[item.studentId] ?? "ok"
+                          : undefined;
+                        const nameSurf = cellSurface(item, "dark", feeTone, timetableStyle);
+                        const gradeSurf = cellSurface(item, "dark", feeTone, timetableStyle);
+                        const examSurf = cellSurface(item, "muted", feeTone, timetableStyle);
                         return (
                           <Fragment key={`${frame.time}-${idx}-${room}`}>
                             <td className={`${nameSurf.className} ${noGridCls}`} style={nameSurf.style}>
@@ -251,12 +338,12 @@ export default function DayTimetableTable({
                                           setRemarksById((prev) => ({ ...prev, [item.studentId]: v }));
                                           scheduleSave(item.studentId, v);
                                         }}
-                                        placeholder="輸入備註（自動儲存）"
+                                        placeholder={t.remarkPlaceholder}
                                         rows={3}
                                         className="w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-800 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
                                       />
                                       <p className="mt-1 text-[11px] text-slate-500">
-                                        {savingById[item.studentId] ? "儲存中..." : "已自動儲存"}
+                                        {savingById[item.studentId] ? t.saving : t.autoSaved}
                                       </p>
                                     </div>
                                   ) : null}
@@ -280,7 +367,7 @@ export default function DayTimetableTable({
                 {showRegularCapacitySummary ? (
                   <tr key={`${frame.time}-cap`} className="bg-emerald-50/90">
                     <td className="border border-emerald-200/80 px-2 py-1.5 text-xs font-medium text-emerald-900">
-                      餘額
+                      {t.balanceRow}
                     </td>
                     {ROOM_GROUPS.map((room) => {
                       const slotKey = `${frame.time}::${room}`;
@@ -294,12 +381,12 @@ export default function DayTimetableTable({
                           colSpan={COLS_PER_ROOM}
                           className="border border-emerald-200/80 px-2 py-1.5 text-xs text-emerald-950"
                         >
-                          恆常{" "}
+                          {t.regularCount}{" "}
                           <span className="font-semibold tabular-nums">{regularCount}</span>
                           {" · "}
-                          上限 <span className="tabular-nums">{maxSlots}</span>
+                          {t.cap} <span className="tabular-nums">{maxSlots}</span>
                           {" · "}
-                          餘{" "}
+                          {t.remaining}{" "}
                           <span
                             className={`font-semibold tabular-nums ${remaining === 0 ? "text-amber-800" : ""}`}
                           >

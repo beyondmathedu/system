@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { unstable_cache } from "next/cache";
+import { SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
 import {
   LESSON_TYPE_DISPLAY_PRIORITY,
   type YearLessonRecord,
@@ -9,6 +10,11 @@ import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorVisibility";
+import type {
+  DayTimetableFeePaymentTone,
+  DayTimetableStyleSettings,
+} from "@/lib/dayTimetableStyleSettings";
+import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings";
 
 export const ROOM_GROUPS = ["B", "M前", "M後", "Hope", "Hope 2"] as const;
 
@@ -39,9 +45,22 @@ export type DayTimetablePayload = {
   rowFrames: DayTimetableRowFrame[];
   /** 各房恆常每時段人數上限（Rooms 可改；未設定欄位時用預設） */
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
+  /** 依 student_monthly_fee_records 粗算 */
+  feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>;
+  /** 課表底色／學費色帶／回溯設定（可在 Daily／恆常課表頁編輯） */
+  timetableStyle: DayTimetableStyleSettings;
 };
 
 const FALLBACK_CELL_BG = "#f1f5f9";
+const PERF_LOG_ENABLED = process.env.ENABLE_PERF_LOGS === "1";
+const EMPTY_RECORDS: YearLessonRecord[] = [];
+const EMPTY_YEAR_STATE: YearLessonState = {
+  attendance: {},
+  hiddenDates: {},
+  overrides: {},
+  rescheduleEntries: [],
+  extraEntries: [],
+};
 
 type StudentRow = {
   id: string;
@@ -128,6 +147,12 @@ type DayBuiltRow = {
   noteDisplay: string;
 };
 
+type DayCandidateIndex = {
+  weekdaySet: Set<string>;
+  extraDateSet: Set<string>;
+  rescheduleToDateSet: Set<string>;
+};
+
 function buildRowsForTargetDate(
   records: YearLessonRecord[],
   state: YearLessonState,
@@ -159,33 +184,29 @@ function buildRowsForTargetDate(
     rowId: string;
   };
   const rows: Row[] = [];
+  const rescheduleByFromDate = new Map<string, YearLessonState["rescheduleEntries"][number]>();
+  for (const e of state.rescheduleEntries) {
+    if (!rescheduleByFromDate.has(e.fromDate)) rescheduleByFromDate.set(e.fromDate, e);
+  }
 
   const rule = activeRule;
   if (rule && targetWeekday === rule.weekday && !state.hiddenDates[targetDateIso]) {
     const ov = state.overrides[targetDateIso];
+    const rescheduled = rescheduleByFromDate.get(targetDateIso);
     rows.push({
       date: targetDateIso,
       time: (ov?.time ?? rule.time).toString(),
       room: (ov?.room ?? rule.room).toString(),
-      rowKind: "normal",
+      rowKind: rescheduled ? "cancelled_original" : "normal",
       baseRule: rule,
       fromExtra: false,
-      rowId: `${targetDateIso}-gen`,
+      rowId: rescheduled ? `cancelled-${rescheduled.id}-${targetDateIso}` : `${targetDateIso}-gen`,
     });
   }
 
   for (const e of state.rescheduleEntries) {
-    const idx = rows.findIndex((r) => r.date === e.fromDate && r.rowKind === "normal");
-    if (idx === -1) continue;
-    const orig = rows[idx];
-    rows.splice(idx, 1, {
-      ...orig,
-      time: orig.baseRule ? (state.overrides[e.fromDate]?.time ?? orig.baseRule.time).toString() : orig.time,
-      room: orig.baseRule ? (state.overrides[e.fromDate]?.room ?? orig.baseRule.room).toString() : orig.room,
-      rowKind: "cancelled_original",
-      rowId: `cancelled-${e.id}-${e.fromDate}`,
-    });
-    rows.splice(idx + 1, 0, {
+    if (e.toDate !== targetDateIso) continue;
+    rows.push({
       date: e.toDate,
       time: e.time,
       room: e.room,
@@ -306,7 +327,86 @@ function normalizeRecords(raw: unknown): YearLessonRecord[] {
     .filter((r) => r.weekday && r.room);
 }
 
-export function normalizeRoom(roomRaw: string) {
+function buildDayCandidateIndex(records: YearLessonRecord[], state: YearLessonState): DayCandidateIndex {
+  const weekdaySet = new Set<string>();
+  for (const r of records) {
+    if (r.weekday) weekdaySet.add(r.weekday);
+  }
+
+  const extraDateSet = new Set<string>();
+  for (const e of state.extraEntries) {
+    if (e.date) extraDateSet.add(e.date);
+  }
+
+  const rescheduleToDateSet = new Set<string>();
+  for (const e of state.rescheduleEntries) {
+    if (e.toDate) rescheduleToDateSet.add(e.toDate);
+  }
+
+  return { weekdaySet, extraDateSet, rescheduleToDateSet };
+}
+
+/** 由當月往前共 `count` 個曆月（含當月），最舊在前 */
+function lookbackCalendarMonthsInclusive(endY: number, endM: number, count: number): { y: number; m: number }[] {
+  const rev: { y: number; m: number }[] = [];
+  let y = endY;
+  let m = endM;
+  for (let i = 0; i < count; i++) {
+    rev.push({ y, m });
+    m -= 1;
+    if (m < 1) {
+      m = 12;
+      y -= 1;
+    }
+  }
+  return rev.reverse();
+}
+
+function buildFeePaymentToneByStudentId(
+  studentIds: string[],
+  feeRows: Array<{ student_id?: string; year?: number; month?: number; submitted_amount?: number | null }>,
+  refYear: number,
+  refMonth: number,
+  lookbackMonths: number,
+  heavyUnpaidThreshold: number,
+): Record<string, DayTimetableFeePaymentTone> {
+  const amountByKey = new Map<string, number>();
+  for (const r of feeRows) {
+    const sid = String((r as { student_id?: string }).student_id ?? "");
+    const y = Number((r as { year?: number }).year);
+    const mo = Number((r as { month?: number }).month);
+    if (!sid || !Number.isFinite(y) || !Number.isFinite(mo)) continue;
+    const amt = Number((r as { submitted_amount?: number }).submitted_amount ?? 0) || 0;
+    amountByKey.set(`${sid}-${y}-${mo}`, amt);
+  }
+  function amountFor(sid: string, y: number, mo: number): number {
+    return amountByKey.get(`${sid}-${y}-${mo}`) ?? 0;
+  }
+  const window = lookbackCalendarMonthsInclusive(
+    refYear,
+    refMonth,
+    Math.min(24, Math.max(2, lookbackMonths)),
+  );
+  const threshold = Math.min(24, Math.max(1, heavyUnpaidThreshold));
+  const out: Record<string, DayTimetableFeePaymentTone> = {};
+  for (const sid of studentIds) {
+    let unpaidInWindow = 0;
+    for (const { y, m } of window) {
+      if (amountFor(sid, y, m) <= 0) unpaidInWindow += 1;
+    }
+    const currentUnpaid = amountFor(sid, refYear, refMonth) <= 0;
+    if (unpaidInWindow >= threshold) {
+      out[sid] = "many_months_unpaid";
+    } else if (currentUnpaid) {
+      out[sid] = "unpaid_current";
+    } else {
+      out[sid] = "ok";
+    }
+  }
+  return out;
+}
+
+function normalizeRoom(roomRaw: string) {
   const raw = (roomRaw ?? "").trim().toLowerCase();
   if (!raw) return "";
   const compact = raw
@@ -369,6 +469,8 @@ async function fetchDayTimetablePayloadUncached(
   day: number,
   options: FetchDayTimetableOptions,
 ): Promise<DayTimetablePayload> {
+  const perfStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
+  const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const dateIso = toDayIso(year, month, day);
   const targetWeekday = weekdayCnFromIsoDate(dateIso);
   const titleDate = `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
@@ -383,6 +485,7 @@ async function fetchDayTimetablePayloadUncached(
     { data: visibilityRows },
     { data: tutorRows },
     { data: classroomRows },
+    timetableStyle,
   ] = await Promise.all([
     supabase.from("students").select("id, name_zh, name_en, nickname_en, grade").order("id"),
     supabase.from("student_lesson_records").select("student_id, records"),
@@ -396,7 +499,9 @@ async function fetchDayTimetablePayloadUncached(
     supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
     supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
     supabase.from("classrooms").select("name, regular_period_max"),
+    loadDayTimetableStyleSettings(),
   ]);
+  const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
 
   const regularPeriodMaxByRoom = buildRegularPeriodMaxByRoom(
     classroomRows as Array<{ name?: string | null; regular_period_max?: number | null }> | null,
@@ -409,6 +514,10 @@ async function fetchDayTimetablePayloadUncached(
   for (const row of recRows ?? []) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (sid) recordsById.set(sid, (row as { records?: unknown }).records);
+  }
+  const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
+  for (const [sid, raw] of recordsById) {
+    normalizedRecordsById.set(sid, normalizeRecords(raw));
   }
   const stateById = new Map<string, YearLessonState>();
   for (const row of stateRows ?? []) {
@@ -447,22 +556,20 @@ async function fetchDayTimetablePayloadUncached(
     });
     if (inactiveEffective && inactiveEffective <= dateIso) continue;
 
-    const records = normalizeRecords(recordsById.get(st.id));
-    const state = stateById.get(st.id) ?? {
-      attendance: {},
-      hiddenDates: {},
-      overrides: {},
-      rescheduleEntries: [],
-      extraEntries: [],
-    };
+    const records = normalizedRecordsById.get(st.id) ?? EMPTY_RECORDS;
+    const state = stateById.get(st.id) ?? EMPTY_YEAR_STATE;
+    const index = buildDayCandidateIndex(records, state);
 
     // 快速剪枝：若該生在這一天不可能有課，跳過整年展開（最耗時）。
-    const hasRegularOnWeekday = targetWeekday
-      ? records.some((r) => r.weekday === targetWeekday)
-      : records.length > 0;
-    const hasExtraOnDate = state.extraEntries.some((e) => e.date === dateIso);
-    const hasRescheduleToDate = state.rescheduleEntries.some((e) => e.toDate === dateIso);
+    const hasRegularOnWeekday = targetWeekday ? index.weekdaySet.has(targetWeekday) : records.length > 0;
+    const hasExtraOnDate = index.extraDateSet.has(dateIso);
+    const hasRescheduleToDate = index.rescheduleToDateSet.has(dateIso);
     if (!hasRegularOnWeekday && !hasExtraOnDate && !hasRescheduleToDate) continue;
+
+    const studentDisplayName = formatStudentDisplayName(
+      { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
+      "compact",
+    );
 
     const dayRows = buildRowsForTargetDate(records, state, dateIso, targetWeekday)
       .map((r) => ({ ...r, normalizedRoom: normalizeRoom(r.room) }))
@@ -485,10 +592,7 @@ async function fetchDayTimetablePayloadUncached(
           : undefined;
       list.push({
         studentId: st.id,
-        name: formatStudentDisplayName(
-          { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
-          "compact",
-        ),
+        name: studentDisplayName,
         grade: st.grade ?? "",
         scheduleRemarks: row.noteDisplay ?? "",
         lessonType: row.lessonType,
@@ -520,7 +624,34 @@ async function fetchDayTimetablePayloadUncached(
     return { time, maxRows };
   });
 
-  return {
+  const studentIdsOnTimetable = new Set<string>();
+  for (const list of Object.values(byTimeRoom)) {
+    for (const c of list) {
+      studentIdsOnTimetable.add(c.studentId);
+    }
+  }
+  let feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone> = {};
+  if (studentIdsOnTimetable.size > 0) {
+    const { data: feeRows } = await supabase
+      .from("student_monthly_fee_records")
+      .select("student_id, year, month, submitted_amount")
+      .in("student_id", Array.from(studentIdsOnTimetable));
+    feePaymentToneByStudentId = buildFeePaymentToneByStudentId(
+      Array.from(studentIdsOnTimetable),
+      (feeRows ?? []) as Array<{
+        student_id?: string;
+        year?: number;
+        month?: number;
+        submitted_amount?: number | null;
+      }>,
+      year,
+      month,
+      timetableStyle.feeLookbackMonths,
+      timetableStyle.feeHeavyUnpaidThreshold,
+    );
+  }
+
+  const payload = {
     year,
     month,
     day,
@@ -531,14 +662,29 @@ async function fetchDayTimetablePayloadUncached(
     byTimeRoom,
     rowFrames,
     regularPeriodMaxByRoom,
+    feePaymentToneByStudentId,
+    timetableStyle,
   };
+
+  if (PERF_LOG_ENABLED) {
+    const elapsedMs = Date.now() - perfStartedAt;
+    const computeMs = Math.max(0, elapsedMs - perfDbElapsedMs);
+    console.info(
+      `[perf] fetchDayTimetablePayloadUncached y=${year} m=${month} d=${day} regularOnly=${String(
+        options.regularOnly,
+      )} students=${studentList.length} timeSlots=${rowFrames.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
+    );
+  }
+
+  return payload;
 }
 
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v1"],
-  { revalidate: 20 },
+  ["day-timetable-payload-v3"],
+  /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
+  { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
 export async function fetchDayTimetablePayload(

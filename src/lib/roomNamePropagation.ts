@@ -1,3 +1,4 @@
+import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
 import { supabase } from "@/lib/supabase";
 
 const PAGE = 500;
@@ -251,6 +252,7 @@ export async function propagateClassroomNameChange(
     offset += PAGE;
   }
 
+  notifyScheduleCachesStale();
   return { ok: true, stats };
 }
 

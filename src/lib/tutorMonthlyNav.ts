@@ -9,9 +9,16 @@ export type TutorNavEntry = {
   displayName: string;
   englishName: string;
   status: TutorNavStatus;
+  /** Tutor 頁 MPF；欄位不存在時為 false */
+  mpfEnabled: boolean;
   /** 與課表 tutor 欄／覆寫顯示名稱比對 */
   matchNames: string[];
 };
+
+function isMpfColumnMissingMessage(message: string | undefined): boolean {
+  const m = String(message ?? "");
+  return /\bmpf_enabled\b/i.test(m) && /\bdoes not exist\b/i.test(m);
+}
 
 function rankStatus(s: string): number {
   const i = STATUS_ORDER.indexOf(s as TutorNavStatus);
@@ -25,6 +32,7 @@ function rowToEntry(row: {
   name_en?: string | null;
   nickname_en?: string | null;
   status?: string | null;
+  mpf_enabled?: boolean | null;
 }): TutorNavEntry {
   const statusRaw = String(row.status ?? "工作中").trim();
   const status = STATUS_ORDER.includes(statusRaw as TutorNavStatus)
@@ -34,37 +42,75 @@ function rowToEntry(row: {
   const z = String(row.name_zh ?? "").trim();
   const e = String(row.name_en ?? "").trim();
   const nick = String(row.nickname_en ?? "").trim();
-  // 與 /tutor（teacher）頁一致：中文名稱優先顯示
-  const displayName = z || n || e || nick || row.id;
-  const englishName = e || n || z || nick || row.id;
+  // Prefer Tutor page "Nickname" (name_zh), then legacy nickname_en, then English.
+  const displayName = z || nick || e || n || row.id;
+  const englishName = e || nick || z || n || row.id;
   const matchNames = [...new Set([n, z, e, nick].filter(Boolean))];
-  return { id: row.id, displayName, englishName, status, matchNames };
+  return {
+    id: row.id,
+    displayName,
+    englishName,
+    status,
+    mpfEnabled: Boolean(row.mpf_enabled),
+    matchNames,
+  };
 }
 
-export async function fetchTutorsForMonthlyLessonNav(): Promise<TutorNavEntry[]> {
-  const { data, error } = await supabase
-    .from("tutors")
-    .select("id, name, name_zh, name_en, nickname_en, status")
-    .order("id");
-  if (error || !data?.length) return [];
-  const entries = data.map((row) => rowToEntry(row));
+const TUTORS_SELECT_WITH_MPF =
+  "id, name, name_zh, name_en, nickname_en, status, mpf_enabled";
+const TUTORS_SELECT_BASE = "id, name, name_zh, name_en, nickname_en, status";
+
+type TutorRowForNav = Parameters<typeof rowToEntry>[0];
+
+export async function fetchTutorsForMonthlyLessonNav(): Promise<{
+  tutors: TutorNavEntry[];
+  mpfFilterApplied: boolean;
+}> {
+  let mpfFilterApplied = false;
+  const first = await supabase.from("tutors").select(TUTORS_SELECT_WITH_MPF).order("id");
+  let rows: TutorRowForNav[] | null = first.data as TutorRowForNav[] | null;
+  let error = first.error;
+  if (error && isMpfColumnMissingMessage(error.message)) {
+    const second = await supabase.from("tutors").select(TUTORS_SELECT_BASE).order("id");
+    rows = second.data as TutorRowForNav[] | null;
+    error = second.error;
+    mpfFilterApplied = false;
+  } else if (!error) {
+    mpfFilterApplied = true;
+  }
+  if (error || !rows?.length) return { tutors: [], mpfFilterApplied };
+  let entries = rows.map((row) => rowToEntry(row));
+  if (mpfFilterApplied) {
+    entries = entries.filter((e) => e.mpfEnabled);
+  }
   entries.sort((a, b) => {
     const ra = rankStatus(a.status);
     const rb = rankStatus(b.status);
     if (ra !== rb) return ra - rb;
     return a.id.localeCompare(b.id);
   });
-  return entries;
+  return { tutors: entries, mpfFilterApplied };
 }
 
 export async function fetchTutorNavEntryById(id: string): Promise<TutorNavEntry | null> {
-  const { data, error } = await supabase
+  const first = await supabase
     .from("tutors")
-    .select("id, name, name_zh, name_en, nickname_en, status")
+    .select(TUTORS_SELECT_WITH_MPF)
     .eq("id", id)
     .maybeSingle();
-  if (error || !data) return null;
-  return rowToEntry(data);
+  let row: TutorRowForNav | null = first.data as TutorRowForNav | null;
+  let error = first.error;
+  if (error && isMpfColumnMissingMessage(error.message)) {
+    const second = await supabase
+      .from("tutors")
+      .select(TUTORS_SELECT_BASE)
+      .eq("id", id)
+      .maybeSingle();
+    row = second.data as TutorRowForNav | null;
+    error = second.error;
+  }
+  if (error || !row) return null;
+  return rowToEntry(row);
 }
 
 export const TUTOR_NAV_STATUS_LABEL: Record<TutorNavStatus, string> = {

@@ -31,6 +31,7 @@ type StudentSummary = {
   nicknameEn: string;
   grade: string;
   school: string;
+  textbookPublisher: string;
 };
 
 export default function StudentLessonsPage() {
@@ -45,6 +46,7 @@ export default function StudentLessonsPage() {
     nicknameEn: "",
     grade: "",
     school: "",
+    textbookPublisher: "",
   });
   const [studentLoaded, setStudentLoaded] = useState(false);
   const [studentNotFound, setStudentNotFound] = useState(false);
@@ -80,7 +82,7 @@ export default function StudentLessonsPage() {
       void (async () => {
         const { data } = await supabase
           .from("students")
-          .select("id, name_zh, name_en, nickname_en, grade, school")
+          .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
           .eq("id", studentId)
           .maybeSingle();
 
@@ -92,6 +94,7 @@ export default function StudentLessonsPage() {
             nicknameEn: "",
             grade: "",
             school: "",
+            textbookPublisher: "",
           });
           setStudentNotFound(true);
           setStudentLoaded(true);
@@ -104,6 +107,7 @@ export default function StudentLessonsPage() {
           nicknameEn: data.nickname_en ?? "",
           grade: data.grade ?? "",
           school: data.school ?? "",
+          textbookPublisher: data.textbook_publisher ?? "",
         });
         setStudentLoaded(true);
       })();
@@ -214,14 +218,14 @@ export default function StudentLessonsPage() {
               <Link
                 href="/students"
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
-                aria-label="返回學生列表"
+                aria-label="Back to students list"
               >
                 ←
               </Link>
-              <h1 className="text-2xl font-bold tracking-tight">學生獨立課堂記錄</h1>
+              <h1 className="text-2xl font-bold tracking-tight">Student Lesson Record</h1>
             </div>
             <p className="mt-1 text-sm text-blue-100">
-              學號：{studentId || "—"} | 學生：{" "}
+              Student ID: {studentId || "—"} | Student:{" "}
               {formatStudentDisplayNameOrEmpty(
                 {
                   id: studentSummary.id,
@@ -237,19 +241,19 @@ export default function StudentLessonsPage() {
 
           {studentLoaded && studentNotFound && (
             <div className="mx-6 mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              找不到學號 {studentId} 的學生資料。你仍可先設定資料，但建議先到 Students 頁新增該學生。
+              Student record {studentId} was not found. You can still configure this page first, but we recommend adding the student in the Students page.
             </div>
           )}
 
           <div className="border-b border-slate-200 bg-slate-50 p-6">
             <div className="space-y-5">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
                 <div>
-                  <p className="text-xs font-semibold tracking-wider text-slate-500">學號</p>
+                  <p className="text-xs font-semibold tracking-wider text-slate-500">Student ID</p>
                   <p className="mt-1 text-sm font-bold text-slate-900">{studentId || "—"}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold tracking-wider text-slate-500">學生姓名</p>
+                  <p className="text-xs font-semibold tracking-wider text-slate-500">Student Name</p>
                   <p className="mt-1 text-sm font-bold text-slate-900">
                     {formatStudentDisplayNameOrEmpty(
                       {
@@ -263,18 +267,22 @@ export default function StudentLessonsPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold tracking-wider text-slate-500">就讀年級</p>
+                  <p className="text-xs font-semibold tracking-wider text-slate-500">Grade</p>
                   <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(studentSummary.grade) || "—"}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold tracking-wider text-slate-500">就讀學校</p>
+                  <p className="text-xs font-semibold tracking-wider text-slate-500">School</p>
                   <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.school || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold tracking-wider text-slate-500">Textbook publisher</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.textbookPublisher || "—"}</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-[auto_1fr] md:items-start">
                 <div>
-                  <p className="text-xs font-semibold tracking-wider text-slate-500">學生模式（全系統顯示）</p>
+                  <p className="text-xs font-semibold tracking-wider text-slate-500">Student Mode (Global Visibility)</p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <select
                       value={visibilityMode}
@@ -308,26 +316,28 @@ export default function StudentLessonsPage() {
                           }
                         })();
                       }}
-                      className="rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {visibilitySaving ? "儲存中..." : "儲存 Mode"}
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                        <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
+                      </svg>
+                      <span suppressHydrationWarning>{visibilitySaving ? "Saving..." : "Save"}</span>
                     </button>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
-                    Inactive 於生效日開始，會在 `rooms`、`daily-time-table`、`students-lesson-time-fee-record` 隱藏。
+                    When mode is Inactive and effective date starts, this student will be hidden in `rooms`, `daily-time-table`, and `students-lesson-time-fee-record`.
                   </p>
                 </div>
 
                 <div>
-                  <p className="text-xs font-semibold tracking-wider text-slate-500">最近考試日期</p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <ExamDateField studentId={studentId} initialValue="" />
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex whitespace-nowrap rounded-md bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800">
-                        補堂數目 {upcomingUntickedCount}
+                        Makeup Count {upcomingUntickedCount}
                       </span>
                       <span className="inline-flex rounded-md bg-sky-100 px-3 py-2 text-sm font-bold text-sky-800">
-                        當月未上堂數 {currentMonthUntickedCount}
+                        Unattended This Month {currentMonthUntickedCount}
                       </span>
                     </div>
                   </div>
@@ -335,7 +345,7 @@ export default function StudentLessonsPage() {
               </div>
 
               <div>
-                <p className="text-xs font-semibold tracking-wider text-slate-500">年份</p>
+                <p className="text-xs font-semibold tracking-wider text-slate-500">Year</p>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   {availableYears.map((year) => (
                     <Link
@@ -352,7 +362,7 @@ export default function StudentLessonsPage() {
           </div>
 
           <div className="p-6">
-            <h2 className="mb-4 text-lg font-bold text-slate-900">上課時段設定</h2>
+            <h2 className="mb-4 text-lg font-bold text-slate-900">Lesson Schedule Settings</h2>
             <LessonScheduleGrid studentId={studentId} />
           </div>
         </div>

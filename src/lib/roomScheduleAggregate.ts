@@ -1,17 +1,20 @@
+import { unstable_cache } from "next/cache";
+import { SCHEDULE_CACHE_TAG_AGGREGATES } from "@/lib/scheduleCacheTags";
 import { fetchClassroomScheduleLabel } from "@/lib/classroomsRegistry";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 import { supabase } from "@/lib/supabase";
 import { isInactiveTutorName, loadInactiveTutorNames } from "@/lib/tutorVisibility";
 import {
-  buildYearScheduleRows,
-  filterRowsByRoomAndMonth,
+  buildYearScheduleRowsForMonth,
   formatDateSlash,
   sortAggregatedRoomRows,
   weekdayCnParen,
   type YearLessonRecord,
   type YearLessonState,
 } from "@/lib/yearScheduleCore";
+
+const PERF_LOG_ENABLED = process.env.ENABLE_PERF_LOGS === "1";
 
 export type RoomScheduleRow = {
   rowKey: string;
@@ -28,6 +31,7 @@ export type RoomScheduleRow = {
   tutor: string;
   note: string;
   school: string;
+  textbookPublisher: string;
   /** 對應試算表「主頁 E2」；目前資料庫無獨立欄位，保留空白 */
   profileExtra: string;
   lessonType: string;
@@ -159,6 +163,22 @@ function normalizeRecords(raw: unknown): YearLessonRecord[] {
   return out;
 }
 
+function hasTutorNameCandidate(
+  records: YearLessonRecord[],
+  state: YearLessonState,
+  nameSet: Set<string>,
+): boolean {
+  for (const r of records) {
+    const t = String(r.tutor ?? "").trim();
+    if (t && nameSet.has(t)) return true;
+  }
+  for (const ov of Object.values(state.overrides)) {
+    const t = String(ov?.tutor ?? "").trim();
+    if (t && nameSet.has(t)) return true;
+  }
+  return false;
+}
+
 async function loadStatesForYear(
   studentIds: string[],
   year: number,
@@ -199,6 +219,7 @@ type ScheduleStudentRow = {
   nickname_en: string | null;
   grade: string | null;
   school: string | null;
+  textbook_publisher: string | null;
 };
 
 type StudentsScheduleBundle = {
@@ -214,7 +235,7 @@ async function loadStudentsScheduleBundle(year: number): Promise<{
 }> {
   const { data: students, error: stErr } = await supabase
     .from("students")
-    .select("id, name_zh, name_en, nickname_en, grade, school")
+    .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
     .order("id");
 
   if (stErr) {
@@ -284,17 +305,21 @@ async function loadStudentsScheduleBundle(year: number): Promise<{
   };
 }
 
-export async function fetchRoomScheduleAggregate(
+async function fetchRoomScheduleAggregateUncached(
   slug: string,
   year: number,
   month: number,
+  options?: { startIso?: string; endIso?: string },
 ): Promise<{ roomLabel: string; rows: RoomScheduleRow[]; loadError: string | null }> {
+  const perfStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
+  const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const roomLabel = await fetchClassroomScheduleLabel(slug);
   if (!roomLabel) {
     return { roomLabel: "", rows: [], loadError: null };
   }
 
   const { bundle, error } = await loadStudentsScheduleBundle(year);
+  const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
   if (error) {
     return { roomLabel, rows: [], loadError: error };
   }
@@ -303,13 +328,34 @@ export async function fetchRoomScheduleAggregate(
   }
 
   const { students, recMap, stateMap, inactiveEffectiveById } = bundle;
+  const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
+  for (const st of students) {
+    normalizedRecordsById.set(st.id, normalizeRecords(recMap.get(st.id)));
+  }
+  const startIso = options?.startIso?.trim() || "";
+  const endIso = options?.endIso?.trim() || "";
+  const rangeActive = Boolean(startIso && endIso);
+  const monthsToLoad = (() => {
+    if (!rangeActive) return [month];
+    const sm = Number(startIso.slice(5, 7));
+    const em = Number(endIso.slice(5, 7));
+    if (!Number.isFinite(sm) || !Number.isFinite(em)) return [month];
+    if (sm === em) return [Math.min(12, Math.max(1, sm))];
+    const set = new Set<number>([
+      Math.min(12, Math.max(1, sm)),
+      Math.min(12, Math.max(1, em)),
+    ]);
+    return Array.from(set).sort((a, b) => a - b);
+  })();
   const out: RoomScheduleRow[] = [];
 
   for (const st of students) {
-    const records = normalizeRecords(recMap.get(st.id));
+    const records = normalizedRecordsById.get(st.id) ?? [];
     const state = stateMap.get(st.id) ?? emptyState();
-    const built = buildYearScheduleRows(records, state, year);
-    const filtered = filterRowsByRoomAndMonth(built, roomLabel, month);
+    const monthRows = monthsToLoad.flatMap((m) => buildYearScheduleRowsForMonth(records, state, year, m));
+    const filtered = monthRows
+      .filter((r) => r.lessonType !== "取消" && r.room.trim() === roomLabel)
+      .filter((r) => (!rangeActive ? true : r.date >= startIso && r.date <= endIso));
     const inactiveEffective = inactiveEffectiveById.get(st.id);
     const visibilityFiltered = inactiveEffective
       ? filtered.filter((r) => r.date < inactiveEffective)
@@ -319,9 +365,9 @@ export async function fetchRoomScheduleAggregate(
       "full",
     );
 
-    for (const r of visibilityFiltered) {
+    for (const [idx, r] of visibilityFiltered.entries()) {
       out.push({
-        rowKey: `${st.id}:${r.rowId}`,
+        rowKey: `${st.id}:${r.rowId}:${r.date}:${r.time}:${idx}`,
         studentId: st.id,
         studentName: name,
         grade: (st.grade ?? "").toString(),
@@ -335,6 +381,7 @@ export async function fetchRoomScheduleAggregate(
         tutor: r.tutorDisplay,
         note: r.noteDisplay,
         school: (st.school ?? "").toString(),
+        textbookPublisher: (st.textbook_publisher ?? "").toString(),
         profileExtra: "",
         lessonType: r.lessonType,
         sortTime: r.sortTime,
@@ -347,7 +394,32 @@ export async function fetchRoomScheduleAggregate(
     if (isInactiveTutorName(inactiveNames, r.tutor)) r.tutor = "";
   }
 
-  return { roomLabel, rows: sortAggregatedRoomRows(out), loadError: null };
+  const sortedRows = sortAggregatedRoomRows(out);
+  if (PERF_LOG_ENABLED) {
+    const elapsedMs = Date.now() - perfStartedAt;
+    const computeMs = Math.max(0, elapsedMs - perfDbElapsedMs);
+    console.info(
+      `[perf] fetchRoomScheduleAggregate slug=${slug} room=${roomLabel} y=${year} m=${month} students=${students.length} rows=${sortedRows.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
+    );
+  }
+  return { roomLabel, rows: sortedRows, loadError: null };
+}
+
+/** Cached full-room expand (heavy); short TTL keeps edits near-real-time while cutting repeat DB load. */
+export async function fetchRoomScheduleAggregate(
+  slug: string,
+  year: number,
+  month: number,
+  options?: { startIso?: string; endIso?: string },
+): Promise<{ roomLabel: string; rows: RoomScheduleRow[]; loadError: string | null }> {
+  const startIso = options?.startIso?.trim() ?? "";
+  const endIso = options?.endIso?.trim() ?? "";
+  const slugKey = slug.trim().toLowerCase();
+  return unstable_cache(
+    async () => fetchRoomScheduleAggregateUncached(slug, year, month, { startIso, endIso }),
+    ["room-schedule-aggregate-v1", slugKey, String(year), String(month), startIso, endIso],
+    { revalidate: 45, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+  )();
 }
 
 /** 導師月度上堂明細（與學生課表／房間課表同一套展開邏輯）；依課表上的導師顯示名稱比對 */
@@ -367,17 +439,20 @@ export type TutorMonthLessonRow = {
   sortTime: string;
 };
 
-export async function fetchTutorMonthLessonRows(
+async function fetchTutorMonthLessonRowsUncached(
   tutorDisplayNames: string[],
   year: number,
   month: number,
 ): Promise<{ rows: TutorMonthLessonRow[]; loadError: string | null }> {
+  const perfStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
+  const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const nameSet = new Set(tutorDisplayNames.map((s) => s.trim()).filter(Boolean));
   if (nameSet.size === 0) {
     return { rows: [], loadError: null };
   }
 
   const { bundle, error } = await loadStudentsScheduleBundle(year);
+  const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
   if (error) {
     return { rows: [], loadError: error };
   }
@@ -386,15 +461,22 @@ export async function fetchTutorMonthLessonRows(
   }
 
   const { students, recMap, stateMap, inactiveEffectiveById } = bundle;
-  const monthPrefix = `${year}-${String(month).padStart(2, "0")}`;
   const out: TutorMonthLessonRow[] = [];
-
+  const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
+  const hasTutorCandidateById = new Map<string, boolean>();
   for (const st of students) {
     const records = normalizeRecords(recMap.get(st.id));
+    normalizedRecordsById.set(st.id, records);
     const state = stateMap.get(st.id) ?? emptyState();
-    const built = buildYearScheduleRows(records, state, year);
-    let filtered = built.filter(
-      (r) => r.date.startsWith(monthPrefix) && r.lessonType !== "取消",
+    hasTutorCandidateById.set(st.id, hasTutorNameCandidate(records, state, nameSet));
+  }
+
+  for (const st of students) {
+    const records = normalizedRecordsById.get(st.id) ?? [];
+    const state = stateMap.get(st.id) ?? emptyState();
+    if (!hasTutorCandidateById.get(st.id)) continue;
+    let filtered = buildYearScheduleRowsForMonth(records, state, year, month).filter(
+      (r) => r.lessonType !== "取消",
     );
     const inactiveEffective = inactiveEffectiveById.get(st.id);
     if (inactiveEffective) {
@@ -426,5 +508,29 @@ export async function fetchTutorMonthLessonRows(
     }
   }
 
-  return { rows: sortAggregatedRoomRows(out), loadError: null };
+  const sortedRows = sortAggregatedRoomRows(out);
+  if (PERF_LOG_ENABLED) {
+    const elapsedMs = Date.now() - perfStartedAt;
+    const computeMs = Math.max(0, elapsedMs - perfDbElapsedMs);
+    console.info(
+      `[perf] fetchTutorMonthLessonRows y=${year} m=${month} nameCount=${nameSet.size} students=${students.length} rows=${sortedRows.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
+    );
+  }
+  return { rows: sortedRows, loadError: null };
+}
+
+export async function fetchTutorMonthLessonRows(
+  tutorDisplayNames: string[],
+  year: number,
+  month: number,
+): Promise<{ rows: TutorMonthLessonRow[]; loadError: string | null }> {
+  const nameKey = [...new Set(tutorDisplayNames.map((s) => s.trim()).filter(Boolean))]
+    .sort()
+    .join("\0");
+  if (!nameKey) return { rows: [], loadError: null };
+  return unstable_cache(
+    async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
+    ["tutor-month-lessons-v1", nameKey, String(year), String(month)],
+    { revalidate: 45, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+  )();
 }

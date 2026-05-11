@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export type AppRole = "admin" | "tutor" | "student";
@@ -10,7 +11,7 @@ export type ViewerContext = {
   allowedRoomSlugs: string[];
 };
 
-export async function getViewerContext(): Promise<ViewerContext> {
+async function getViewerContextUncached(): Promise<ViewerContext> {
   const supabase = await createSupabaseServerClient();
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth.user?.id ?? null;
@@ -45,3 +46,6 @@ export async function getViewerContext(): Promise<ViewerContext> {
 
   return { userId, role, tutorId, studentId, allowedRoomSlugs };
 }
+
+/** One Auth + profile fetch per React request tree (dedupes duplicate imports). */
+export const getViewerContext = cache(getViewerContextUncached);

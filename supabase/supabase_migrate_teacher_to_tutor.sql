@@ -58,6 +58,7 @@ alter table public.tutors add column if not exists name_en text not null default
 alter table public.tutors add column if not exists nickname_en text not null default '';
 alter table public.tutors add column if not exists status text not null default '工作中';
 alter table public.tutors add column if not exists color_hex text not null default '';
+alter table public.tutors add column if not exists mpf_enabled boolean not null default false;
 
 alter table public.tutors drop constraint if exists teachers_status_check;
 alter table public.tutors drop constraint if exists tutors_status_check;

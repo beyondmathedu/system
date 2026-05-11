@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 type ZohoSalesReceipt = {
   sales_receipt_id?: string;
+  salesreceipt_id?: string;
   customer_id?: string;
   customer_name?: string;
   customer_name_formatted?: string;
@@ -23,8 +24,14 @@ type ZohoSalesReceiptListResponse = {
   sales_receipts?: ZohoSalesReceipt[];
   page_context?: { has_more_page?: boolean };
 };
-type ZohoSalesReceiptDetailResponse = { code?: number; sales_receipt?: ZohoSalesReceipt };
-type SyncRequestBody = { year?: number; month?: number };
+type ZohoSalesReceiptDetailResponse = {
+  code?: number;
+  message?: string;
+  sales_receipt?: ZohoSalesReceipt;
+  salesreceipt?: ZohoSalesReceipt;
+  sales_receipt_details?: ZohoSalesReceipt;
+};
+type SyncRequestBody = { year?: number; month?: number; studentIds?: string[]; idOnly?: boolean };
 type StudentNameRow = { id: string; name_zh: string | null; name_en: string | null; nickname_en: string | null };
 type ExistingFeeRow = {
   student_id: string;
@@ -171,18 +178,52 @@ async function fetchReceiptDetail(
   accessToken: string,
   orgId: string,
   receiptId: string,
-): Promise<ZohoSalesReceipt | null> {
+): Promise<{ receipt: ZohoSalesReceipt | null; errorCode?: number; errorMessage?: string }> {
   const url = `https://www.zohoapis.com/books/v3/salesreceipts/${encodeURIComponent(receiptId)}?organization_id=${encodeURIComponent(orgId)}`;
   const resp = await fetch(url, {
     headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
     cache: "no-store",
   });
-  const json = (await resp.json()) as ZohoSalesReceiptDetailResponse;
+  const rawText = await resp.text();
+  let json: ZohoSalesReceiptDetailResponse | null = null;
+  try {
+    json = JSON.parse(rawText) as ZohoSalesReceiptDetailResponse;
+  } catch {
+    return {
+      receipt: null,
+      errorCode: resp.status,
+      errorMessage: `non_json_response:${rawText.slice(0, 180)}`,
+    };
+  }
   if (json.code === 45) {
     throw new Error("ZOHO_RATE_LIMIT_EXCEEDED");
   }
-  if (!resp.ok || json.code !== 0) return null;
-  return json.sales_receipt ?? null;
+  if (!resp.ok || json.code !== 0) {
+    return {
+      receipt: null,
+      errorCode: Number(json.code ?? resp.status ?? -1),
+      errorMessage: String(json.message ?? `http_${resp.status}`),
+    };
+  }
+  const receipt = json.sales_receipt ?? json.salesreceipt ?? json.sales_receipt_details ?? null;
+  if (!receipt) {
+    return {
+      receipt: null,
+      errorCode: Number(json.code ?? resp.status ?? -1),
+      errorMessage: `missing_receipt_key:${Object.keys(json).join(",")}`,
+    };
+  }
+  return { receipt };
+}
+
+function pickLineItems(
+  receipt: ZohoSalesReceipt | null | undefined,
+): Array<NonNullable<ZohoSalesReceipt["line_items"]>[number]> {
+  if (!receipt || typeof receipt !== "object") return [];
+  const raw = receipt as ZohoSalesReceipt & { lineitems?: ZohoSalesReceipt["line_items"] };
+  if (Array.isArray(raw.line_items)) return raw.line_items;
+  if (Array.isArray(raw.lineitems)) return raw.lineitems;
+  return [];
 }
 
 async function mapWithConcurrency<T, R>(
@@ -216,16 +257,29 @@ export async function POST(request: Request) {
     if (!Number.isFinite(targetMonth) || targetMonth < 1 || targetMonth > 12) {
       return NextResponse.json({ ok: false, error: "invalid_month" }, { status: 400 });
     }
+    const idOnly = Boolean(body?.idOnly);
+    const requestedStudentIds = Array.isArray(body?.studentIds)
+      ? Array.from(
+          new Set(
+            body.studentIds
+              .map((v) => String(v ?? "").trim())
+              .filter(Boolean),
+          ),
+        )
+      : null;
     const orgId = process.env.ZOHO_ORG_ID ?? "";
     if (!orgId) {
       return NextResponse.json({ ok: false, error: "missing_org_id" }, { status: 500 });
     }
 
     const admin = getSupabaseAdmin();
-    const { data: students, error: stErr } = await admin
+    let studentsQuery = admin
       .from("students")
-      .select("id, name_zh, name_en, nickname_en")
-      .returns<StudentNameRow[]>();
+      .select("id, name_zh, name_en, nickname_en");
+    if (requestedStudentIds && requestedStudentIds.length > 0) {
+      studentsQuery = studentsQuery.in("id", requestedStudentIds);
+    }
+    const { data: students, error: stErr } = await studentsQuery.returns<StudentNameRow[]>();
     if (stErr) {
       return NextResponse.json({ ok: false, error: stErr.message }, { status: 500 });
     }
@@ -236,6 +290,7 @@ export async function POST(request: Request) {
       const id = String(s.id ?? "").trim();
       if (!id) continue;
       studentIdSet.add(id);
+      if (idOnly) continue;
       const zh = String(s.name_zh ?? "").trim();
       const en = String(s.name_en ?? "").trim();
       const nick = String(s.nickname_en ?? "").trim();
@@ -249,9 +304,13 @@ export async function POST(request: Request) {
     const accessToken = await getZohoAccessToken();
     const { dateStart, dateEnd } = buildSyncWindow(year, targetMonth);
     const receipts = await fetchAllReceipts(accessToken, orgId, dateStart, dateEnd);
-    const maxDetailCalls = 120;
+    const maxDetailCalls = 300;
     let detailCalls = 0;
     let skippedDetailByLimit = 0;
+    let detailFetchSuccess = 0;
+    let detailFetchEmpty = 0;
+    let detailFetchError = 0;
+    const detailErrorSamples: string[] = [];
 
     const qtyByStudentMonth = new Map<string, number>();
     let unmatchedReceipts = 0;
@@ -262,8 +321,8 @@ export async function POST(request: Request) {
     for (const r of receipts) {
       const billToCode = extractBillToCode(String(r.company_name ?? ""));
       const byBillTo = billToCode ? studentIdFromBillToCode(billToCode, studentIdSet) : null;
-      const customerName = normalizeName(String(r.customer_name ?? ""));
-      const byCustomerName = byName.get(customerName) ?? null;
+      const customerName = idOnly ? "" : normalizeName(String(r.customer_name ?? ""));
+      const byCustomerName = idOnly ? null : byName.get(customerName) ?? null;
       const studentId = byBillTo || byCustomerName;
       if (!studentId) {
         unmatchedReceipts += 1;
@@ -273,14 +332,26 @@ export async function POST(request: Request) {
     }
 
     const withItems = await mapWithConcurrency(matchedReceipts, 8, async ({ receipt, studentId }) => {
-      let lineItems = receipt.line_items ?? [];
-      if ((!lineItems || lineItems.length === 0) && receipt.sales_receipt_id) {
+      let lineItems = pickLineItems(receipt);
+      const receiptId = String(receipt.sales_receipt_id ?? receipt.salesreceipt_id ?? "").trim();
+      if ((!lineItems || lineItems.length === 0) && receiptId) {
         if (detailCalls >= maxDetailCalls) {
           skippedDetailByLimit += 1;
         } else {
           detailCalls += 1;
-          const detail = await fetchReceiptDetail(accessToken, orgId, receipt.sales_receipt_id);
-          lineItems = detail?.line_items ?? [];
+          const detail = await fetchReceiptDetail(accessToken, orgId, receiptId);
+          if (detail.receipt) {
+            detailFetchSuccess += 1;
+            lineItems = pickLineItems(detail.receipt);
+            if (!lineItems.length) detailFetchEmpty += 1;
+          } else {
+            detailFetchError += 1;
+            if (detailErrorSamples.length < 5) {
+              detailErrorSamples.push(
+                `${receiptId}:${String(detail.errorCode ?? "unknown")}:${String(detail.errorMessage ?? "detail_failed")}`,
+              );
+            }
+          }
         }
       }
       return { studentId, lineItems };
@@ -381,11 +452,16 @@ export async function POST(request: Request) {
         parsedMonthLineItems,
         detailCalls,
         skippedDetailByLimit,
+        detailFetchSuccess,
+        detailFetchEmpty,
+        detailFetchError,
+        detailErrorSamples,
       },
       unmatchedExamples: receipts
         .filter((r) => {
           const billToCode = extractBillToCode(String(r.company_name ?? ""));
           const byBillTo = billToCode ? studentIdFromBillToCode(billToCode, studentIdSet) : null;
+          if (idOnly) return !byBillTo;
           const keyA = normalizeName(String(r.customer_name ?? ""));
           const keyB = normalizeName(String(r.customer_name_formatted ?? ""));
           return !(byBillTo || byName.get(keyA) || byName.get(keyB));

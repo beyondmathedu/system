@@ -62,7 +62,7 @@ export default function AppTopNav({ highlight = null }: { highlight?: HighlightK
               </Link>
               <span>Beyond Math Management</span>
             </div>
-            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto text-sm whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto overflow-y-hidden sm:overflow-visible text-sm whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <Link
             href="/daily-time-table"
             className={`${base} ${highlight === "dashboard" ? active : idle}`}

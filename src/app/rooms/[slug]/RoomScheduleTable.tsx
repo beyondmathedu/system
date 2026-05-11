@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import { normalizeStudentId } from "@/lib/studentId";
 import {
-  loadExamDatesBatch,
+  loadExamInfoBatch,
   loadLessonYearState,
   loadLessonYearStatesBatch,
   saveLessonYearState,
@@ -40,6 +40,11 @@ export default function RoomScheduleTable({
   canOpenStudentLink = true,
   readOnly = false,
 }: Props) {
+  const STICKY_ID_WIDTH = 92;
+  const STICKY_NAME_WIDTH = 190;
+  const STICKY_GRADE_WIDTH = 90;
+  const STICKY_ATTENDANCE_WIDTH = 110;
+
   const [localRows, setLocalRows] = useState(rows);
   const [sortConfig, setSortConfig] = useState<RoomScheduleSortConfig>(null);
   const [savingRowKey, setSavingRowKey] = useState<string | null>(null);
@@ -48,6 +53,11 @@ export default function RoomScheduleTable({
   const [teacherOptions, setTeacherOptions] = useState<string[]>([]);
   const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
   const [examDatesByStudentId, setExamDatesByStudentId] = useState<Record<string, string>>({});
+  const [examContentsByStudentId, setExamContentsByStudentId] = useState<Record<string, string>>({});
+  const [tutorFilter, setTutorFilter] = useState("all");
+  const [gradeFilter, setGradeFilter] = useState("all");
+  const [lessonTypeFilter, setLessonTypeFilter] = useState("all");
+  const [attendanceFilter, setAttendanceFilter] = useState<"all" | "attended" | "not_attended">("all");
   const stateCache = useRef(new Map<string, StudentLesson2026State>());
   const initialNoteByRowKey = useRef(new Map<string, string>());
   const latestNoteByRowKeyRef = useRef(new Map<string, string>());
@@ -55,6 +65,56 @@ export default function RoomScheduleTable({
   const lessonSummaryPendingRef = useRef(new Map<string, string>());
   const lessonSummaryInFlightRef = useRef(new Set<string>());
   const examDateCache = useRef(new Map<string, string>());
+
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomScrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomTrackRef = useRef<HTMLDivElement | null>(null);
+  const sideScrollRef = useRef<HTMLDivElement | null>(null);
+  const sideTrackRef = useRef<HTMLDivElement | null>(null);
+  const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
+  const [bottomScrollClientWidth, setBottomScrollClientWidth] = useState(0);
+  const [sideScrollHeight, setSideScrollHeight] = useState(0);
+  const [sideScrollClientHeight, setSideScrollClientHeight] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+
+  function slotKey(r: Pick<RoomScheduleRow, "dateIso" | "time" | "room">) {
+    return `${r.dateIso}__${r.time}__${r.room}`.toLowerCase();
+  }
+
+  function normalizeTutorLabel(raw: string) {
+    const v = String(raw ?? "").trim();
+    if (!v || v === "—" || v.toLowerCase() === "tbd" || v === "待定") return "TBD";
+    return v;
+  }
+
+  function lessonTypeLabel(type: string) {
+    if (type === "恆常") return "Regular";
+    if (type === "補堂") return "Makeup";
+    if (type === "加堂") return "Extra";
+    if (type === "取消") return "Cancelled";
+    return type || "—";
+  }
+
+  function lessonTypeKey(type: string) {
+    if (type === "恆常") return "regular";
+    if (type === "補堂") return "makeup";
+    if (type === "加堂") return "extra";
+    if (type === "取消") return "cancelled";
+    return type ? `other:${type}` : "unknown";
+  }
+
+  function weekdayLabelFromIso(iso: string) {
+    const weekday = getWeekdayNumFromIso(iso);
+    if (weekday === 1) return "Mon";
+    if (weekday === 2) return "Tue";
+    if (weekday === 3) return "Wed";
+    if (weekday === 4) return "Thu";
+    if (weekday === 5) return "Fri";
+    if (weekday === 6) return "Sat";
+    if (weekday === 7) return "Sun";
+    return "—";
+  }
 
   function formatExamDateDisplay(iso: string) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -70,8 +130,21 @@ export default function RoomScheduleTable({
     return js === 0 ? 7 : js; // Mon=1..Sun=7
   }
 
+  const filteredRows = useMemo(() => {
+    return localRows.filter((r) => {
+      const matchesTutor = tutorFilter === "all" || normalizeTutorLabel(r.tutor) === tutorFilter;
+      const matchesGrade =
+        gradeFilter === "all" || (formatGradeDisplay(r.grade) || "—") === gradeFilter;
+      const matchesType = lessonTypeFilter === "all" || lessonTypeKey(r.lessonType) === lessonTypeFilter;
+      const matchesAttendance =
+        attendanceFilter === "all" ||
+        (attendanceFilter === "attended" ? r.attended === true : r.attended === false);
+      return matchesTutor && matchesGrade && matchesType && matchesAttendance;
+    });
+  }, [attendanceFilter, gradeFilter, lessonTypeFilter, localRows, tutorFilter]);
+
   const sortedLocalRows = useMemo(() => {
-    const copied = [...localRows];
+    const copied = [...filteredRows];
     if (!sortConfig) return copied;
 
     const { key, direction } = sortConfig;
@@ -117,7 +190,7 @@ export default function RoomScheduleTable({
     });
 
     return copied;
-  }, [localRows, sortConfig, examDatesByStudentId]);
+  }, [filteredRows, sortConfig, examDatesByStudentId]);
 
   useEffect(() => {
     setLocalRows(rows);
@@ -128,33 +201,238 @@ export default function RoomScheduleTable({
     latestNoteByRowKeyRef.current = new Map(rows.map((r) => [r.rowKey, r.note]));
   }, [rows]);
 
+  const gradeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of localRows) {
+      const g = formatGradeDisplay(r.grade);
+      if (g) set.add(g);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "en"));
+  }, [localRows]);
+
+  const tutorOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of localRows) {
+      set.add(normalizeTutorLabel(r.tutor));
+    }
+    for (const t of teacherOptions) set.add(t);
+    return Array.from(set)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, "zh-Hant"));
+  }, [localRows, teacherOptions]);
+
+  const lessonTypeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of localRows) set.add(lessonTypeKey(r.lessonType));
+    const preferred = ["regular", "makeup", "extra"];
+    const rest = Array.from(set).filter((k) => !preferred.includes(k) && k !== "cancelled");
+    return [...preferred.filter((k) => set.has(k)), ...rest.sort((a, b) => a.localeCompare(b, "en"))];
+  }, [localRows]);
+
+  function resetFilters() {
+    setTutorFilter("all");
+    setGradeFilter("all");
+    setLessonTypeFilter("all");
+    setAttendanceFilter("all");
+  }
+
+  useEffect(() => {
+    const tableEl = tableScrollRef.current;
+    const bottomEl = bottomScrollRef.current;
+    const sideEl = sideScrollRef.current;
+    if (!tableEl) return;
+
+    let syncing = false;
+
+    const updateMetrics = () => {
+      setBottomScrollWidth(tableEl.scrollWidth);
+      setBottomScrollClientWidth(tableEl.clientWidth);
+      setSideScrollHeight(tableEl.scrollHeight);
+      setSideScrollClientHeight(tableEl.clientHeight);
+    };
+
+    const onTableScroll = () => {
+      if (syncing) return;
+      syncing = true;
+      setScrollLeft(tableEl.scrollLeft);
+      setScrollTop(tableEl.scrollTop);
+      syncing = false;
+    };
+
+    const onBottomScroll = () => {
+      if (!bottomEl || syncing) return;
+      syncing = true;
+      tableEl.scrollLeft = bottomEl.scrollLeft;
+      syncing = false;
+    };
+
+    const onSideScroll = () => {
+      if (!sideEl || syncing) return;
+      syncing = true;
+      tableEl.scrollTop = sideEl.scrollTop;
+      syncing = false;
+    };
+
+    updateMetrics();
+    setScrollLeft(tableEl.scrollLeft);
+    setScrollTop(tableEl.scrollTop);
+
+    tableEl.addEventListener("scroll", onTableScroll, { passive: true });
+    bottomEl?.addEventListener("scroll", onBottomScroll, { passive: true });
+    sideEl?.addEventListener("scroll", onSideScroll, { passive: true });
+
+    const ro = new ResizeObserver(() => updateMetrics());
+    ro.observe(tableEl);
+
+    return () => {
+      tableEl.removeEventListener("scroll", onTableScroll);
+      bottomEl?.removeEventListener("scroll", onBottomScroll);
+      sideEl?.removeEventListener("scroll", onSideScroll);
+      ro.disconnect();
+    };
+  }, [sortedLocalRows.length]);
+
+  const bottomThumb = useMemo(() => {
+    const trackEl = bottomTrackRef.current;
+    const trackWidth = trackEl?.clientWidth ?? 0;
+    if (!trackWidth || !bottomScrollWidth || !bottomScrollClientWidth) return { size: 0, offset: 0 };
+    const ratio = bottomScrollClientWidth / bottomScrollWidth;
+    const size = Math.max(28, Math.floor(trackWidth * ratio));
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+    const offset = Math.round((scrollLeft / maxScroll) * maxOffset);
+    return { size, offset };
+  }, [bottomScrollClientWidth, bottomScrollWidth, scrollLeft]);
+
+  const sideThumb = useMemo(() => {
+    const trackEl = sideTrackRef.current;
+    const trackHeight = trackEl?.clientHeight ?? 0;
+    if (!trackHeight || !sideScrollHeight || !sideScrollClientHeight) return { size: 0, offset: 0 };
+    const ratio = sideScrollClientHeight / sideScrollHeight;
+    const size = Math.max(28, Math.floor(trackHeight * ratio));
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+    const offset = Math.round((scrollTop / maxScroll) * maxOffset);
+    return { size, offset };
+  }, [sideScrollClientHeight, sideScrollHeight, scrollTop]);
+
+  const onBottomTrackMouseDown = (e: React.MouseEvent) => {
+    const track = bottomTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const { size } = bottomThumb;
+    const trackWidth = rect.width;
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+
+    const targetOffset = Math.min(maxOffset, Math.max(0, x - size / 2));
+    tableEl.scrollLeft = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
+  };
+
+  const onSideTrackMouseDown = (e: React.MouseEvent) => {
+    const track = sideTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const { size } = sideThumb;
+    const trackHeight = rect.height;
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+
+    const targetOffset = Math.min(maxOffset, Math.max(0, y - size / 2));
+    tableEl.scrollTop = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
+  };
+
+  const startDragBottomThumb = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const track = bottomTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const startX = e.clientX;
+    const startOffset = bottomThumb.offset;
+    const size = bottomThumb.size;
+    const trackWidth = rect.width;
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dx));
+      tableEl.scrollLeft = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const startDragSideThumb = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const track = sideTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const startY = e.clientY;
+    const startOffset = sideThumb.offset;
+    const size = sideThumb.size;
+    const trackHeight = rect.height;
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+
+    const onMove = (ev: MouseEvent) => {
+      const dy = ev.clientY - startY;
+      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dy));
+      tableEl.scrollTop = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   useEffect(() => {
     if (!rows.length) return;
 
     let mounted = true;
     void (async () => {
       const studentIds = Array.from(new Set(rows.map((r) => r.studentId)));
-      const nextMap: Record<string, string> = {};
+      const nextDateMap: Record<string, string> = {};
+      const nextContentMap: Record<string, string> = {};
       const missing: string[] = [];
 
       for (const id of studentIds) {
         const cached = examDateCache.current.get(id);
-        if (cached !== undefined) nextMap[id] = cached;
+        if (cached !== undefined) nextDateMap[id] = cached;
         else missing.push(id);
       }
 
       // 先用 cache 補齊，讓 UI 不會閃爍
-      if (mounted) setExamDatesByStudentId((prev) => ({ ...prev, ...nextMap }));
+      if (mounted) setExamDatesByStudentId((prev) => ({ ...prev, ...nextDateMap }));
 
       if (missing.length === 0) return;
 
-      const batch = await loadExamDatesBatch(missing);
+      const batch = await loadExamInfoBatch(missing);
       if (!mounted) return;
       for (const id of missing) {
-        const v = batch[id] ?? "";
-        examDateCache.current.set(id, v);
+        const info = batch[id] ?? { examDate: "", examContent: "" };
+        examDateCache.current.set(id, info.examDate);
+        nextContentMap[id] = info.examContent;
       }
-      setExamDatesByStudentId((prev) => ({ ...prev, ...batch }));
+      const dateBatch: Record<string, string> = {};
+      for (const [id, info] of Object.entries(batch)) dateBatch[id] = info.examDate ?? "";
+      setExamDatesByStudentId((prev) => ({ ...prev, ...dateBatch }));
+      setExamContentsByStudentId((prev) => ({ ...prev, ...nextContentMap }));
     })();
 
     return () => {
@@ -220,7 +498,7 @@ export default function RoomScheduleTable({
       stateCache.current.set(row.studentId, nextState);
     } catch (error) {
       setLocalRows((prev) => prev.map((r) => (r.rowKey === row.rowKey ? { ...r, attended: row.attended } : r)));
-      setSaveError(error instanceof Error ? error.message : "儲存出席失敗");
+      setSaveError(error instanceof Error ? error.message : "Failed to save attendance");
     } finally {
       setSavingRowKey(null);
     }
@@ -228,37 +506,52 @@ export default function RoomScheduleTable({
 
   async function onChangeTutor(row: RoomScheduleRow, displayTutor: string) {
     setSaveError("");
-    setSavingRowKey(row.rowKey);
-    const nextTutor = displayTutor.trim() || "待定";
-    setLocalRows((prev) => prev.map((r) => (r.rowKey === row.rowKey ? { ...r, tutor: nextTutor } : r)));
+    const slot = slotKey(row);
+    setSavingRowKey(slot);
+    const nextTutor = displayTutor.trim() || "TBD";
+    const affected = localRows.filter((r) => slotKey(r) === slot);
+    setLocalRows((prev) => prev.map((r) => (slotKey(r) === slot ? { ...r, tutor: nextTutor } : r)));
 
     try {
-      const current = await getStudentState(row.studentId);
-      const overrides =
-        current.overrides && typeof current.overrides === "object"
-          ? (current.overrides as Record<string, unknown>)
-          : {};
-      const existing = overrides[row.dateIso];
-      const existingEntry =
-        existing && typeof existing === "object" && !Array.isArray(existing)
-          ? (existing as Record<string, unknown>)
-          : {};
+      const results = await Promise.all(
+        affected.map(async (r) => {
+          try {
+            const current = await getStudentState(r.studentId);
+            const overrides =
+              current.overrides && typeof current.overrides === "object"
+                ? (current.overrides as Record<string, unknown>)
+                : {};
+            const existing = overrides[r.dateIso];
+            const existingEntry =
+              existing && typeof existing === "object" && !Array.isArray(existing)
+                ? (existing as Record<string, unknown>)
+                : {};
 
-      const nextState: StudentLesson2026State = {
-        ...current,
-        overrides: {
-          ...overrides,
-          [row.dateIso]: {
-            ...existingEntry,
-            tutor: nextTutor === "待定" ? "" : nextTutor,
-          },
-        },
-      };
-      await saveLessonYearState(row.studentId, year, nextState);
-      stateCache.current.set(row.studentId, nextState);
+            const nextState: StudentLesson2026State = {
+              ...current,
+              overrides: {
+                ...overrides,
+                [r.dateIso]: {
+                  ...existingEntry,
+                  tutor: nextTutor === "TBD" ? "" : nextTutor,
+                },
+              },
+            };
+            await saveLessonYearState(r.studentId, year, nextState);
+            stateCache.current.set(r.studentId, nextState);
+            return { ok: true as const };
+          } catch (error) {
+            return { ok: false as const, error };
+          }
+        }),
+      );
+
+      const failCount = results.filter((x) => !x.ok).length;
+      if (failCount > 0) {
+        setSaveError(`Failed to save tutor for ${failCount} student(s).`);
+      }
     } catch (error) {
-      setLocalRows((prev) => prev.map((r) => (r.rowKey === row.rowKey ? { ...r, tutor: row.tutor } : r)));
-      setSaveError(error instanceof Error ? error.message : "儲存導師失敗");
+      setSaveError(error instanceof Error ? error.message : "Failed to save tutor");
     } finally {
       setSavingRowKey(null);
     }
@@ -306,7 +599,7 @@ export default function RoomScheduleTable({
           prev.map((r) => (r.rowKey === row.rowKey ? { ...r, note: original } : r)),
         );
       }
-      setSaveError(error instanceof Error ? error.message : "儲存課堂摘要失敗");
+      setSaveError(error instanceof Error ? error.message : "Failed to save lesson summary");
     } finally {
       setSavingLessonSummaryRowKey(null);
     }
@@ -366,32 +659,171 @@ export default function RoomScheduleTable({
     <div>
       {saveError ? (
         <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
-          儲存失敗：{saveError}
+          Save failed: {saveError}
         </p>
       ) : null}
-      <div className="max-h-[70vh] overflow-auto rounded-xl border border-slate-200">
-        <table className="min-w-[960px] w-full border-collapse text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-600">
-              <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-3 py-2">學號</th>
-              <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-3 py-2">姓名</th>
-              <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-3 py-2">年級</th>
-              <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-3 py-2">出席</th>
-              <RoomSortableHeader label="日期" columnKey="dateIso" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-              <RoomSortableHeader label="星期" columnKey="weekday" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-              <RoomSortableHeader label="時間" columnKey="sortTime" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-              <RoomSortableHeader label="房" columnKey="room" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-              <RoomSortableHeader label="導師" columnKey="tutor" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-              <RoomSortableHeader label="課堂摘要" columnKey="note" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-              <RoomSortableHeader label="學校" columnKey="school" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-              <RoomSortableHeader label="考試日期" columnKey="examDate" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-              <RoomSortableHeader label="類型" columnKey="lessonType" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {sortedLocalRows.map((r) => (
-              <tr key={r.rowKey}>
-                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-slate-800">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold tracking-wider text-slate-500">Tutor</span>
+            <select
+              value={tutorFilter}
+              onChange={(e) => setTutorFilter(e.target.value)}
+              className="h-8 min-w-[160px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700"
+            >
+              <option value="all">All</option>
+              {tutorOptions.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold tracking-wider text-slate-500">Grade</span>
+            <select
+              value={gradeFilter}
+              onChange={(e) => setGradeFilter(e.target.value)}
+              className="h-8 min-w-[120px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700"
+            >
+              <option value="all">All</option>
+              {gradeOptions.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold tracking-wider text-slate-500">Lesson Type</span>
+            <select
+              value={lessonTypeFilter}
+              onChange={(e) => setLessonTypeFilter(e.target.value)}
+              className="h-8 min-w-[140px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700"
+            >
+              <option value="all">All</option>
+              {lessonTypeOptions.map((k) => (
+                <option key={k} value={k}>
+                  {k === "regular"
+                    ? "Regular"
+                    : k === "makeup"
+                      ? "Makeup"
+                      : k === "extra"
+                        ? "Extra"
+                        : k.startsWith("other:")
+                          ? k.slice("other:".length)
+                          : k}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold tracking-wider text-slate-500">Attendance</span>
+            <select
+              value={attendanceFilter}
+              onChange={(e) => setAttendanceFilter(e.target.value as any)}
+              className="h-8 min-w-[140px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700"
+            >
+              <option value="all">All</option>
+              <option value="attended">Attended</option>
+              <option value="not_attended">Not attended</option>
+            </select>
+          </label>
+
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="inline-flex h-8 items-center gap-1.5 rounded bg-[#1d76c2] px-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1663a3]"
+          >
+            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+              <path
+                transform="translate(0,-1.8)"
+                d="M4.08 11.86a5.5 5.5 0 019.27-3.59l-.94.94a.75.75 0 001.06 1.06l2.5-2.5a.75.75 0 000-1.06l-2.5-2.5a.75.75 0 00-1.06 1.06l.99.99a7 7 0 00-11.3 5.59.75.75 0 001.5 0z"
+              />
+              <path
+                transform="translate(0,1.8)"
+                d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
+              />
+            </svg>
+            Reset Filters
+          </button>
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-slate-200">
+        <div className="flex">
+          <div
+            ref={tableScrollRef}
+            className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            <table className="min-w-[1200px] w-full border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold tracking-wider text-slate-600">
+              <th
+                className="sticky left-0 top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
+                style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
+              >
+                ID
+              </th>
+              <th
+                className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
+                style={{
+                  left: STICKY_ID_WIDTH,
+                  width: STICKY_NAME_WIDTH,
+                  minWidth: STICKY_NAME_WIDTH,
+                  maxWidth: STICKY_NAME_WIDTH,
+                }}
+              >
+                Name
+              </th>
+              <th
+                className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
+                style={{
+                  left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH,
+                  width: STICKY_GRADE_WIDTH,
+                  minWidth: STICKY_GRADE_WIDTH,
+                  maxWidth: STICKY_GRADE_WIDTH,
+                }}
+              >
+                Grade
+              </th>
+              <th
+                className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2 text-center"
+                style={{
+                  left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH + STICKY_GRADE_WIDTH,
+                  width: STICKY_ATTENDANCE_WIDTH,
+                  minWidth: STICKY_ATTENDANCE_WIDTH,
+                  maxWidth: STICKY_ATTENDANCE_WIDTH,
+                }}
+              >
+                Attendance
+              </th>
+              <RoomSortableHeader label="Date" columnKey="dateIso" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+              <RoomSortableHeader label="Weekday" columnKey="weekday" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+              <RoomSortableHeader label="Time" columnKey="sortTime" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+              <RoomSortableHeader label="Room" columnKey="room" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+              <RoomSortableHeader label="Tutor" columnKey="tutor" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+              <RoomSortableHeader label="Lesson Summary" columnKey="note" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+              <RoomSortableHeader label="School" columnKey="school" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+              <RoomSortableHeader label="Exam Date" columnKey="examDate" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+              <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-3 py-2 text-left text-xs font-bold tracking-wider text-slate-600">
+                Exam Content
+              </th>
+              <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-3 py-2 text-left text-xs font-bold tracking-wider text-slate-600">
+                Textbook publisher
+              </th>
+              <RoomSortableHeader label="Type" columnKey="lessonType" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sortedLocalRows.map((r, idx) => (
+                  <tr key={`${r.rowKey}:${idx}`} className="group bg-white hover:bg-slate-50">
+                <td
+                  className="sticky left-0 z-40 whitespace-nowrap bg-white px-3 py-2 font-mono text-xs text-slate-800 group-hover:bg-slate-50"
+                  style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
+                >
                   {(() => {
                     const studentIdDisplay = normalizeStudentId(r.studentId);
                     return canOpenStudentLink ? (
@@ -406,21 +838,49 @@ export default function RoomScheduleTable({
                     );
                   })()}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 text-slate-800">{r.studentName}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-slate-700">{formatGradeDisplay(r.grade) || "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-center text-slate-800">
+                <td
+                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-800 group-hover:bg-slate-50"
+                  style={{
+                    left: STICKY_ID_WIDTH,
+                    width: STICKY_NAME_WIDTH,
+                    minWidth: STICKY_NAME_WIDTH,
+                    maxWidth: STICKY_NAME_WIDTH,
+                  }}
+                >
+                  <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{r.studentName}</span>
+                </td>
+                <td
+                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-700 group-hover:bg-slate-50"
+                  style={{
+                    left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH,
+                    width: STICKY_GRADE_WIDTH,
+                    minWidth: STICKY_GRADE_WIDTH,
+                    maxWidth: STICKY_GRADE_WIDTH,
+                  }}
+                >
+                  {formatGradeDisplay(r.grade) || "—"}
+                </td>
+                <td
+                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-center text-slate-800 group-hover:bg-slate-50"
+                  style={{
+                    left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH + STICKY_GRADE_WIDTH,
+                    width: STICKY_ATTENDANCE_WIDTH,
+                    minWidth: STICKY_ATTENDANCE_WIDTH,
+                    maxWidth: STICKY_ATTENDANCE_WIDTH,
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={r.attended}
-                    disabled={readOnly || savingRowKey === r.rowKey}
+                    disabled={readOnly || savingRowKey === r.rowKey || savingRowKey === slotKey(r)}
                     onChange={(event) => void onToggle(r, event.target.checked)}
                     className="h-4 w-4 cursor-pointer accent-[#1d76c2]"
-                    aria-label={`切換 ${normalizeStudentId(r.studentId)} ${r.dateDisplay} ${r.time} 出席`}
+                    aria-label={`Toggle attendance ${normalizeStudentId(r.studentId)} ${r.dateDisplay} ${r.time}`}
                     suppressHydrationWarning
                   />
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-800">{r.dateDisplay}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.weekdayDisplay}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-700">{weekdayLabelFromIso(r.dateIso)}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-slate-800">{r.time}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.room}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-slate-700">
@@ -429,16 +889,16 @@ export default function RoomScheduleTable({
                       r.tutor &&
                       r.tutor !== "—" &&
                       !inactiveTutorNames.has(r.tutor.trim())
-                        ? r.tutor
-                        : "待定"
+                        ? normalizeTutorLabel(r.tutor)
+                        : "TBD"
                     }
-                    disabled={readOnly || savingRowKey === r.rowKey}
+                    disabled={readOnly || savingRowKey === r.rowKey || savingRowKey === slotKey(r)}
                     onChange={(event) => void onChangeTutor(r, event.target.value)}
                     className="min-w-[120px] rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
-                    aria-label={`${normalizeStudentId(r.studentId)} 導師`}
+                    aria-label={`${normalizeStudentId(r.studentId)} tutor`}
                     suppressHydrationWarning
                   >
-                    <option value="待定">待定</option>
+                    <option value="TBD">TBD</option>
                     {teacherOptions.map((name) => (
                       <option key={name} value={name}>
                         {name}
@@ -451,7 +911,7 @@ export default function RoomScheduleTable({
                     value={r.note || ""}
                     disabled={readOnly || r.lessonType === "補堂"}
                     aria-busy={savingLessonSummaryRowKey === r.rowKey}
-                    placeholder="輸入課堂摘要"
+                    placeholder="Enter lesson summary"
                     onChange={(event) => {
                       const nextValue = event.target.value;
                       setLocalRows((prev) =>
@@ -466,7 +926,7 @@ export default function RoomScheduleTable({
                         : "border-slate-300 bg-white text-slate-700 focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]",
                       savingLessonSummaryRowKey === r.rowKey ? "opacity-90" : "",
                     ].join(" ")}
-                    aria-label={`${normalizeStudentId(r.studentId)} ${r.dateDisplay} 課堂摘要`}
+                    aria-label={`${normalizeStudentId(r.studentId)} ${r.dateDisplay} lesson summary`}
                     suppressHydrationWarning
                     rows={3}
                   />
@@ -485,6 +945,18 @@ export default function RoomScheduleTable({
                     ? formatExamDateDisplay(examDatesByStudentId[r.studentId])
                     : "—"}
                 </td>
+                <td
+                  className="max-w-[260px] whitespace-normal break-words px-3 py-2 text-xs text-slate-600"
+                  title={examContentsByStudentId[r.studentId] || ""}
+                >
+                  {examContentsByStudentId[r.studentId] || "—"}
+                </td>
+                <td
+                  className="max-w-[180px] whitespace-normal break-words px-3 py-2 text-xs text-slate-600"
+                  title={r.textbookPublisher || ""}
+                >
+                  {r.textbookPublisher || "—"}
+                </td>
                 <td className="whitespace-nowrap px-3 py-2">
                   <span
                     className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
@@ -495,13 +967,54 @@ export default function RoomScheduleTable({
                           : "bg-violet-50 text-violet-800"
                     }`}
                   >
-                    {r.lessonType}
+                    {lessonTypeLabel(r.lessonType)}
                   </span>
                 </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {sideScrollHeight > sideScrollClientHeight ? (
+            <div className="border-l border-slate-200 bg-slate-50 px-2 py-2">
+              <div ref={sideScrollRef} className="sr-only" aria-hidden />
+              <div
+                ref={sideTrackRef}
+                role="scrollbar"
+                aria-label="Vertical scrollbar"
+                className="relative w-2.5 select-none rounded bg-white ring-1 ring-slate-200"
+                style={{ height: "calc(70vh - 16px)" }}
+                onMouseDown={onSideTrackMouseDown}
+              >
+                <div
+                  className="absolute left-0 right-0 rounded bg-slate-400/80 hover:bg-slate-500"
+                  style={{ height: sideThumb.size, transform: `translateY(${sideThumb.offset}px)` }}
+                  onMouseDown={startDragSideThumb}
+                />
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {bottomScrollWidth > bottomScrollClientWidth ? (
+          <div className="border-t border-slate-200 bg-slate-50 px-4 py-2">
+            <div ref={bottomScrollRef} className="sr-only" aria-hidden />
+            <div
+              ref={bottomTrackRef}
+              role="scrollbar"
+              aria-label="Horizontal scrollbar"
+              className="relative h-2.5 select-none rounded bg-white ring-1 ring-slate-200"
+              onMouseDown={onBottomTrackMouseDown}
+            >
+              <div
+                className="absolute bottom-0 top-0 rounded bg-slate-400/80 hover:bg-slate-500"
+                style={{ width: bottomThumb.size, transform: `translateX(${bottomThumb.offset}px)` }}
+                onMouseDown={startDragBottomThumb}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -521,7 +1034,7 @@ function RoomSortableHeader({ label, columnKey, sortConfig, setSortConfig }: Roo
       <div className="flex items-center gap-1.5 whitespace-nowrap">
         <span className="whitespace-nowrap">{label}</span>
         <select
-          aria-label={`${label} 排序`}
+          aria-label={`Sort ${label}`}
           value={selectedDirection}
           onChange={(event) => {
             const direction = event.target.value as SortDirection | "";

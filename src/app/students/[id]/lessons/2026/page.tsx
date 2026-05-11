@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
-import { loadLessonYearState, saveLessonYearState } from "@/lib/studentLessonStorage";
+import { loadExamInfo, loadLessonYearState, saveLessonYearState } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
@@ -14,12 +14,46 @@ import { formatGradeDisplay } from "@/lib/grade";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const ROOM_OPTIONS = ["B", "M前", "M後", "Hope", "Hope 2"];
+const ROOM_LABEL: Record<string, string> = {
+  B: "B",
+  M前: "M Front",
+  M後: "M Back",
+  Hope: "Hope",
+  "Hope 2": "Hope 2",
+};
+const WEEKDAY_LABEL: Record<string, string> = {
+  一: "Mon",
+  二: "Tue",
+  三: "Wed",
+  四: "Thu",
+  五: "Fri",
+  六: "Sat",
+  日: "Sun",
+};
 const WEEKDAY_TIME_SUGGESTIONS = ["03:00 PM", "04:30 PM", "06:00 PM"];
 const SATURDAY_TIME_SUGGESTIONS = ["10:00 AM", "11:30 AM", "01:00 PM", "02:30 PM"];
-const TYPE_REGULAR = "恆常";
-const TYPE_CANCELLED = "取消";
-const TYPE_RESCHEDULE = "調堂";
-const TYPE_EXTRA = "加堂";
+const TYPE_REGULAR = "Regular";
+const TYPE_CANCELLED = "Cancelled";
+const TYPE_RESCHEDULE = "Reschedule";
+const TYPE_EXTRA = "Extra";
+const MONTH_LABEL: Record<number, string> = {
+  1: "Jan",
+  2: "Feb",
+  3: "Mar",
+  4: "Apr",
+  5: "May",
+  6: "Jun",
+  7: "Jul",
+  8: "Aug",
+  9: "Sep",
+  10: "Oct",
+  11: "Nov",
+  12: "Dec",
+};
+
+function isDoubleReschedulePairId(id: unknown): boolean {
+  return String(id ?? "").endsWith("-double-reschedule");
+}
 
 type StudentSummary = {
   id: string;
@@ -28,6 +62,7 @@ type StudentSummary = {
   nicknameEn: string;
   grade: string;
   school: string;
+  textbookPublisher: string;
 };
 
 type ScheduleRecord = {
@@ -174,6 +209,11 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     nicknameEn: "",
     grade: "",
     school: "",
+    textbookPublisher: "",
+  });
+  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>({
+    examDate: "",
+    examContent: "",
   });
   const [studentLoaded, setStudentLoaded] = useState(false);
   const [studentNotFound, setStudentNotFound] = useState(false);
@@ -245,23 +285,41 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
   const [toLessonDate, setToLessonDate] = useState<string>("");
   const [showEditPanel, setShowEditPanel] = useState(false);
   const [showExtraPanel, setShowExtraPanel] = useState(false);
+  const [lockFromLessonDate, setLockFromLessonDate] = useState(false);
   const [extraForm, setExtraForm] = useState<{
     date: string;
     timePreset: string;
     timeCustom: string;
     room: string;
+    doubleEnabled: boolean;
   }>({
     date: "",
     timePreset: WEEKDAY_TIME_SUGGESTIONS[0],
     timeCustom: "",
     room: ROOM_OPTIONS[0],
+    doubleEnabled: false,
   });
   const [editForm, setEditForm] = useState<{
     timePreset: string;
     timeCustom: string;
     room: string;
-  }>({ timePreset: "", timeCustom: "", room: "" });
+    doubleEnabled: boolean;
+  }>({
+    timePreset: "",
+    timeCustom: "",
+    room: "",
+    doubleEnabled: false,
+  });
   const [selectionError, setSelectionError] = useState("");
+  const [editSaveStatus, setEditSaveStatus] = useState("");
+  const [extraSaveStatus, setExtraSaveStatus] = useState("");
+  const [filterMonth, setFilterMonth] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterTime, setFilterTime] = useState("");
+  const [filterRoom, setFilterRoom] = useState("");
+  const [filterTutor, setFilterTutor] = useState("");
+  const [filterType, setFilterType] = useState("");
   const [sortConfig, setSortConfig] = useState<ScheduleSortConfig>(null);
   const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
   const yearMin = `${targetYear}-01-01`;
@@ -328,7 +386,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       void (async () => {
         const { data } = await supabaseBrowser
           .from("students")
-          .select("id, name_zh, name_en, nickname_en, grade, school")
+          .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
           .eq("id", studentId)
           .maybeSingle();
         if (!data) {
@@ -339,6 +397,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
             nicknameEn: "",
             grade: "",
             school: "",
+            textbookPublisher: "",
           });
           setStudentNotFound(true);
           setStudentLoaded(true);
@@ -351,8 +410,20 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
           nicknameEn: data.nickname_en ?? "",
           grade: data.grade ?? "",
           school: data.school ?? "",
+          textbookPublisher: data.textbook_publisher ?? "",
         });
         setStudentLoaded(true);
+      })();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [studentId]);
+
+  useEffect(() => {
+    if (!studentId) return;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const info = await loadExamInfo(studentId);
+        setExamInfo(info);
       })();
     }, 0);
     return () => window.clearTimeout(timer);
@@ -498,6 +569,12 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       if (ed !== 0) return ed;
       return a.createdAt - b.createdAt;
     });
+    const earliestRuleByWeekday = new Map<string, (typeof sortedRules)[0]>();
+    for (const r of sortedRules) {
+      if (!earliestRuleByWeekday.has(r.weekday)) {
+        earliestRuleByWeekday.set(r.weekday, r);
+      }
+    }
 
     const start = new Date(targetYear, 0, 1);
     const end = new Date(targetYear, 11, 31);
@@ -505,19 +582,18 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     const monthCounter: Record<number, number> = {};
     const rows: ScheduleRow[] = [];
 
-    let activeIdx = -1;
-
     for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
       const hkNum = getHkWeekdayNumber(cur);
       const weekday = numberToWeekday(hkNum);
       const dateIso = toIsoDate(cur);
-
-      while (activeIdx + 1 < sortedRules.length && sortedRules[activeIdx + 1].effectiveDate <= dateIso) {
-        activeIdx += 1;
+      const activeRuleByWeekday = new Map<string, (typeof sortedRules)[0]>();
+      for (const r of sortedRules) {
+        if (r.effectiveDate <= dateIso) {
+          activeRuleByWeekday.set(r.weekday, r);
+        }
       }
-      const rule = activeIdx >= 0 ? sortedRules[activeIdx] : sortedRules[0];
+      const rule = activeRuleByWeekday.get(weekday) ?? earliestRuleByWeekday.get(weekday);
       if (!rule) continue;
-      if (weekday !== rule.weekday) continue;
 
       const rec = rule;
       const month = cur.getMonth() + 1;
@@ -603,7 +679,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
       const rescheduleRow: ScheduleRow = {
         month: toMonth,
-        lLabel: TYPE_RESCHEDULE,
+        lLabel: "L0",
         date: e.toDate,
         weekday: toWd,
         baseTime: e.time,
@@ -655,10 +731,27 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       return a.rowId.localeCompare(b.rowId);
     });
 
+    const autoDoubleKeys = new Set<string>();
+    for (const r of rows) {
+      if (r.extraEntryId && isDoubleReschedulePairId(r.extraEntryId)) {
+        autoDoubleKeys.add(`${r.date}|${r.time}|${r.room}`);
+      }
+    }
+
     const monthCounter: Record<number, number> = {};
     rows = rows.map((r, i) => {
-      if (r.rowKind === "reschedule") {
-        return { ...r, lLabel: TYPE_RESCHEDULE, displayOrder: i };
+      if (r.rowKind === "cancelled_original") {
+        return { ...r, lLabel: "/", displayOrder: i };
+      }
+      const rowKey = `${r.date}|${r.time}|${r.room}`;
+      if (r.extraEntryId && isDoubleReschedulePairId(r.extraEntryId)) {
+        // Auto-generated pair row for reschedule double lesson: do not count again.
+        return { ...r, lLabel: "/", displayOrder: i };
+      }
+      if (r.rowKind === "reschedule" && autoDoubleKeys.has(rowKey)) {
+        const start = (monthCounter[r.month] ?? 0) + 1;
+        monthCounter[r.month] = start + 1;
+        return { ...r, lLabel: `L${start} / L${start + 1}`, displayOrder: i };
       }
       monthCounter[r.month] = (monthCounter[r.month] ?? 0) + 1;
       return { ...r, lLabel: `L${monthCounter[r.month]}`, displayOrder: i };
@@ -742,9 +835,55 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
   const selectedRowIdSet = useMemo(() => new Set(selectedRowIds), [selectedRowIds]);
 
+  const monthFilterOptions = useMemo(
+    () => [...new Set(scheduleRows.map((r) => r.month))].sort((a, b) => a - b),
+    [scheduleRows],
+  );
+  const roomFilterOptions = useMemo(
+    () => [...new Set(scheduleRows.map((r) => r.room).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [scheduleRows],
+  );
+  const tutorFilterOptions = useMemo(
+    () =>
+      [...new Set(scheduleRows.map((r) => r.tutor.trim()).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [scheduleRows],
+  );
+  const typeFilterOptions = useMemo(
+    () =>
+      [...new Set(scheduleRows.map((r) => r.lessonType).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [scheduleRows],
+  );
+
+  const filteredScheduleRows = useMemo(() => {
+    const timeKeyword = filterTime.trim().toLowerCase();
+    return sortedScheduleRows.filter((r) => {
+      if (filterMonth && String(r.month) !== filterMonth) return false;
+      if (filterDateFrom && r.date < filterDateFrom) return false;
+      if (filterDateTo && r.date > filterDateTo) return false;
+      if (timeKeyword && !r.time.toLowerCase().includes(timeKeyword)) return false;
+      if (filterRoom && r.room !== filterRoom) return false;
+      if (filterTutor && r.tutor.trim() !== filterTutor) return false;
+      if (filterType && r.lessonType !== filterType) return false;
+      return true;
+    });
+  }, [
+    sortedScheduleRows,
+    filterMonth,
+    filterDateFrom,
+    filterDateTo,
+    filterTime,
+    filterRoom,
+    filterTutor,
+    filterType,
+  ]);
+
   const allVisibleSelected =
-    scheduleRows.length > 0 &&
-    scheduleRows.every((r) => selectedRowIdSet.has(r.rowId));
+    filteredScheduleRows.length > 0 &&
+    filteredScheduleRows.every((r) => selectedRowIdSet.has(r.rowId));
 
   const editWeekday = useMemo(
     () => (toLessonDate ? weekdayFromIsoDate(toLessonDate) : ""),
@@ -773,7 +912,12 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
           : ROOM_OPTIONS.includes(prev.room)
             ? prev.room
             : ROOM_OPTIONS[0];
-      return { timePreset, timeCustom: "", room };
+      return {
+        ...prev,
+        timePreset,
+        timeCustom: "",
+        room,
+      };
     });
   }
 
@@ -856,7 +1000,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
           <AppTopNav highlight="students" />
           <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm">
-            正在驗證帳號權限...
+            Verifying account access...
           </div>
         </div>
       </div>
@@ -874,15 +1018,15 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
               <Link
                 href={`/students/${studentId}/lessons`}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
-                aria-label="返回學生課堂頁"
+                aria-label="Back to student lessons"
               >
                 ←
               </Link>
-              <h1 className="text-2xl font-bold tracking-tight">學生獨立課堂記錄</h1>
+              <h1 className="text-2xl font-bold tracking-tight">Student Lesson Record</h1>
             </div>
 
             <p className="mt-1 text-sm text-blue-100">
-              學號：{studentId || "—"} | 學生：{" "}
+              Student ID: {studentId || "—"} | Student:{" "}
               {formatStudentDisplayNameOrEmpty(
                 {
                   id: studentSummary.id,
@@ -898,55 +1042,73 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
           {studentLoaded && studentNotFound && (
             <div className="mx-6 mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              找不到學號 {studentId} 的學生資料。你仍可先操作 {targetYear} 課堂記錄，但建議先到 Students 頁新增該學生。
+              Student record {studentId} was not found. You can still edit {targetYear} lesson records, but we recommend adding this student in the Students page first.
             </div>
           )}
 
           <div className="border-b border-slate-200 bg-slate-50 p-6">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div>
-                <p className="text-xs font-semibold tracking-wider text-slate-500">學號</p>
-                <p className="mt-1 text-sm font-bold text-slate-900">{studentId || "—"}</p>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div>
+                <p className="text-xs font-semibold tracking-wider text-slate-500">Student ID</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{studentId || "—"}</p>
+                </div>
+                <div className="md:col-span-2">
+                <p className="text-xs font-semibold tracking-wider text-slate-500">Student Name</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">
+                    {formatStudentDisplayNameOrEmpty(
+                      {
+                        id: studentSummary.id,
+                        name_zh: studentSummary.nameZh,
+                        name_en: studentSummary.nameEn,
+                        nickname_en: studentSummary.nicknameEn,
+                      },
+                      "full",
+                    )}
+                  </p>
+                </div>
+                <div>
+                <p className="text-xs font-semibold tracking-wider text-slate-500">Grade</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(studentSummary.grade) || "—"}</p>
+                </div>
+                <div className="md:col-span-2">
+                <p className="text-xs font-semibold tracking-wider text-slate-500">School</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.school || "—"}</p>
+                </div>
               </div>
-              <div className="md:col-span-2">
-                <p className="text-xs font-semibold tracking-wider text-slate-500">學生姓名</p>
-                <p className="mt-1 text-sm font-bold text-slate-900">
-                  {formatStudentDisplayNameOrEmpty(
-                    {
-                      id: studentSummary.id,
-                      name_zh: studentSummary.nameZh,
-                      name_en: studentSummary.nameEn,
-                      nickname_en: studentSummary.nicknameEn,
-                    },
-                    "full",
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold tracking-wider text-slate-500">就讀年級</p>
-                <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(studentSummary.grade) || "—"}</p>
-              </div>
-              <div className="md:col-span-2">
-                <p className="text-xs font-semibold tracking-wider text-slate-500">就讀學校</p>
-                <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.school || "—"}</p>
+              <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+                <div className="grid grid-cols-1 gap-3">
+                  <div>
+                    <p className="text-xs font-semibold tracking-wider text-slate-500">Latest Exam Date</p>
+                    <p className="mt-1 text-sm font-bold text-slate-900">{examInfo.examDate || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold tracking-wider text-slate-500">Exam Content</p>
+                    <p className="mt-1 text-sm font-bold text-slate-900 break-words">{examInfo.examContent || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold tracking-wider text-slate-500">Textbook publisher</p>
+                    <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.textbookPublisher || "—"}</p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
           <div className="p-6">
-            <h2 className="text-lg font-bold text-slate-900">{targetYear}上課記錄</h2>
+            <h2 className="text-lg font-bold text-slate-900">{targetYear} Lesson Records</h2>
 
             <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-slate-700">
-                  已選取：<span className="font-bold text-slate-900">{selectedRowIds.length}</span> 項
+                  Selected: <span className="font-bold text-slate-900">{selectedRowIds.length}</span>
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => {
                       if (selectedRowIds.length > 1) {
-                        setSelectionError("調堂請只勾選 1 行作為預填，或取消勾選後再按調堂自行填寫原課日期。");
+                        setSelectionError("For reschedule, select only 1 row for prefill, or clear selection and enter original lesson date manually.");
                         return;
                       }
                       setShowExtraPanel(false);
@@ -954,13 +1116,14 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                       if (selectedRowIds.length === 1) {
                         const row = scheduleRowById.get(selectedRowIds[0]);
                         if (!row) {
-                          setSelectionError("找不到要編輯的列。");
+                          setSelectionError("Cannot find the row to edit.");
                           return;
                         }
                         if (row.rowKind === "normal") {
                           setEditingRescheduleId(null);
                           setFromLessonDate(row.date);
                           setToLessonDate(row.date);
+                          setLockFromLessonDate(true);
                           const wd = weekdayFromIsoDate(row.date);
                           const opts =
                             wd === "六"
@@ -974,23 +1137,25 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                             room: ROOM_OPTIONS.includes(row.room)
                               ? row.room
                               : ROOM_OPTIONS[0],
+                            doubleEnabled: false,
                           });
                           setShowEditPanel(true);
                           return;
                         }
 
                         if (!row.rescheduleEntryId) {
-                          setSelectionError("此列沒有可編輯的調堂紀錄。");
+                          setSelectionError("This row has no editable reschedule record.");
                           return;
                         }
                         const entry = rescheduleEntryById.get(row.rescheduleEntryId);
                         if (!entry) {
-                          setSelectionError("找不到對應的調堂紀錄。");
+                          setSelectionError("Cannot find the corresponding reschedule record.");
                           return;
                         }
                         setEditingRescheduleId(entry.id);
                         setFromLessonDate(entry.fromDate);
                         setToLessonDate(entry.toDate);
+                        setLockFromLessonDate(true);
                         const wd = weekdayFromIsoDate(entry.toDate);
                         const opts =
                           wd === "六"
@@ -1004,6 +1169,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                           room: ROOM_OPTIONS.includes(entry.room)
                             ? entry.room
                             : ROOM_OPTIONS[0],
+                          doubleEnabled: false,
                         });
                         setShowEditPanel(true);
                         return;
@@ -1011,30 +1177,35 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                       setEditingRescheduleId(null);
                       setFromLessonDate("");
                       setToLessonDate(toHkIsoDateFromMs(Date.now()));
+                      setLockFromLessonDate(false);
                       setEditForm({
                         timePreset: WEEKDAY_TIME_SUGGESTIONS[0],
                         timeCustom: "",
                         room: ROOM_OPTIONS[0],
+                        doubleEnabled: false,
                       });
                       setShowEditPanel(true);
                     }}
-                    className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
                   >
-                    調堂
+                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                      <path d="M4.5 5.75a.75.75 0 010-1.5h9.69l-2.22-2.22a.75.75 0 111.06-1.06l3.5 3.5a.75.75 0 010 1.06l-3.5 3.5a.75.75 0 01-1.06-1.06l2.22-2.22H4.5zm11 8.5a.75.75 0 010 1.5H5.81l2.22 2.22a.75.75 0 11-1.06 1.06l-3.5-3.5a.75.75 0 010-1.06l3.5-3.5a.75.75 0 011.06 1.06l-2.22 2.22H15.5z" />
+                    </svg>
+                    Reschedule
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       setSelectionError("");
                       if (selectedRowIds.length > 1) {
-                        setSelectionError("加堂請只勾選 1 行作為預填，或取消勾選後自行填寫。");
+                        setSelectionError("For extra lesson, select only 1 row for prefill, or clear selection and fill manually.");
                         return;
                       }
                       setShowEditPanel(false);
                       if (selectedRowIds.length === 1) {
                         const row = scheduleRowById.get(selectedRowIds[0]);
                         if (!row) {
-                          setSelectionError("找不到要預填的列。");
+                          setSelectionError("Cannot find row for prefill.");
                           return;
                         }
                         const wd = weekdayFromIsoDate(row.date);
@@ -1045,6 +1216,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                           timePreset: opts.includes(row.time) ? row.time : opts[0],
                           timeCustom: opts.includes(row.time) ? "" : row.time,
                           room: ROOM_OPTIONS.includes(row.room) ? row.room : ROOM_OPTIONS[0],
+                          doubleEnabled: false,
                         });
                       } else {
                         setExtraForm({
@@ -1052,23 +1224,27 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                           timePreset: WEEKDAY_TIME_SUGGESTIONS[0],
                           timeCustom: "",
                           room: ROOM_OPTIONS[0],
+                          doubleEnabled: false,
                         });
                       }
                       setShowExtraPanel(true);
                     }}
-                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
                   >
-                    加堂
+                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                      <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
+                    </svg>
+                    Extra Lesson
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       if (selectedRowIds.length === 0) {
-                        setSelectionError("請先勾選要刪除的列。");
+                        setSelectionError("Please select rows to delete first.");
                         return;
                       }
                       setSelectionError("");
-                      if (!window.confirm("確定要刪除已選取的日期？")) return;
+                      if (!window.confirm("Are you sure you want to delete selected dates?")) return;
                       const selectedRows = selectedRowIds
                         .map((id) => scheduleRowById.get(id))
                         .filter((r): r is ScheduleRow => Boolean(r));
@@ -1122,9 +1298,12 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                       persistYearState({ hiddenDates: nextHidden });
                       setSelectedRowIds([]);
                     }}
-                    className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
                   >
-                    刪除
+                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                      <path d="M7.5 2.75A1.75 1.75 0 005.75 4.5v.25H4a.75.75 0 000 1.5h.5l.73 9.1A2 2 0 007.22 17.2h5.56a2 2 0 001.99-1.85l.73-9.1H16a.75.75 0 000-1.5h-1.75V4.5A1.75 1.75 0 0012.5 2.75h-5zM12.75 4.5v.25h-5.5V4.5a.25.25 0 01.25-.25h5a.25.25 0 01.25.25z" />
+                    </svg>
+                    Delete
                   </button>
                 </div>
               </div>
@@ -1137,173 +1316,85 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                   <p className="text-xs font-bold tracking-wider text-slate-600">
-                    原課堂（時段設定，對照用）
+                    Original Lesson (from schedule settings)
                   </p>
                   {editOriginalLesson.kind === "empty" && (
                     <p className="mt-2 text-sm text-slate-600">
-                      請先於下方選擇<strong className="font-semibold text-slate-800">日期</strong>
-                      ，此處會顯示該日依「上課時段設定」的<strong className="font-semibold text-slate-800">
-                        原定
-                      </strong>
-                      日子、星期、時間與房間。
+                      Select a <strong className="font-semibold text-slate-800">date</strong> below first.
+                      This area shows the scheduled lesson (date, day, time, room) from lesson schedule settings.
                     </p>
                   )}
                   {editOriginalLesson.kind === "noRow" && (
                     <p className="mt-2 text-sm text-amber-800">
-                      所選日期（{editOriginalLesson.date}）在 {targetYear} 課表中沒有排課，無原定課堂可對照。
+                      The selected date ({editOriginalLesson.date}) has no scheduled lesson in {targetYear}, so no original lesson can be compared.
                     </p>
                   )}
                   {editOriginalLesson.kind === "row" && (
                     <dl className="mt-2 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
                       <div>
-                        <dt className="text-xs font-semibold text-slate-500">原定日期</dt>
+                        <dt className="text-xs font-semibold text-slate-500">Scheduled Date</dt>
                         <dd className="mt-0.5 font-medium text-slate-900">{editOriginalLesson.date}</dd>
                       </div>
                       <div>
-                        <dt className="text-xs font-semibold text-slate-500">星期</dt>
+                        <dt className="text-xs font-semibold text-slate-500">Day</dt>
                         <dd className="mt-0.5 font-medium text-slate-900">
-                          星期{editOriginalLesson.weekday}
+                          {WEEKDAY_LABEL[editOriginalLesson.weekday] ?? editOriginalLesson.weekday}
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-xs font-semibold text-slate-500">原定時間</dt>
+                        <dt className="text-xs font-semibold text-slate-500">Scheduled Time</dt>
                         <dd className="mt-0.5 font-medium text-slate-900">{editOriginalLesson.baseTime}</dd>
                       </div>
                       <div>
-                        <dt className="text-xs font-semibold text-slate-500">原定 Room</dt>
-                        <dd className="mt-0.5 font-medium text-slate-900">{editOriginalLesson.baseRoom}</dd>
+                        <dt className="text-xs font-semibold text-slate-500">Scheduled Room</dt>
+                        <dd className="mt-0.5 font-medium text-slate-900">
+                          {ROOM_LABEL[editOriginalLesson.baseRoom] ?? editOriginalLesson.baseRoom}
+                        </dd>
                       </div>
                     </dl>
                   )}
                   {editOriginalLesson.kind === "row" && editOriginalLesson.hasOverride && (
                     <p className="mt-3 text-xs text-slate-600">
-                      此日已曾調堂；課表目前顯示為{" "}
+                      This date has already been rescheduled. Current timetable shows{" "}
                       <span className="font-semibold text-slate-800">
                         {editOriginalLesson.displayTime}
                       </span>
                       ／
                       <span className="font-semibold text-slate-800">
-                        {editOriginalLesson.displayRoom}
+                        {ROOM_LABEL[editOriginalLesson.displayRoom] ?? editOriginalLesson.displayRoom}
                       </span>
-                      。下方可再修改。
+                      . You can edit it again below.
                     </p>
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-bold text-slate-900">調堂設定</p>
-                    <p className="mt-1 text-xs text-slate-600">
-                      填寫<strong className="font-semibold text-slate-800">原課日期</strong>與
-                      <strong className="font-semibold text-slate-800">新課日期</strong>
-                      ；新課的星期會自動帶出。儲存後原課堂列會變為出席「/」、類型「取消」，其下會多一列「調堂」。
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowEditPanel(false);
-                        setEditingRescheduleId(null);
-                        setFromLessonDate("");
-                        setToLessonDate("");
-                      }}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      取消
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!fromLessonDate.trim() || !toLessonDate.trim()) {
-                          setSelectionError("請填寫原課日期與新課日期後再儲存。");
-                          return;
-                        }
-                        const from = fromLessonDate.trim();
-                        const to = toLessonDate.trim();
-                        if (!baseRowByDate.has(from)) {
-                          setSelectionError("原課日期必須是課表上已有的一般排課日。");
-                          return;
-                        }
-                        const ids = rescheduleIdsByFromDate.get(from) ?? [];
-                        if (ids.some((id) => id !== editingRescheduleId)) {
-                          setSelectionError("此原課日期已有一次調堂紀錄，請勿重複。");
-                          return;
-                        }
-                        const finalTime = editForm.timeCustom.trim()
-                          ? editForm.timeCustom.trim()
-                          : editForm.timePreset.trim();
-                        if (!finalTime) {
-                          setSelectionError("請選擇或輸入新課時間。");
-                          return;
-                        }
-                        const nextList = editingRescheduleId
-                          ? rescheduleEntries.map((e) =>
-                              e.id === editingRescheduleId
-                                ? {
-                                    ...e,
-                                    fromDate: from,
-                                    toDate: to,
-                                    time: finalTime,
-                                    room: editForm.room.trim(),
-                                  }
-                                : e,
-                            )
-                          : [
-                              ...rescheduleEntries,
-                              {
-                                id: `${Date.now()}`,
-                                fromDate: from,
-                                toDate: to,
-                                time: finalTime,
-                                room: editForm.room.trim(),
-                              },
-                            ];
-                        setRescheduleEntries(nextList);
-                        window.localStorage.setItem(
-                          RESCHEDULE_STORAGE_KEY,
-                          JSON.stringify(nextList),
-                        );
-                        persistYearState({ rescheduleEntries: nextList });
-
-                        const restOverrides = { ...overrides };
-                        delete restOverrides[from];
-                        setOverrides(restOverrides);
-                        window.localStorage.setItem(
-                          OVERRIDES_STORAGE_KEY,
-                          JSON.stringify(restOverrides),
-                        );
-                        persistYearState({ overrides: restOverrides });
-
-                        setSelectionError("");
-                        setShowEditPanel(false);
-                        setEditingRescheduleId(null);
-                        setFromLessonDate("");
-                        setToLessonDate("");
-                        setSelectedRowIds([]);
-                      }}
-                      className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
-                    >
-                      儲存
-                    </button>
-                  </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-900">Reschedule Settings</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Fill in <strong className="font-semibold text-slate-800">Original Date</strong> and
+                    <strong className="font-semibold text-slate-800"> New Date</strong>. The new weekday is auto-filled. After saving, the original row becomes attendance &quot;/&quot; with type &quot;Cancelled&quot;, and a &quot;Reschedule&quot; row is inserted below it.
+                  </p>
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
                   <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">原課日期</span>
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">Original Date</span>
                     <input
                       type="date"
                       min={yearMin}
                       max={yearMax}
                       value={fromLessonDate}
+                      disabled={lockFromLessonDate}
                       onChange={(e) => setFromLessonDate(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                     />
+                    {lockFromLessonDate ? (
+                      <p className="mt-1 text-[11px] text-slate-500">Filled from selected row; original date is locked.</p>
+                    ) : null}
                   </label>
 
                   <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">新課日期</span>
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">New Date</span>
                     <input
                       type="date"
                       min={yearMin}
@@ -1321,18 +1412,18 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                   </label>
 
                   <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">星期（新課）</span>
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">Weekday (New)</span>
                     <input
                       type="text"
-                      value={editWeekday ? `星期${editWeekday}` : "—（請先選新課日期）"}
+                      value={editWeekday ? WEEKDAY_LABEL[editWeekday] ?? editWeekday : "— (Choose new date first)"}
                       readOnly
                       disabled
                       className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
                     />
                   </label>
 
-                  <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">時間（新課）</span>
+                  <div className="block">
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">Time (New)</span>
                     <select
                       value={editForm.timePreset}
                       disabled={!toLessonDate}
@@ -1347,98 +1438,209 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         </option>
                       ))}
                     </select>
-                    <input
-                      type="text"
-                      value={editForm.timeCustom}
-                      disabled={!toLessonDate}
-                      onChange={(e) =>
-                        setEditForm((p) => ({ ...p, timeCustom: e.target.value }))
-                      }
-                      placeholder="自由輸入（可留空）"
-                      className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:bg-slate-100"
-                    />
-                  </label>
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editForm.timeCustom}
+                        disabled={!toLessonDate}
+                        onChange={(e) =>
+                          setEditForm((p) => ({ ...p, timeCustom: e.target.value }))
+                        }
+                      placeholder="Custom input (optional)"
+                        className="min-w-[220px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:bg-slate-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowEditPanel(false);
+                          setEditSaveStatus("");
+                          setEditingRescheduleId(null);
+                          setFromLessonDate("");
+                          setToLessonDate("");
+                          setLockFromLessonDate(false);
+                        }}
+                        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                          <path d="M5.22 5.22a.75.75 0 011.06 0L10 8.94l3.72-3.72a.75.75 0 111.06 1.06L11.06 10l3.72 3.72a.75.75 0 11-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 11-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 010-1.06z" />
+                        </svg>
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setEditSaveStatus("Button pressed...");
+                        }}
+                        onClick={() => {
+                          try {
+                            setEditSaveStatus("Saving...");
+                            setSelectionError("Saving...");
+                            if (!fromLessonDate.trim() || !toLessonDate.trim()) {
+                              setEditSaveStatus("Please fill both original and new dates.");
+                              setSelectionError("Please fill both original and new dates before saving.");
+                              return;
+                            }
+                            const from = fromLessonDate.trim();
+                            const to = toLessonDate.trim();
+                            if (!baseRowByDate.has(from)) {
+                              setEditSaveStatus("Original date is not a regular lesson date.");
+                              setSelectionError("Original date must be an existing regular lesson date.");
+                              return;
+                            }
+                            const ids = rescheduleIdsByFromDate.get(from) ?? [];
+                            if (ids.some((id) => id !== editingRescheduleId)) {
+                              setEditSaveStatus("This original date already has a reschedule record.");
+                              setSelectionError("This original date already has a reschedule record.");
+                              return;
+                            }
+                            const finalTime = editForm.timeCustom.trim()
+                              ? editForm.timeCustom.trim()
+                              : editForm.timePreset.trim();
+                            if (!finalTime) {
+                              setEditSaveStatus("Please select or enter a new lesson time.");
+                              setSelectionError("Please select or enter a new lesson time.");
+                              return;
+                            }
+                            const nextList = editingRescheduleId
+                              ? rescheduleEntries.map((e) =>
+                                  e.id === editingRescheduleId
+                                    ? {
+                                        ...e,
+                                        fromDate: from,
+                                        toDate: to,
+                                        time: finalTime,
+                                        room: editForm.room.trim(),
+                                      }
+                                    : e,
+                                )
+                              : [
+                                  ...rescheduleEntries,
+                                  {
+                                    id: `${Date.now()}`,
+                                    fromDate: from,
+                                    toDate: to,
+                                    time: finalTime,
+                                    room: editForm.room.trim(),
+                                  },
+                                ];
+                            setRescheduleEntries(nextList);
+                            window.localStorage.setItem(
+                              RESCHEDULE_STORAGE_KEY,
+                              JSON.stringify(nextList),
+                            );
+                            persistYearState({ rescheduleEntries: nextList });
+                            if (!editingRescheduleId && editForm.doubleEnabled) {
+                              const nextExtraEntries = [
+                                ...extraEntries,
+                                {
+                                  id: `${Date.now()}-double-reschedule`,
+                                  date: to,
+                                  time: finalTime,
+                                  room: editForm.room.trim(),
+                                },
+                              ];
+                              setExtraEntries(nextExtraEntries);
+                              window.localStorage.setItem(
+                                EXTRA_STORAGE_KEY,
+                                JSON.stringify(nextExtraEntries),
+                              );
+                              persistYearState({ extraEntries: nextExtraEntries });
+                            }
 
-                  <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">Room（新課）</span>
-                    <select
-                      value={editForm.room}
-                      disabled={!toLessonDate}
-                      onChange={(e) => setEditForm((p) => ({ ...p, room: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-                    >
-                      {ROOM_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                            const restOverrides = { ...overrides };
+                            delete restOverrides[from];
+                            setOverrides(restOverrides);
+                            window.localStorage.setItem(
+                              OVERRIDES_STORAGE_KEY,
+                              JSON.stringify(restOverrides),
+                            );
+                            persistYearState({ overrides: restOverrides });
+
+                            setSelectionError("Saved.");
+                            setEditSaveStatus("Saved.");
+                            window.setTimeout(() => {
+                              setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+                              setEditSaveStatus((prev) => (prev === "Saved." ? "" : prev));
+                              setShowEditPanel(false);
+                              setEditingRescheduleId(null);
+                              setFromLessonDate("");
+                              setToLessonDate("");
+                              setLockFromLessonDate(false);
+                              setSelectedRowIds([]);
+                            }, 1200);
+                          } catch (error) {
+                            const message =
+                              error instanceof Error ? error.message : "Unexpected error while saving.";
+                            setEditSaveStatus(`Error: ${message}`);
+                            setSelectionError(`Save failed: ${message}`);
+                          }
+                        }}
+                        className="relative z-10 pointer-events-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
+                      >
+                        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                          <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
+                        </svg>
+                        Save
+                      </button>
+                      {editSaveStatus ? (
+                        <span className="shrink-0 text-xs font-semibold text-slate-600">{editSaveStatus}</span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="block">
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">Room (New)</span>
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={editForm.room}
+                        disabled={!toLessonDate}
+                        onChange={(e) => setEditForm((p) => ({ ...p, room: e.target.value }))}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                      >
+                        {ROOM_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {ROOM_LABEL[option] ?? option}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm font-bold text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={editForm.doubleEnabled}
+                          disabled={Boolean(editingRescheduleId)}
+                          onChange={(e) =>
+                            setEditForm((p) => ({ ...p, doubleEnabled: e.target.checked }))
+                          }
+                          className="h-5 w-5 accent-[#1d76c2] disabled:cursor-not-allowed"
+                        />
+                        Double Lesson
+                      </label>
+                    </div>
+                  </div>
+                  {editForm.doubleEnabled ? (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 lg:col-span-5">
+                      Double Lesson enabled: the second lesson uses the same day, time, and room.
+                    </div>
+                  ) : null}
                 </div>
+
               </div>
             )}
 
             {showExtraPanel && (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-bold text-slate-900">加堂設定</p>
-                    <p className="mt-1 text-xs text-slate-600">
-                      新增一筆「加堂」記錄，不會覆蓋原有排課；月份與 L 會自動重新計算。
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowExtraPanel(false)}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      取消
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const date = extraForm.date.trim();
-                        if (!date) {
-                          setSelectionError("請先填寫加堂日期。");
-                          return;
-                        }
-                        const finalTime = extraForm.timeCustom.trim()
-                          ? extraForm.timeCustom.trim()
-                          : extraForm.timePreset.trim();
-                        if (!finalTime) {
-                          setSelectionError("請選擇或輸入加堂時間。");
-                          return;
-                        }
-                        const nextExtra = [
-                          ...extraEntries,
-                          {
-                            id: `${Date.now()}`,
-                            date,
-                            time: finalTime,
-                            room: extraForm.room.trim(),
-                          },
-                        ];
-                        setExtraEntries(nextExtra);
-                        window.localStorage.setItem(
-                          EXTRA_STORAGE_KEY,
-                          JSON.stringify(nextExtra),
-                        );
-                        persistYearState({ extraEntries: nextExtra });
-                        setSelectionError("");
-                        setShowExtraPanel(false);
-                        setSelectedRowIds([]);
-                      }}
-                      className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
-                    >
-                      儲存
-                    </button>
-                  </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-900">Extra Lesson Settings</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Add an extra lesson record without overwriting existing schedule. Month and L labels recalculate automatically.
+                  </p>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
                   <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">加堂日期</span>
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">Extra Lesson Date</span>
                     <input
                       type="date"
                       min={yearMin}
@@ -1460,18 +1662,18 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                   </label>
 
                   <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">星期</span>
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">Weekday</span>
                     <input
                       type="text"
-                      value={extraForm.date ? `星期${weekdayFromIsoDate(extraForm.date)}` : "—"}
+                      value={extraForm.date ? WEEKDAY_LABEL[weekdayFromIsoDate(extraForm.date)] ?? weekdayFromIsoDate(extraForm.date) : "—"}
                       readOnly
                       disabled
                       className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
                     />
                   </label>
 
-                  <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">時間</span>
+                  <div className="block">
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">Time</span>
                     <select
                       value={extraForm.timePreset}
                       onChange={(e) => setExtraForm((p) => ({ ...p, timePreset: e.target.value }))}
@@ -1486,55 +1688,290 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         </option>
                       ))}
                     </select>
-                    <input
-                      type="text"
-                      value={extraForm.timeCustom}
-                      onChange={(e) => setExtraForm((p) => ({ ...p, timeCustom: e.target.value }))}
-                      placeholder="自由輸入（可留空）"
-                      className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-                    />
-                  </label>
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={extraForm.timeCustom}
+                        onChange={(e) => setExtraForm((p) => ({ ...p, timeCustom: e.target.value }))}
+                      placeholder="Custom input (optional)"
+                        className="min-w-[220px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowExtraPanel(false);
+                          setExtraSaveStatus("");
+                        }}
+                        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                          <path d="M5.22 5.22a.75.75 0 011.06 0L10 8.94l3.72-3.72a.75.75 0 111.06 1.06L11.06 10l3.72 3.72a.75.75 0 11-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 11-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 010-1.06z" />
+                        </svg>
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setExtraSaveStatus("Button pressed...");
+                        }}
+                        onClick={() => {
+                          try {
+                            setExtraSaveStatus("Saving...");
+                            setSelectionError("Saving...");
+                            const date = extraForm.date.trim();
+                            if (!date) {
+                              setExtraSaveStatus("Please fill extra lesson date.");
+                              setSelectionError("Please fill extra lesson date first.");
+                              return;
+                            }
+                            const finalTime = extraForm.timeCustom.trim()
+                              ? extraForm.timeCustom.trim()
+                              : extraForm.timePreset.trim();
+                            if (!finalTime) {
+                              setExtraSaveStatus("Please select or enter extra lesson time.");
+                              setSelectionError("Please select or enter extra lesson time.");
+                              return;
+                            }
+                            const nextExtra = [
+                              ...extraEntries,
+                              {
+                                id: `${Date.now()}`,
+                                date,
+                                time: finalTime,
+                                room: extraForm.room.trim(),
+                              },
+                            ];
+                            if (extraForm.doubleEnabled) {
+                              nextExtra.push({
+                                id: `${Date.now()}-2`,
+                                date,
+                                time: finalTime,
+                                room: extraForm.room.trim(),
+                              });
+                            }
+                            setExtraEntries(nextExtra);
+                            window.localStorage.setItem(
+                              EXTRA_STORAGE_KEY,
+                              JSON.stringify(nextExtra),
+                            );
+                            persistYearState({ extraEntries: nextExtra });
+                            setSelectionError("Saved.");
+                            setExtraSaveStatus("Saved.");
+                            window.setTimeout(() => {
+                              setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+                              setExtraSaveStatus((prev) => (prev === "Saved." ? "" : prev));
+                              setShowExtraPanel(false);
+                              setSelectedRowIds([]);
+                            }, 1200);
+                          } catch (error) {
+                            const message =
+                              error instanceof Error ? error.message : "Unexpected error while saving.";
+                            setExtraSaveStatus(`Error: ${message}`);
+                            setSelectionError(`Save failed: ${message}`);
+                          }
+                        }}
+                        className="relative z-10 pointer-events-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
+                      >
+                        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                          <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
+                        </svg>
+                        Save
+                      </button>
+                      {extraSaveStatus ? (
+                        <span className="shrink-0 text-xs font-semibold text-slate-600">{extraSaveStatus}</span>
+                      ) : null}
+                    </div>
+                  </div>
 
-                  <label className="block">
+                  <div className="block">
                     <span className="mb-1 block text-sm font-semibold text-slate-700">Room</span>
-                    <select
-                      value={extraForm.room}
-                      onChange={(e) => setExtraForm((p) => ({ ...p, room: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-                    >
-                      {ROOM_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={extraForm.room}
+                        onChange={(e) => setExtraForm((p) => ({ ...p, room: e.target.value }))}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                      >
+                        {ROOM_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {ROOM_LABEL[option] ?? option}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-sm font-bold text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={extraForm.doubleEnabled}
+                          onChange={(e) =>
+                            setExtraForm((p) => ({ ...p, doubleEnabled: e.target.checked }))
+                          }
+                          className="h-5 w-5 accent-[#1d76c2]"
+                        />
+                        Double Lesson
+                      </label>
+                    </div>
+                  </div>
+                  {extraForm.doubleEnabled ? (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 lg:col-span-5">
+                      Double Lesson enabled: the second lesson uses the same day, time, and room.
+                    </div>
+                  ) : null}
                 </div>
+
               </div>
             )}
 
-            <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
               <div className="overflow-x-auto">
+                <div className="flex min-w-[1500px] items-end gap-3">
+                <label className="w-40 shrink-0">
+                  <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Month</span>
+                  <select
+                    value={filterMonth}
+                    onChange={(e) => setFilterMonth(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                  >
+                    <option value="">All</option>
+                    {monthFilterOptions.map((month) => (
+                      <option key={month} value={String(month)}>
+                        {MONTH_LABEL[month] ?? month}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="w-[340px] shrink-0">
+                  <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Date Period</span>
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                    <input
+                      type="date"
+                      value={filterDateFrom}
+                      onChange={(e) => setFilterDateFrom(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                    />
+                    <span className="text-xs text-slate-500">to</span>
+                    <input
+                      type="date"
+                      value={filterDateTo}
+                      onChange={(e) => setFilterDateTo(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                    />
+                  </div>
+                </div>
+
+                <label className="w-44 shrink-0">
+                  <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Time</span>
+                  <input
+                    type="text"
+                    value={filterTime}
+                    onChange={(e) => setFilterTime(e.target.value)}
+                    placeholder="e.g. 03:00 PM"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                  />
+                </label>
+
+                <label className="w-36 shrink-0">
+                  <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Room</span>
+                  <select
+                    value={filterRoom}
+                    onChange={(e) => setFilterRoom(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                  >
+                    <option value="">All</option>
+                    {roomFilterOptions.map((room) => (
+                      <option key={room} value={room}>
+                        {ROOM_LABEL[room] ?? room}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="w-40 shrink-0">
+                  <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Tutor</span>
+                  <select
+                    value={filterTutor}
+                    onChange={(e) => setFilterTutor(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                  >
+                    <option value="">All</option>
+                    {tutorFilterOptions.map((tutor) => (
+                      <option key={tutor} value={tutor}>
+                        {tutor}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="w-36 shrink-0">
+                  <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Type</span>
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                  >
+                    <option value="">All</option>
+                    {typeFilterOptions.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="flex shrink-0 items-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterMonth("");
+                      setFilterDateFrom("");
+                      setFilterDateTo("");
+                      setFilterTime("");
+                      setFilterRoom("");
+                      setFilterTutor("");
+                      setFilterType("");
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded bg-[#1d76c2] px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1663a3]"
+                  >
+                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                      <path
+                        transform="translate(0,-1.8)"
+                        d="M4.08 11.86a5.5 5.5 0 019.27-3.59l-.94.94a.75.75 0 001.06 1.06l2.5-2.5a.75.75 0 000-1.06l-2.5-2.5a.75.75 0 00-1.06 1.06l.99.99a7 7 0 00-11.3 5.59.75.75 0 001.5 0z"
+                      />
+                      <path
+                        transform="translate(0,1.8)"
+                        d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
+                      />
+                    </svg>
+                    Reset Filters
+                  </button>
+                </div>
+              </div>
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+              <div className="max-h-[70vh] overflow-auto">
                 <table className="w-full min-w-[1180px] divide-y divide-slate-200">
                   <thead className="bg-slate-50">
                     <tr className="divide-x divide-slate-200">
-                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                      <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
                         <input
                           type="checkbox"
                           checked={allVisibleSelected}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedRowIds(scheduleRows.map((r) => r.rowId));
+                              setSelectedRowIds(filteredScheduleRows.map((r) => r.rowId));
                             } else {
                               setSelectedRowIds([]);
                             }
                           }}
                           className="h-4 w-4 accent-[#1d76c2]"
-                          aria-label="全選"
+                          aria-label="Select all"
                         />
                       </th>
                       <LessonSortableHeader
-                        label="月份"
+                        label="Month"
                         columnKey="month"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
@@ -1547,25 +1984,27 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         setSortConfig={setSortConfig}
                       />
                       <LessonSortableHeader
-                        label="出席"
+                        label="Attendance"
                         columnKey="attendance"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
+                        thClassName="w-20 whitespace-nowrap"
                       />
                       <LessonSortableHeader
-                        label="日期"
+                        label="Date"
                         columnKey="date"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
                       />
                       <LessonSortableHeader
-                        label="星期"
+                        label="Day"
                         columnKey="weekday"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
+                        thClassName="w-20 whitespace-nowrap"
                       />
                       <LessonSortableHeader
-                        label="時間"
+                        label="Time"
                         columnKey="time"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
@@ -1575,6 +2014,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         columnKey="room"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
+                        thClassName="w-20 whitespace-nowrap"
                       />
                       <LessonSortableHeader
                         label="Tutor"
@@ -1590,7 +2030,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         thClassName="w-[20%] min-w-[220px] whitespace-normal"
                       />
                       <LessonSortableHeader
-                        label="類型"
+                        label="Type"
                         columnKey="lessonType"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
@@ -1602,17 +2042,24 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                     {scheduleRows.length === 0 ? (
                       <tr>
                         <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
-                          尚未在「上課時段設定」加入任何星期/時間/Room 記錄。
+                          No records in lesson schedule settings yet.
+                        </td>
+                      </tr>
+                    ) : filteredScheduleRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
+                          No records match current filters.
                         </td>
                       </tr>
                     ) : (
-                      sortedScheduleRows.map((r, idx) => (
+                      filteredScheduleRows.map((r, idx) => (
                         <tr
                           key={r.rowId}
                           className={[
                             "divide-x divide-slate-100",
-                            idx > 0 && sortedScheduleRows[idx - 1].month !== r.month
-                              ? "border-t-2 border-slate-300"
+                            idx < filteredScheduleRows.length - 1 &&
+                            filteredScheduleRows[idx + 1].month !== r.month
+                              ? "border-b-2 border-slate-400"
                               : "",
                             r.rowKind === "cancelled_original"
                               ? "bg-slate-50"
@@ -1637,23 +2084,23 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                 }
                               }}
                               className="h-4 w-4 accent-[#1d76c2]"
-                              aria-label={`${r.date} 勾選`}
+                              aria-label={`${r.date} select row`}
                             />
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            {r.month}
+                            {MONTH_LABEL[r.month] ?? r.month}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm font-semibold text-slate-900">
                             {r.lLabel}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
+                          <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
                             {r.rowKind === "cancelled_original" ? (
                               <span className="font-semibold text-slate-500">/</span>
                             ) : (
                               <span
                                 className="inline-block min-w-4 text-center font-semibold text-slate-700"
-                                aria-label={`${r.date} 出席（唯讀）`}
-                                title="出席為唯讀，請到 Room 頁面勾選"
+                                aria-label={`${r.date} attendance (read-only)`}
+                                title="Attendance is read-only here. Please mark attendance in the Room page."
                               >
                                 {attendance[r.attendanceKey] ? "✓" : ""}
                               </span>
@@ -1662,14 +2109,14 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                             {r.date}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            星期{r.weekday}
+                          <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
+                            {WEEKDAY_LABEL[r.weekday] ?? r.weekday}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                             {r.time}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            {r.room}
+                          <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
+                            {ROOM_LABEL[r.room] ?? r.room}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                             {displayTutorInCell(r.tutor)}
@@ -1723,7 +2170,7 @@ export default function StudentLessons2026Page() {
 }
 
 const LESSON_TH_BASE =
-  "px-3 py-3 text-left text-xs font-bold tracking-wider text-slate-700";
+  "sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-3 py-3 text-left text-xs font-bold tracking-wider text-slate-700";
 
 type LessonSortableHeaderProps = {
   label: string;
@@ -1751,7 +2198,7 @@ function LessonSortableHeader({
       <div className="flex items-center gap-1.5">
         <span className="whitespace-nowrap">{label}</span>
         <select
-          aria-label={`${label} 排序`}
+          aria-label={`Sort ${label}`}
           value={selectedDirection}
           onChange={(event) => {
             const direction = event.target.value as SortDirection | "";

@@ -1,5 +1,6 @@
 "use client";
 
+import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
 import { supabase } from "@/lib/supabase";
 
 export type StudentLesson2026State = {
@@ -10,6 +11,11 @@ export type StudentLesson2026State = {
   extraEntries: unknown[];
 };
 
+export type StudentExamInfo = {
+  examDate: string;
+  examContent: string;
+};
+
 const DEFAULT_2026_STATE: StudentLesson2026State = {
   attendance: {},
   hiddenDates: {},
@@ -18,13 +24,35 @@ const DEFAULT_2026_STATE: StudentLesson2026State = {
   extraEntries: [],
 };
 
-export async function loadExamDate(studentId: string) {
-  const { data } = await supabase
+export async function loadExamInfo(studentId: string): Promise<StudentExamInfo> {
+  const { data, error } = await supabase
     .from("student_exam_dates")
-    .select("exam_date")
+    .select("exam_date, exam_content")
     .eq("student_id", studentId)
     .maybeSingle();
-  return (data?.exam_date as string | null) ?? "";
+
+  // Backward compatibility: older DB may not have exam_content yet.
+  if (error) {
+    const { data: fallback } = await supabase
+      .from("student_exam_dates")
+      .select("exam_date")
+      .eq("student_id", studentId)
+      .maybeSingle();
+    return {
+      examDate: (fallback?.exam_date as string | null) ?? "",
+      examContent: "",
+    };
+  }
+
+  return {
+    examDate: (data?.exam_date as string | null) ?? "",
+    examContent: (data as any)?.exam_content ? String((data as any).exam_content) : "",
+  };
+}
+
+export async function loadExamDate(studentId: string) {
+  const info = await loadExamInfo(studentId);
+  return info.examDate;
 }
 
 export async function loadExamDatesBatch(studentIds: string[]) {
@@ -40,11 +68,67 @@ export async function loadExamDatesBatch(studentIds: string[]) {
   return out;
 }
 
-export async function saveExamDate(studentId: string, examDate: string) {
-  await supabase.from("student_exam_dates").upsert(
-    { student_id: studentId, exam_date: examDate, updated_at: new Date().toISOString() },
+export async function loadExamInfoBatch(studentIds: string[]) {
+  if (!studentIds.length) return {} as Record<string, StudentExamInfo>;
+  const out: Record<string, StudentExamInfo> = {};
+  const { data, error } = await supabase
+    .from("student_exam_dates")
+    .select("student_id, exam_date, exam_content")
+    .in("student_id", studentIds);
+
+  // Backward compatibility: older DB may not have exam_content yet.
+  if (error) {
+    const { data: fallback } = await supabase
+      .from("student_exam_dates")
+      .select("student_id, exam_date")
+      .in("student_id", studentIds);
+    for (const row of fallback ?? []) {
+      const sid = String((row as any).student_id ?? "");
+      if (!sid) continue;
+      out[sid] = {
+        examDate: String((row as any).exam_date ?? ""),
+        examContent: "",
+      };
+    }
+    return out;
+  }
+
+  for (const row of data ?? []) {
+    const sid = String((row as any).student_id ?? "");
+    if (!sid) continue;
+    out[sid] = {
+      examDate: String((row as any).exam_date ?? ""),
+      examContent: String((row as any).exam_content ?? ""),
+    };
+  }
+  return out;
+}
+
+export async function saveExamInfo(studentId: string, examInfo: StudentExamInfo) {
+  const { examDate, examContent } = examInfo;
+  const { error } = await supabase.from("student_exam_dates").upsert(
+    {
+      student_id: studentId,
+      exam_date: examDate,
+      exam_content: examContent,
+      updated_at: new Date().toISOString(),
+    },
     { onConflict: "student_id" },
   );
+
+  // Backward compatibility: older DB may not have exam_content yet.
+  if (error) {
+    await supabase.from("student_exam_dates").upsert(
+      { student_id: studentId, exam_date: examDate, updated_at: new Date().toISOString() },
+      { onConflict: "student_id" },
+    );
+  }
+  notifyScheduleCachesStale();
+}
+
+export async function saveExamDate(studentId: string, examDate: string) {
+  const current = await loadExamInfo(studentId);
+  await saveExamInfo(studentId, { examDate, examContent: current.examContent });
 }
 
 /** Daily / Regular timetable 當日 Remarks（學生 + 日期 YYYY-MM-DD） */
@@ -58,6 +142,7 @@ export async function upsertTimetableDayRemark(studentId: string, dateIso: strin
     },
     { onConflict: "student_id,date_iso" },
   );
+  notifyScheduleCachesStale();
 }
 
 export async function deleteTimetableDayRemark(studentId: string, dateIso: string) {
@@ -66,6 +151,7 @@ export async function deleteTimetableDayRemark(studentId: string, dateIso: strin
     .delete()
     .eq("student_id", studentId)
     .eq("date_iso", dateIso);
+  notifyScheduleCachesStale();
 }
 
 export async function loadLessonScheduleRecords(studentId: string) {
@@ -99,6 +185,7 @@ export async function saveLessonScheduleRecords(studentId: string, records: unkn
     { student_id: studentId, records, updated_at: new Date().toISOString() },
     { onConflict: "student_id" },
   );
+  notifyScheduleCachesStale();
 }
 
 export async function loadLesson2026State(studentId: string) {
@@ -141,6 +228,7 @@ export async function saveLesson2026State(studentId: string, state: StudentLesso
     },
     { onConflict: "student_id" },
   );
+  notifyScheduleCachesStale();
 }
 
 export async function loadLessonYearState(studentId: string, year: number) {
@@ -222,6 +310,7 @@ export async function saveLessonYearState(
     },
     { onConflict: "student_id,year" },
   );
+  notifyScheduleCachesStale();
 }
 
 export async function saveLesson2026Metrics(

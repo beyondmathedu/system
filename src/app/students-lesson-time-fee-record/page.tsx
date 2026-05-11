@@ -1,7 +1,7 @@
 /* eslint-disable react/no-array-index-key */
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
@@ -28,7 +28,33 @@ type StudentRow = {
 
 const L_COUNT = 9;
 const START_YEAR = 2026;
+const STICKY_ID_WIDTH = 88;
+const STICKY_NAME_WIDTH = 180;
+const STICKY_GRADE_WIDTH = 84;
+const WEEKDAY_COL_WIDTH = 86;
+const TUITION_COL_WIDTH = 96;
+const L_COL_WIDTH = 56;
+const MAKEUP_COL_WIDTH = 110;
+const SEND_FEE_COL_WIDTH = 88;
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAY_ORDER: Record<string, number> = {
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  日: 7,
+};
+const HK_WEEKDAY_CN_TO_EN: Record<string, string> = {
+  一: "Mon",
+  二: "Tue",
+  三: "Wed",
+  四: "Thu",
+  五: "Fri",
+  六: "Sat",
+  日: "Sun",
+};
 
 function hkMonthNow(): number {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -98,6 +124,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return Math.max(START_YEAR, now.y);
   });
   const [recordsByStudentId, setRecordsByStudentId] = useState<Record<string, RecordState>>({});
+  const [submittedBeforeByStudentId, setSubmittedBeforeByStudentId] = useState<Record<string, number>>({});
   const [lessonRecordsByStudentId, setLessonRecordsByStudentId] = useState<
     Record<string, LessonRecord[]>
   >({});
@@ -110,8 +137,21 @@ export default function StudentsLessonTimeFeeRecordPage() {
   const saveTimersRef = useState(() => new Map<string, number>())[0];
 
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
+  const [gradeFilter, setGradeFilter] = useState<string>("all");
+  const [weekdayFilter, setWeekdayFilter] = useState<string>("all");
+  const [paymentFilter, setPaymentFilter] = useState<"all" | "underpaid" | "ok">("all");
+  const [sendFeeFilter, setSendFeeFilter] = useState<"all" | "yes" | "no">("all");
   const [syncingZoho, setSyncingZoho] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomTrackRef = useRef<HTMLDivElement | null>(null);
+  const sideTrackRef = useRef<HTMLDivElement | null>(null);
+  const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
+  const [bottomScrollClientWidth, setBottomScrollClientWidth] = useState(0);
+  const [sideScrollHeight, setSideScrollHeight] = useState(0);
+  const [sideScrollClientHeight, setSideScrollClientHeight] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -215,6 +255,38 @@ export default function StudentsLessonTimeFeeRecordPage() {
     };
   }, [students, sheetMonth, sheetYear]);
 
+  useEffect(() => {
+    if (students.length === 0) {
+      setSubmittedBeforeByStudentId({});
+      return;
+    }
+    let mounted = true;
+    void (async () => {
+      const currentMonth = Number(sheetMonth);
+      if (currentMonth <= 1) {
+        setSubmittedBeforeByStudentId({});
+        return;
+      }
+      const { data } = await supabase
+        .from("student_monthly_fee_records")
+        .select("student_id, submitted_amount")
+        .eq("year", sheetYear)
+        .lt("month", currentMonth)
+        .in("student_id", students.map((s) => s.id));
+      if (!mounted) return;
+      const next: Record<string, number> = {};
+      for (const r of data ?? []) {
+        const sid = String((r as any).student_id ?? "");
+        if (!sid) continue;
+        next[sid] = (next[sid] ?? 0) + (Number((r as any).submitted_amount ?? 0) || 0);
+      }
+      setSubmittedBeforeByStudentId(next);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [students, sheetMonth, sheetYear]);
+
   function scheduleSave(studentId: string, patch: Partial<RecordState>) {
     const key = `${studentId}:${sheetYear}:${sheetMonth}`;
     const existing = saveTimersRef.get(key);
@@ -279,6 +351,41 @@ export default function StudentsLessonTimeFeeRecordPage() {
     });
   }, [students, recordsByStudentId, sortConfig]);
 
+  const weekdayTokensByStudentId = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    for (const st of students) {
+      out[st.id] = (recordsByStudentId[st.id]?.weekday ?? "")
+        .split("/")
+        .map((v) => v.trim())
+        .filter(Boolean);
+    }
+    return out;
+  }, [students, recordsByStudentId]);
+
+  const filteredSortedStudents = useMemo(() => {
+    return sortedStudents.filter((st) => {
+      const r = recordsByStudentId[st.id] ?? defaultRecordState();
+      const matchesGrade = gradeFilter === "all" || formatGradeDisplay(st.grade) === gradeFilter;
+      const matchesWeekday =
+        weekdayFilter === "all" ||
+        (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
+      const matchesPayment =
+        paymentFilter === "all" ||
+        (paymentFilter === "underpaid" ? r.submitted < r.expected : r.submitted >= r.expected);
+      const matchesSendFee =
+        sendFeeFilter === "all" || (sendFeeFilter === "yes" ? Boolean(r.sendFee) : !r.sendFee);
+      return matchesGrade && matchesWeekday && matchesPayment && matchesSendFee;
+    });
+  }, [
+    sortedStudents,
+    recordsByStudentId,
+    gradeFilter,
+    weekdayFilter,
+    paymentFilter,
+    sendFeeFilter,
+    weekdayTokensByStudentId,
+  ]);
+
   const updateStudentRecord = (studentId: string, patch: Partial<RecordState>) => {
     setRecordsByStudentId((prev) => ({
       ...prev,
@@ -313,7 +420,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     [scheduleSave],
   );
 
-  const onSyncZohoSubmitted = useCallback(async () => {
+  const syncZohoSubmitted = useCallback(
+    async (opts?: { studentIds?: string[]; idOnly?: boolean }) => {
     setSyncingZoho(true);
     setSyncNotice("");
     try {
@@ -322,7 +430,12 @@ export default function StudentsLessonTimeFeeRecordPage() {
       const resp = await fetch("/api/zoho/sync-submitted", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year: sheetYear, month: Number(sheetMonth) }),
+        body: JSON.stringify({
+          year: sheetYear,
+          month: Number(sheetMonth),
+          studentIds: opts?.studentIds,
+          idOnly: Boolean(opts?.idOnly),
+        }),
         signal: ctl.signal,
       });
       window.clearTimeout(timeout);
@@ -330,6 +443,17 @@ export default function StudentsLessonTimeFeeRecordPage() {
       if (!resp.ok || !json?.ok) {
         throw new Error(String(json?.error ?? "sync_failed"));
       }
+      const debug = (json?.debug ?? {}) as {
+        matchedReceipts?: number;
+        totalLineItems?: number;
+        parsedMonthLineItems?: number;
+        detailCalls?: number;
+        skippedDetailByLimit?: number;
+        detailFetchSuccess?: number;
+        detailFetchEmpty?: number;
+        detailFetchError?: number;
+        detailErrorSamples?: string[];
+      };
       const monthMap = (json?.monthSubmittedByStudentId ?? {}) as Record<string, number>;
       if (Object.keys(monthMap).length > 0) {
         setRecordsByStudentId((prev) => {
@@ -344,23 +468,29 @@ export default function StudentsLessonTimeFeeRecordPage() {
         });
       }
       setSyncNotice(
-        `已同步 Zoho（${sheetYear} 年），抓到 ${Number(json?.fetchedReceipts ?? 0)} 張收據；更新 ${Number(json?.syncedRows ?? 0)} 筆；未匹配 ${Number(json?.unmatchedReceipts ?? 0)} 張。${
+        `Zoho synced (${sheetYear}). Fetched ${Number(json?.fetchedReceipts ?? 0)} receipts; updated ${Number(json?.syncedRows ?? 0)} rows; ${Number(json?.unmatchedReceipts ?? 0)} unmatched.${
           Array.isArray(json?.unmatchedExamples) && json.unmatchedExamples.length
-            ? ` 未匹配例子：${json.unmatchedExamples.join(" / ")}`
+            ? ` Unmatched examples: ${json.unmatchedExamples.join(" / ")}`
             : ""
-        }`,
+        } Debug: matched ${Number(debug.matchedReceipts ?? 0)}, line items ${Number(debug.totalLineItems ?? 0)}, parsed-month items ${Number(debug.parsedMonthLineItems ?? 0)}, detail calls ${Number(debug.detailCalls ?? 0)}, skipped details ${Number(debug.skippedDetailByLimit ?? 0)}, detail success ${Number(debug.detailFetchSuccess ?? 0)}, detail empty ${Number(debug.detailFetchEmpty ?? 0)}, detail errors ${Number(debug.detailFetchError ?? 0)}${
+          Array.isArray(debug.detailErrorSamples) && debug.detailErrorSamples.length
+            ? `, detail error samples: ${debug.detailErrorSamples.join(" / ")}`
+            : ""
+        }.`,
       );
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       if (msg.includes("aborted")) {
-        setSyncNotice("同步逾時（>90秒），請再試一次。系統已改為批量同步，通常第二次會更快。");
+        setSyncNotice("Sync timed out (>90s). Please try again. The system now syncs in batches, and the next attempt is usually faster.");
       } else {
-        setSyncNotice(`同步失敗：${msg}`);
+        setSyncNotice(`Sync failed: ${msg}`);
       }
     } finally {
       setSyncingZoho(false);
     }
-  }, [sheetMonth, sheetYear]);
+    },
+    [sheetMonth, sheetYear],
+  );
 
   function toHkIsoDateFromMs(msOrIso: number | string | Date) {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -374,8 +504,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return `${y}-${m}-${d}`;
   }
 
-  function getActiveWeekday(records: LessonRecord[], dateIso: string) {
-    if (!records.length) return "";
+  function getActiveWeekdays(records: LessonRecord[], dateIso: string) {
+    if (!records.length) return [] as string[];
     const normalized = records
       .map((r) => {
         const rr = r as unknown as Record<string, unknown>;
@@ -410,16 +540,15 @@ export default function StudentsLessonTimeFeeRecordPage() {
       return a.createdAt - b.createdAt;
     });
 
-    let active: LessonRecord | null = null;
+    const activeByWeekday = new Map<string, LessonRecord>();
     for (const r of normalized) {
       if (r.effectiveDate <= dateIso) {
-        // active 只需要 weekday，所以用 normalized 的結構即可
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        active = r as unknown as LessonRecord;
+        activeByWeekday.set(r.weekday, r as unknown as LessonRecord);
       }
     }
-
-    return (active as unknown as { weekday: string } | null)?.weekday ?? "";
+    const weekdays = Array.from(activeByWeekday.keys()).filter(Boolean);
+    weekdays.sort((a, b) => (WEEKDAY_ORDER[a] ?? 99) - (WEEKDAY_ORDER[b] ?? 99));
+    return weekdays;
   }
 
   const HK_WEEKDAY_SHORT_TO_CN: Record<string, string> = {
@@ -431,7 +560,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
     Sat: "六",
     Sun: "日",
   };
-
   function countHkWeekdaysInMonth(year: number, month1to12: number) {
     const counts: Record<string, number> = {
       一: 0,
@@ -443,17 +571,17 @@ export default function StudentsLessonTimeFeeRecordPage() {
       日: 0,
     };
 
-    // 用 UTC 算天數避免本地時區影響「月有幾天」
+    // Use UTC for day count to avoid local timezone drift.
     const daysInMonth = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
 
-    // 逐日用 HK 時區判斷星期，確保和你預期一致（避免伺服器/電腦時區差異）
+    // Compute weekdays in HK timezone to avoid server/client timezone mismatch.
     const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
       timeZone: "Asia/Hong_Kong",
       weekday: "short",
     });
 
     for (let d = 1; d <= daysInMonth; d++) {
-      const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12)); // midday，避免跨日邊界
+      const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12)); // midday to avoid date-boundary drift
       const short = weekdayFormatter.format(dt);
       const cn = HK_WEEKDAY_SHORT_TO_CN[short];
       if (cn) counts[cn] += 1;
@@ -483,7 +611,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
         if (Array.isArray(rawCloudRecords) && rawCloudRecords.length > 0) {
           records = rawCloudRecords as LessonRecord[];
         } else {
-          // fallback: localStorage (無雲端資料時)
+          // fallback: localStorage (when no cloud records exist)
           try {
             const key = `lesson_schedule_records:${id}`;
             const raw = window.localStorage.getItem(key);
@@ -516,6 +644,23 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return countHkWeekdaysInMonth(sheetYear, Number(sheetMonth));
   }, [sheetMonth, sheetYear]);
 
+  const cumulativeWeekdayCountsBeforeSelectedMonth = useMemo(() => {
+    const currentMonth = Number(sheetMonth);
+    const out: Record<string, number> = { 一: 0, 二: 0, 三: 0, 四: 0, 五: 0, 六: 0, 日: 0 };
+    if (currentMonth <= 1) return out;
+    for (let m = 1; m < currentMonth; m += 1) {
+      const monthCounts = countHkWeekdaysInMonth(sheetYear, m);
+      out.一 += monthCounts.一 ?? 0;
+      out.二 += monthCounts.二 ?? 0;
+      out.三 += monthCounts.三 ?? 0;
+      out.四 += monthCounts.四 ?? 0;
+      out.五 += monthCounts.五 ?? 0;
+      out.六 += monthCounts.六 ?? 0;
+      out.日 += monthCounts.日 ?? 0;
+    }
+    return out;
+  }, [sheetMonth, sheetYear]);
+
   const baseLessonDatesByWeekday = useMemo(() => {
     const out: Record<string, string[]> = {
       一: [],
@@ -540,12 +685,33 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return out;
   }, [sheetYear, sheetMonth]);
 
+  const extraEntryCountsByStudentId = useMemo(() => {
+    const out: Record<string, { before: number; current: number }> = {};
+    const currentMonth = Number(sheetMonth);
+    for (const st of students) {
+      out[st.id] = { before: 0, current: 0 };
+      const extraEntries = extraEntriesByStudentId[st.id] ?? [];
+      for (const e of extraEntries) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
+        if (!m) continue;
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        if (y !== sheetYear) continue;
+        if (mo === currentMonth) out[st.id].current += 1;
+        else if (mo < currentMonth) out[st.id].before += 1;
+      }
+    }
+    return out;
+  }, [students, extraEntriesByStudentId, sheetYear, sheetMonth]);
+
   const lessonDatesByStudentId = useMemo(() => {
     const out: Record<string, string[]> = {};
     for (const st of students) {
-      const r = recordsByStudentId[st.id] ?? defaultRecordState();
-      const weekday = r.weekday;
-      const base = weekday ? [...(baseLessonDatesByWeekday[weekday] ?? [])] : [];
+      const weekdays = weekdayTokensByStudentId[st.id] ?? [];
+      const base: string[] = [];
+      for (const wd of weekdays) {
+        base.push(...(baseLessonDatesByWeekday[wd] ?? []));
+      }
       const extraEntries = extraEntriesByStudentId[st.id] ?? [];
       for (const e of extraEntries) {
         const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
@@ -563,16 +729,65 @@ export default function StudentsLessonTimeFeeRecordPage() {
         if (am !== bm) return am - bm;
         return ad - bd;
       });
-      out[st.id] = base.slice(0, L_COUNT);
+      out[st.id] = Array.from(new Set(base)).slice(0, L_COUNT);
     }
     return out;
-  }, [students, recordsByStudentId, extraEntriesByStudentId, baseLessonDatesByWeekday, sheetYear, sheetMonth]);
+  }, [
+    students,
+    weekdayTokensByStudentId,
+    extraEntriesByStudentId,
+    baseLessonDatesByWeekday,
+    sheetYear,
+    sheetMonth,
+  ]);
+
+  const expectedBeforeByStudentId = useMemo(() => {
+    const out: Record<string, number> = {};
+    const currentMonth = Number(sheetMonth);
+    if (currentMonth <= 1) return out;
+    for (const st of students) {
+      const weekdays = weekdayTokensByStudentId[st.id] ?? [];
+      const expected = weekdays.reduce(
+        (sum, wd) => sum + (cumulativeWeekdayCountsBeforeSelectedMonth[wd] ?? 0),
+        0,
+      );
+      const extraCountBefore = extraEntryCountsByStudentId[st.id]?.before ?? 0;
+      out[st.id] = expected + extraCountBefore;
+    }
+    return out;
+  }, [
+    students,
+    weekdayTokensByStudentId,
+    extraEntryCountsByStudentId,
+    sheetMonth,
+    cumulativeWeekdayCountsBeforeSelectedMonth,
+  ]);
+
+  const balanceBeforeByStudentId = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const st of students) {
+      const expectedBefore = Number(expectedBeforeByStudentId[st.id] ?? 0) || 0;
+      const submittedBefore = Number(submittedBeforeByStudentId[st.id] ?? 0) || 0;
+      out[st.id] = expectedBefore - submittedBefore;
+    }
+    return out;
+  }, [students, expectedBeforeByStudentId, submittedBeforeByStudentId]);
+
+  const totalDueByStudentId = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const st of students) {
+      const currentExpected = Number(recordsByStudentId[st.id]?.expected ?? 0) || 0;
+      const balanceBefore = Number(balanceBeforeByStudentId[st.id] ?? 0) || 0;
+      out[st.id] = balanceBefore + currentExpected;
+    }
+    return out;
+  }, [students, recordsByStudentId, balanceBeforeByStudentId]);
 
   useEffect(() => {
     if (students.length === 0) return;
     if (Object.keys(lessonRecordsByStudentId).length === 0) return;
 
-    // 「星期」以學生目前設定（今天的 active rule）為準
+    // Weekday uses student's current active rule (as of today).
     const todayIso = toHkIsoDateFromMs(Date.now());
 
     setRecordsByStudentId((prev) => {
@@ -580,28 +795,173 @@ export default function StudentsLessonTimeFeeRecordPage() {
       for (const st of students) {
         if (!next[st.id]) next[st.id] = defaultRecordState();
         const records = lessonRecordsByStudentId[st.id] ?? [];
-        const weekday = getActiveWeekday(records, todayIso);
-        const finalWeekday = weekday || next[st.id].weekday;
-         const extraEntries = extraEntriesByStudentId[st.id] ?? [];
-         const extraCount = extraEntries.filter((e) => {
-           const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
-           if (!m) return false;
-           const y = Number(m[1]);
-           const mo = Number(m[2]);
-           return y === sheetYear && mo === Number(sheetMonth);
-         }).length;
+        const weekdays = getActiveWeekdays(records, todayIso);
+        const finalWeekday =
+          weekdays.length > 0
+            ? weekdays.join("/")
+            : next[st.id].weekday;
+        const effectiveWeekdays = finalWeekday
+          .split("/")
+          .map((v) => v.trim())
+          .filter(Boolean);
+        const extraCount = extraEntryCountsByStudentId[st.id]?.current ?? 0;
 
-         const baseExpected = finalWeekday ? weekdayCountsInSelectedMonth[finalWeekday] ?? 0 : 0;
+        const baseExpected = effectiveWeekdays.reduce(
+          (sum, wd) => sum + (weekdayCountsInSelectedMonth[wd] ?? 0),
+          0,
+        );
         next[st.id] = {
           ...next[st.id],
           weekday: finalWeekday,
-          // 應交 = 恆常堂數 + 本月加堂數目
+          // Expected = regular lessons + extra lessons in this month.
           expected: baseExpected + extraCount,
         };
       }
       return next;
     });
-  }, [students, lessonRecordsByStudentId, weekdayCountsInSelectedMonth, extraEntriesByStudentId, sheetMonth, sheetYear]);
+  }, [
+    students,
+    lessonRecordsByStudentId,
+    weekdayCountsInSelectedMonth,
+    sheetMonth,
+    sheetYear,
+    extraEntryCountsByStudentId,
+  ]);
+
+  useEffect(() => {
+    const tableEl = tableScrollRef.current;
+    if (!tableEl) return;
+
+    const updateMetrics = () => {
+      setBottomScrollWidth(tableEl.scrollWidth);
+      setBottomScrollClientWidth(tableEl.clientWidth);
+      setSideScrollHeight(tableEl.scrollHeight);
+      setSideScrollClientHeight(tableEl.clientHeight);
+    };
+
+    const onTableScroll = () => {
+      setScrollLeft(tableEl.scrollLeft);
+      setScrollTop(tableEl.scrollTop);
+    };
+
+    updateMetrics();
+    setScrollLeft(tableEl.scrollLeft);
+    setScrollTop(tableEl.scrollTop);
+    tableEl.addEventListener("scroll", onTableScroll, { passive: true });
+    const ro = new ResizeObserver(() => updateMetrics());
+    ro.observe(tableEl);
+
+    return () => {
+      tableEl.removeEventListener("scroll", onTableScroll);
+      ro.disconnect();
+    };
+  }, [sortedStudents.length, sheetYear, sheetMonth]);
+
+  const bottomThumb = useMemo(() => {
+    const trackEl = bottomTrackRef.current;
+    const trackWidth = trackEl?.clientWidth ?? 0;
+    if (!trackWidth || !bottomScrollWidth || !bottomScrollClientWidth) return { size: 0, offset: 0 };
+    const ratio = bottomScrollClientWidth / bottomScrollWidth;
+    const size = Math.max(28, Math.floor(trackWidth * ratio));
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+    const offset = Math.round((scrollLeft / maxScroll) * maxOffset);
+    return { size, offset };
+  }, [bottomScrollClientWidth, bottomScrollWidth, scrollLeft]);
+
+  const sideThumb = useMemo(() => {
+    const trackEl = sideTrackRef.current;
+    const trackHeight = trackEl?.clientHeight ?? 0;
+    if (!trackHeight || !sideScrollHeight || !sideScrollClientHeight) return { size: 0, offset: 0 };
+    const ratio = sideScrollClientHeight / sideScrollHeight;
+    const size = Math.max(28, Math.floor(trackHeight * ratio));
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+    const offset = Math.round((scrollTop / maxScroll) * maxOffset);
+    return { size, offset };
+  }, [sideScrollClientHeight, sideScrollHeight, scrollTop]);
+
+  const onBottomTrackMouseDown = (e: React.MouseEvent) => {
+    const track = bottomTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const { size } = bottomThumb;
+    const trackWidth = rect.width;
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+    const targetOffset = Math.min(maxOffset, Math.max(0, x - size / 2));
+    tableEl.scrollLeft = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
+  };
+
+  const onSideTrackMouseDown = (e: React.MouseEvent) => {
+    const track = sideTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const { size } = sideThumb;
+    const trackHeight = rect.height;
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+    const targetOffset = Math.min(maxOffset, Math.max(0, y - size / 2));
+    tableEl.scrollTop = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
+  };
+
+  const startDragBottomThumb = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const track = bottomTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const startX = e.clientX;
+    const startOffset = bottomThumb.offset;
+    const size = bottomThumb.size;
+    const trackWidth = rect.width;
+    const maxOffset = Math.max(0, trackWidth - size);
+    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dx));
+      tableEl.scrollLeft = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const startDragSideThumb = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const track = sideTrackRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!track || !tableEl) return;
+    const rect = track.getBoundingClientRect();
+    const startY = e.clientY;
+    const startOffset = sideThumb.offset;
+    const size = sideThumb.size;
+    const trackHeight = rect.height;
+    const maxOffset = Math.max(0, trackHeight - size);
+    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
+
+    const onMove = (ev: MouseEvent) => {
+      const dy = ev.clientY - startY;
+      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dy));
+      tableEl.scrollTop = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">
@@ -610,14 +970,14 @@ export default function StudentsLessonTimeFeeRecordPage() {
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
-            <h1 className="text-2xl font-bold tracking-tight">學生上課時間及學費記錄</h1>
-            <p className="mt-1 text-sm text-blue-100">學生上課時間及學費記錄</p>
+            <h1 className="text-2xl font-bold tracking-tight">Student Lesson Time & Tuition Record</h1>
+            <p className="mt-1 text-sm text-blue-100">Student Lesson Time & Tuition Record</p>
           </div>
 
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-slate-600">年份：</span>
+                <span className="text-sm font-medium text-slate-600">Year:</span>
                 <span className="rounded-lg bg-[#1d76c2] px-2.5 py-1 text-sm font-semibold text-white">
                   {sheetYear}
                 </span>
@@ -640,7 +1000,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                     );
                   })}
                 </div>
-                <span className="ml-1 text-sm font-semibold text-slate-800">{sheetMonth} 月</span>
+                <span className="ml-1 text-sm font-semibold text-slate-800">{MONTH_SHORT[sheetMonth - 1]}</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {MONTH_SHORT.map((label, i) => {
@@ -668,17 +1028,122 @@ export default function StudentsLessonTimeFeeRecordPage() {
           <div className="p-4 sm:p-6">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="text-sm font-bold text-slate-700">
-                  {sheetYear} 年 / {sheetMonth} 月 / 記錄表
+                <div>
+                  <div className="text-sm font-bold text-slate-700">
+                    {sheetYear} / {MONTH_SHORT[sheetMonth - 1]} / Record Sheet
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    Total Due includes previous balance (arrears or credit) plus current month due.
+                  </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => void onSyncZohoSubmitted()}
+                  onClick={() =>
+                    void syncZohoSubmitted({
+                      studentIds: filteredSortedStudents.map((s) => s.id),
+                      idOnly: true,
+                    })
+                  }
                   disabled={syncingZoho}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {syncingZoho ? "同步中..." : "Sync Zoho Receipts"}
+                  <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                    <path
+                      transform="translate(0,-1.2)"
+                      d="M4.08 11.86a5.5 5.5 0 019.27-3.59l-.94.94a.75.75 0 001.06 1.06l2.5-2.5a.75.75 0 000-1.06l-2.5-2.5a.75.75 0 00-1.06 1.06l.99.99a7 7 0 00-11.3 5.59.75.75 0 001.5 0z"
+                    />
+                    <path
+                      transform="translate(0,1.2)"
+                      d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
+                    />
+                  </svg>
+                  {syncingZoho ? "Syncing..." : "Sync Zoho Receipts"}
                 </button>
+              </div>
+              <div className="mb-3 flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+                <label className="min-w-[120px]">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">Grade</span>
+                  <select
+                    value={gradeFilter}
+                    onChange={(e) => setGradeFilter(e.target.value)}
+                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                  >
+                    <option value="all">All Grades</option>
+                    <option value="F.1">F.1</option>
+                    <option value="F.2">F.2</option>
+                    <option value="F.3">F.3</option>
+                    <option value="F.4">F.4</option>
+                    <option value="F.5">F.5</option>
+                    <option value="F.6">F.6</option>
+                  </select>
+                </label>
+                <label className="min-w-[120px]">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">Weekday</span>
+                  <select
+                    value={weekdayFilter}
+                    onChange={(e) => setWeekdayFilter(e.target.value)}
+                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                  >
+                    <option value="all">All</option>
+                    <option value="一">Mon</option>
+                    <option value="二">Tue</option>
+                    <option value="三">Wed</option>
+                    <option value="四">Thu</option>
+                    <option value="五">Fri</option>
+                    <option value="六">Sat</option>
+                    <option value="日">Sun</option>
+                  </select>
+                </label>
+                <label className="min-w-[140px]">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">Payment Status</span>
+                  <select
+                    value={paymentFilter}
+                    onChange={(e) => setPaymentFilter(e.target.value as "all" | "underpaid" | "ok")}
+                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                  >
+                    <option value="all">All</option>
+                    <option value="underpaid">Underpaid</option>
+                    <option value="ok">Expected Met</option>
+                  </select>
+                </label>
+                <label className="min-w-[120px]">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">Send Fee</span>
+                  <select
+                    value={sendFeeFilter}
+                    onChange={(e) => setSendFeeFilter(e.target.value as "all" | "yes" | "no")}
+                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                  >
+                    <option value="all">All</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGradeFilter("all");
+                    setWeekdayFilter("all");
+                    setPaymentFilter("all");
+                    setSendFeeFilter("all");
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded bg-[#1d76c2] px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1663a3]"
+                >
+                  <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                    <path
+                      transform="translate(0,-1.8)"
+                      d="M4.08 11.86a5.5 5.5 0 019.27-3.59l-.94.94a.75.75 0 001.06 1.06l2.5-2.5a.75.75 0 000-1.06l-2.5-2.5a.75.75 0 00-1.06 1.06l.99.99a7 7 0 00-11.3 5.59.75.75 0 001.5 0z"
+                    />
+                    <path
+                      transform="translate(0,1.8)"
+                      d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
+                    />
+                  </svg>
+                  Reset Filters
+                </button>
+                <div className="ml-auto text-xs text-slate-600">
+                  Showing <span className="font-semibold text-slate-800">{filteredSortedStudents.length}</span> /{" "}
+                  <span className="font-semibold text-slate-800">{sortedStudents.length}</span>
+                </div>
               </div>
               {syncNotice ? (
                 <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
@@ -686,60 +1151,165 @@ export default function StudentsLessonTimeFeeRecordPage() {
                 </div>
               ) : null}
 
-              <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200">
-                <table className="min-w-[1900px] w-full border-collapse text-left text-sm">
-                  <thead className="bg-slate-50">
-                    <tr className="border-b border-slate-200 text-xs font-bold uppercase tracking-wider text-slate-700">
-                      <SortableHeader label="學號" columnKey="id" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                      <SortableHeader label="姓名" columnKey="name" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                      <SortableHeader label="年級" columnKey="grade" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                      <SortableHeader label="星期" columnKey="weekday" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                      <SortableHeader label="應交" columnKey="expected" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                      <SortableHeader label="已交" columnKey="submitted" sortConfig={sortConfig} setSortConfig={setSortConfig} />
-                      {Array.from({ length: L_COUNT }, (_, i) => (
-                        <th
-                          key={i}
-                          className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-2 py-3 text-center text-[11px]"
-                        >
-                          L{i + 1}
-                        </th>
-                      ))}
-                      <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left">補堂數目</th>
-                      <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left">Remarks</th>
-                      <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left">月尾Send學費</th>
-                    </tr>
-                  </thead>
+              <div className="overflow-hidden rounded-lg border border-slate-200">
+                <div className="flex">
+                  <div
+                    ref={tableScrollRef}
+                    className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  >
+                    <table className="min-w-[1900px] w-full border-collapse text-left text-sm">
+                      <thead className="bg-slate-50">
+                        <tr className="border-b border-slate-200 text-xs font-bold tracking-wider text-slate-700">
+                          <SortableHeader
+                            label="ID"
+                            columnKey="id"
+                            sortConfig={sortConfig}
+                            setSortConfig={setSortConfig}
+                            thClassName="left-0 z-40"
+                            thStyle={{ left: 0, minWidth: STICKY_ID_WIDTH }}
+                          />
+                          <SortableHeader
+                            label="Name"
+                            columnKey="name"
+                            sortConfig={sortConfig}
+                            setSortConfig={setSortConfig}
+                            thClassName="z-40"
+                            thStyle={{ left: STICKY_ID_WIDTH, minWidth: STICKY_NAME_WIDTH }}
+                          />
+                          <SortableHeader
+                            label="Grade"
+                            columnKey="grade"
+                            sortConfig={sortConfig}
+                            setSortConfig={setSortConfig}
+                            thClassName="z-40 border-r border-slate-200"
+                            thStyle={{
+                              left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH,
+                              minWidth: STICKY_GRADE_WIDTH,
+                            }}
+                          />
+                          <SortableHeader
+                            label="Weekday"
+                            columnKey="weekday"
+                            sortConfig={sortConfig}
+                            setSortConfig={setSortConfig}
+                            thStyle={{ minWidth: WEEKDAY_COL_WIDTH }}
+                          />
+                          <SortableHeader
+                            label="Total Due"
+                            sublabel="Previous Balance + This Month"
+                            columnKey="expected"
+                            sortConfig={sortConfig}
+                            setSortConfig={setSortConfig}
+                            thStyle={{ minWidth: TUITION_COL_WIDTH }}
+                          />
+                          <SortableHeader
+                            label="Tuition Paid"
+                            columnKey="submitted"
+                            sortConfig={sortConfig}
+                            setSortConfig={setSortConfig}
+                            thStyle={{ minWidth: TUITION_COL_WIDTH }}
+                          />
+                          {Array.from({ length: L_COUNT }, (_, i) => (
+                            <th
+                              key={i}
+                              className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-2 py-3 text-center text-[11px]"
+                              style={{ minWidth: L_COL_WIDTH }}
+                            >
+                              L{i + 1}
+                            </th>
+                          ))}
+                          <th
+                            className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left"
+                            style={{ minWidth: MAKEUP_COL_WIDTH }}
+                          >
+                            Makeup Count
+                          </th>
+                          <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left">Remarks</th>
+                          <th
+                            className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left"
+                            style={{ minWidth: SEND_FEE_COL_WIDTH }}
+                          >
+                            Send Fee
+                          </th>
+                        </tr>
+                      </thead>
 
-                  <tbody>
-                    {sortedStudents.map((st, index) => {
-                      const r = recordsByStudentId[st.id] ?? defaultRecordState();
-                      const underPaid = r.submitted < r.expected;
-                      const lessonDatesSerialized = (lessonDatesByStudentId[st.id] ?? []).join("|");
-                      const prev = index > 0 ? sortedStudents[index - 1] : null;
-                      const showGradeSeparatorTop =
-                        prev != null && prev.grade.trim() !== st.grade.trim();
-                      return (
-                        <StudentFeeRow
-                          key={st.id}
-                          student={st}
-                          record={r}
-                          underPaid={underPaid}
-                          lessonDatesSerialized={lessonDatesSerialized}
-                          remedialCount={remedialCountByStudentId[st.id] ?? 0}
-                          showGradeSeparatorTop={showGradeSeparatorTop}
-                          onSubmittedChange={onSubmittedChange}
-                          onRemarksChange={onRemarksChange}
-                          onSendFeeChange={onSendFeeChange}
+                      <tbody>
+                        {filteredSortedStudents.map((st, index) => {
+                          const r = recordsByStudentId[st.id] ?? defaultRecordState();
+                          const arrearsDue =
+                            (expectedBeforeByStudentId[st.id] ?? 0) - (submittedBeforeByStudentId[st.id] ?? 0);
+                          const totalDue = totalDueByStudentId[st.id] ?? r.expected;
+                          const underPaid = r.submitted < totalDue;
+                          const balanceCarryForward = totalDue - r.submitted;
+                          const lessonDatesSerialized = (lessonDatesByStudentId[st.id] ?? []).join("|");
+                          const prev = index > 0 ? filteredSortedStudents[index - 1] : null;
+                          const showGradeSeparatorTop =
+                            prev != null && prev.grade.trim() !== st.grade.trim();
+                          return (
+                            <StudentFeeRow
+                              key={st.id}
+                              student={st}
+                              record={r}
+                              underPaid={underPaid}
+                              arrearsDue={arrearsDue}
+                              totalDue={totalDue}
+                              balanceCarryForward={balanceCarryForward}
+                              lessonDatesSerialized={lessonDatesSerialized}
+                              remedialCount={remedialCountByStudentId[st.id] ?? 0}
+                              showGradeSeparatorTop={showGradeSeparatorTop}
+                              onSubmittedChange={onSubmittedChange}
+                              onRemarksChange={onRemarksChange}
+                              onSendFeeChange={onSendFeeChange}
+                            />
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {sideScrollHeight > sideScrollClientHeight ? (
+                    <div className="border-l border-slate-200 bg-slate-50 px-2 py-2">
+                      <div
+                        ref={sideTrackRef}
+                        role="scrollbar"
+                        aria-label="Vertical scrollbar"
+                        className="relative w-2.5 select-none rounded bg-white ring-1 ring-slate-200"
+                        style={{ height: "calc(70vh - 16px)" }}
+                        onMouseDown={onSideTrackMouseDown}
+                      >
+                        <div
+                          className="absolute left-0 right-0 rounded bg-slate-400/80 hover:bg-slate-500"
+                          style={{ height: sideThumb.size, transform: `translateY(${sideThumb.offset}px)` }}
+                          onMouseDown={startDragSideThumb}
                         />
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {bottomScrollWidth > bottomScrollClientWidth ? (
+                  <div className="border-t border-slate-200 bg-slate-50 px-4 py-2">
+                    <div
+                      ref={bottomTrackRef}
+                      role="scrollbar"
+                      aria-label="Horizontal scrollbar"
+                      className="relative h-2.5 select-none rounded bg-white ring-1 ring-slate-200"
+                      onMouseDown={onBottomTrackMouseDown}
+                    >
+                      <div
+                        className="absolute bottom-0 top-0 rounded bg-slate-400/80 hover:bg-slate-500"
+                        style={{ width: bottomThumb.size, transform: `translateX(${bottomThumb.offset}px)` }}
+                        onMouseDown={startDragBottomThumb}
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                <div className="text-sm font-bold text-amber-800">* 需要你確認 L1~L9 各代表什麼（例如：日期/課節/應上幾節）。</div>
-                <div className="mt-2 text-sm text-amber-900">* 確認後我就能把格子接到「自動計算上課時間與學費」的邏輯。</div>
+                <div className="text-sm font-bold text-amber-800">* Please confirm what L1-L9 each represent (for example: date / session / required sessions).</div>
+                <div className="mt-2 text-sm text-amber-900">* After confirmation, I can connect these cells to the auto-calculation logic for lesson time and tuition.</div>
               </div>
             </div>
           </div>
@@ -751,18 +1321,24 @@ export default function StudentsLessonTimeFeeRecordPage() {
 
 type SortableHeaderProps = {
   label: string;
+  sublabel?: string;
   columnKey: SortKey;
   sortConfig: SortConfig;
   setSortConfig: (config: SortConfig) => void;
+  thClassName?: string;
+  thStyle?: React.CSSProperties;
 };
 
 type StudentFeeRowProps = {
   student: StudentRow;
   record: RecordState;
   underPaid: boolean;
+  arrearsDue: number;
+  totalDue: number;
+  balanceCarryForward: number;
   lessonDatesSerialized: string;
   remedialCount: number;
-  /** 與上一列年級不同時，整列頂邊加較深分隔線 */
+  /** Add a stronger top border when grade changes from previous row. */
   showGradeSeparatorTop: boolean;
   onSubmittedChange: (studentId: string, submitted: number) => void;
   onRemarksChange: (studentId: string, remarks: string) => void;
@@ -773,6 +1349,9 @@ const StudentFeeRow = memo(function StudentFeeRow({
   student,
   record,
   underPaid,
+  arrearsDue,
+  totalDue,
+  balanceCarryForward,
   lessonDatesSerialized,
   remedialCount,
   showGradeSeparatorTop,
@@ -789,7 +1368,10 @@ const StudentFeeRow = memo(function StudentFeeRow({
         underPaid ? "bg-amber-50 hover:bg-amber-100" : "bg-white hover:bg-slate-50"
       } ${showGradeSeparatorTop ? "border-t-2 border-slate-400" : ""}`}
     >
-      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700">
+      <td
+        className="sticky left-0 z-30 whitespace-nowrap bg-inherit px-4 py-4 text-sm text-slate-700"
+        style={{ left: 0, minWidth: STICKY_ID_WIDTH }}
+      >
         <Link
           href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons`}
           className="font-medium text-[#1d76c2] hover:underline"
@@ -797,56 +1379,92 @@ const StudentFeeRow = memo(function StudentFeeRow({
           {studentIdDisplay}
         </Link>
       </td>
-      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700">
-        {formatStudentDisplayNameOrEmpty(
-          {
-            id: student.id,
-            name_zh: student.name_zh,
-            name_en: student.name_en,
-            nickname_en: student.nickname_en,
-          },
-          "full",
-        )}
+      <td
+        className="sticky z-30 bg-inherit px-4 py-4 text-sm text-slate-700 align-top"
+        style={{ left: STICKY_ID_WIDTH, minWidth: STICKY_NAME_WIDTH }}
+      >
+        <span
+          className="inline-block whitespace-normal break-words leading-5 overflow-hidden [display:-webkit-box] [WebkitBoxOrient:vertical] [WebkitLineClamp:2]"
+          title={formatStudentDisplayNameOrEmpty(
+            {
+              id: student.id,
+              name_zh: student.name_zh,
+              name_en: student.name_en,
+              nickname_en: student.nickname_en,
+            },
+            "full",
+          )}
+        >
+          {formatStudentDisplayNameOrEmpty(
+            {
+              id: student.id,
+              name_zh: student.name_zh,
+              name_en: student.name_en,
+              nickname_en: student.nickname_en,
+            },
+            "full",
+          )}
+        </span>
       </td>
-      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700">
+      <td
+        className="sticky z-30 whitespace-nowrap border-r border-slate-200 bg-inherit px-4 py-4 text-sm text-slate-700"
+        style={{ left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH, minWidth: STICKY_GRADE_WIDTH }}
+      >
         {formatGradeDisplay(student.grade) || "—"}
       </td>
 
       <td className="px-2 py-3 text-center">
-        <div className="w-14 text-center text-xs font-medium text-slate-800">{record.weekday || "—"}</div>
+        <div className="text-center text-xs font-medium text-slate-800" style={{ width: WEEKDAY_COL_WIDTH }}>
+          {(record.weekday
+            ? record.weekday
+                .split("/")
+                .map((wd) => HK_WEEKDAY_CN_TO_EN[wd] ?? wd)
+                .join("/")
+            : "") || "—"}
+        </div>
       </td>
       <td className="px-2 py-3 text-center">
-        <input
-          type="number"
-          inputMode="numeric"
-          value={record.expected}
-          disabled
-          className="w-14 bg-transparent px-0 py-1 text-xs font-semibold text-slate-800 text-center outline-none"
-        />
+        <div
+          className="text-center text-xs font-semibold text-slate-800 leading-4"
+          style={{ width: TUITION_COL_WIDTH - 8 }}
+          title={`Total Due ${totalDue} = Previous Balance ${arrearsDue} + This Month ${record.expected}`}
+        >
+          <div>{totalDue}</div>
+          <div className="text-[10px] font-medium text-slate-500">
+            Prev {arrearsDue} + This {record.expected}
+          </div>
+        </div>
       </td>
       <td className="px-2 py-3 text-center">
         <input
           type="number"
           inputMode="numeric"
           value={record.submitted}
+          title={`Balance C/F: ${balanceCarryForward}`}
           onChange={(e) => {
             const num = Number(e.target.value);
             onSubmittedChange(student.id, Number.isFinite(num) ? num : 0);
           }}
-          className="w-14 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 outline-none transition focus:border-[#1d76c2]"
+          className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 outline-none transition focus:border-[#1d76c2]"
+          style={{ width: TUITION_COL_WIDTH - 32 }}
         />
       </td>
 
       {Array.from({ length: L_COUNT }, (_, i) => (
         <td key={i} className="px-2 py-3 text-center">
-          <div className="h-7 w-12 rounded bg-slate-50 px-1 text-center text-[11px] leading-6 text-slate-800">
+          <div
+            className="h-7 rounded bg-slate-50 px-1 text-center text-[11px] leading-6 text-slate-800"
+            style={{ width: L_COL_WIDTH - 8 }}
+          >
             {lessonDates[i] ?? ""}
           </div>
         </td>
       ))}
 
       <td className="px-2 py-3 text-center">
-        <div className="w-16 text-center text-xs font-semibold text-slate-800">{remedialCount}</div>
+        <div className="text-center text-xs font-semibold text-slate-800" style={{ width: MAKEUP_COL_WIDTH - 32 }}>
+          {remedialCount}
+        </div>
       </td>
 
       <td className="px-2 py-3">
@@ -854,7 +1472,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
           type="text"
           value={record.remarks}
           onChange={(e) => onRemarksChange(student.id, e.target.value)}
-          placeholder="備註"
+          placeholder="Remarks"
           className="w-48 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 outline-none transition focus:border-[#1d76c2]"
         />
       </td>
@@ -865,22 +1483,39 @@ const StudentFeeRow = memo(function StudentFeeRow({
           checked={record.sendFee}
           onChange={(e) => onSendFeeChange(student.id, e.target.checked)}
           className="h-4 w-4 accent-[#1d76c2]"
-          aria-label={`${studentIdDisplay} 月尾送學費`}
+          aria-label={`${studentIdDisplay} send fee`}
         />
       </td>
     </tr>
   );
 });
 
-function SortableHeader({ label, columnKey, sortConfig, setSortConfig }: SortableHeaderProps) {
+function SortableHeader({
+  label,
+  sublabel,
+  columnKey,
+  sortConfig,
+  setSortConfig,
+  thClassName,
+  thStyle,
+}: SortableHeaderProps) {
   const selectedDirection = sortConfig?.key === columnKey ? sortConfig.direction : "";
 
   return (
-    <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
-      <div className="flex items-center gap-1.5 whitespace-nowrap">
-        <span className="whitespace-nowrap">{label}</span>
+    <th
+      style={thStyle}
+      className={[
+        "sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700",
+        thClassName ?? "",
+      ].join(" ")}
+    >
+      <div className="flex items-start gap-1.5">
+        <span className="leading-tight">
+          <span className="block whitespace-nowrap">{label}</span>
+          {sublabel ? <span className="block text-[10px] font-semibold text-slate-500">{sublabel}</span> : null}
+        </span>
         <select
-          aria-label={`${label} 排序`}
+          aria-label={`Sort by ${label}`}
           value={selectedDirection}
           onChange={(event) => {
             const direction = event.target.value as SortDirection | "";

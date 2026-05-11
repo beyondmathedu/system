@@ -133,12 +133,6 @@ export default async function HomeLandingPage() {
   if (!viewer.userId) redirect("/login");
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: studentRows }, { data: tutorRows }, { data: visibilityRows }] = await Promise.all([
-    supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
-    supabase.from("tutors").select("id, name_zh, name_en, birth_date, status"),
-    supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
-  ]);
-
   const ymdToday = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Hong_Kong",
     year: "numeric",
@@ -153,6 +147,27 @@ export default async function HomeLandingPage() {
 
   const year = Number(ymdToday.slice(0, 4)) || new Date().getFullYear();
   const month = Number(ymdToday.slice(5, 7)) || 1;
+
+  const [
+    { data: studentRows },
+    { data: tutorRows },
+    { data: visibilityRows },
+    { data: feeRowsAll },
+    { data: yearStateRowsAll },
+  ] = await Promise.all([
+    supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
+    supabase.from("tutors").select("id, name_zh, name_en, birth_date, status"),
+    supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
+    supabase
+      .from("student_monthly_fee_records")
+      .select("student_id, submitted_amount")
+      .eq("year", year)
+      .eq("month", month),
+    supabase
+      .from("student_lessons_year_state")
+      .select("student_id, attendance, reschedule_entries")
+      .eq("year", year),
+  ]);
   const manualInactiveEffectiveById = new Map<string, string>();
   for (const row of visibilityRows ?? []) {
     const mode = String((row as any).mode ?? "").toLowerCase();
@@ -160,31 +175,6 @@ export default async function HomeLandingPage() {
     const eff = String((row as any).effective_date ?? "");
     if (mode === "inactive" && sid && eff) manualInactiveEffectiveById.set(sid, eff);
   }
-
-  const studentsBirthdayToday = (studentRows ?? [])
-    .filter((r: any) => {
-      const sid = String(r.id ?? "");
-      const grade = String((r as any).grade ?? "");
-      const inactiveEffective = resolveStudentInactiveEffectiveDate({
-        grade,
-        manualInactiveEffective: manualInactiveEffectiveById.get(sid) ?? null,
-        year,
-      });
-      return !(inactiveEffective && inactiveEffective <= ymdToday);
-    })
-    .filter((r: any) => String(r.birth_date ?? "").slice(5, 10) === mdToday)
-    .map((r: any) =>
-      formatStudentDisplayNameOrEmpty(
-        {
-          id: String(r.id ?? ""),
-          name_zh: r.name_zh,
-          name_en: r.name_en,
-          nickname_en: r.nickname_en,
-        },
-        "full",
-        String(r.id ?? ""),
-      ),
-    );
 
   const activeStudentRows = (studentRows ?? []).filter((r: any) => {
     const sid = String(r.id ?? "");
@@ -197,25 +187,36 @@ export default async function HomeLandingPage() {
     return !(inactiveEffective && inactiveEffective <= ymdToday);
   });
 
-  const activeStudentIds = activeStudentRows.map((r: any) => String(r.id ?? "")).filter(Boolean);
+  const activeStudentMeta = activeStudentRows.map((r: any) => {
+    const sid = String(r.id ?? "");
+    return {
+      id: sid,
+      birthMd: String(r.birth_date ?? "").slice(5, 10),
+      displayName: formatStudentDisplayNameOrEmpty(
+        {
+          id: sid,
+          name_zh: r.name_zh,
+          name_en: r.name_en,
+          nickname_en: r.nickname_en,
+        },
+        "full",
+        sid,
+      ),
+    };
+  });
 
-  const [{ data: feeRows }, { data: yearStateRows }] = await Promise.all([
-    activeStudentIds.length
-      ? supabase
-          .from("student_monthly_fee_records")
-          .select("student_id, submitted_amount")
-          .eq("year", year)
-          .eq("month", month)
-          .in("student_id", activeStudentIds)
-      : Promise.resolve({ data: [] as any[] }),
-    activeStudentIds.length
-      ? supabase
-          .from("student_lessons_year_state")
-          .select("student_id, attendance, reschedule_entries")
-          .eq("year", year)
-          .in("student_id", activeStudentIds)
-      : Promise.resolve({ data: [] as any[] }),
-  ]);
+  const studentsBirthdayToday = activeStudentMeta
+    .filter((student) => student.birthMd === mdToday)
+    .map((student) => student.displayName);
+
+  const activeStudentIdSet = new Set(
+    activeStudentRows.map((r: any) => String(r.id ?? "")).filter(Boolean),
+  );
+
+  const feeRows = (feeRowsAll ?? []).filter((row: any) => activeStudentIdSet.has(String(row.student_id ?? "")));
+  const yearStateRows = (yearStateRowsAll ?? []).filter((row: any) =>
+    activeStudentIdSet.has(String(row.student_id ?? "")),
+  );
 
   const paidAmountByStudentId = new Map<string, number>();
   for (const row of feeRows ?? []) {
@@ -224,20 +225,9 @@ export default async function HomeLandingPage() {
     paidAmountByStudentId.set(sid, Number((row as any).submitted_amount ?? 0) || 0);
   }
 
-  const unpaidStudents = activeStudentRows
-    .filter((r: any) => (paidAmountByStudentId.get(String(r.id ?? "")) ?? 0) <= 0)
-    .map((r: any) =>
-      formatStudentDisplayNameOrEmpty(
-        {
-          id: String(r.id ?? ""),
-          name_zh: r.name_zh,
-          name_en: r.name_en,
-          nickname_en: r.nickname_en,
-        },
-        "full",
-        String(r.id ?? ""),
-      ),
-    );
+  const unpaidStudents = activeStudentMeta
+    .filter((student) => (paidAmountByStudentId.get(student.id) ?? 0) <= 0)
+    .map((student) => student.displayName);
 
   const pendingMakeupByStudentId = new Map<string, number>();
   for (const row of yearStateRows ?? []) {
@@ -257,22 +247,11 @@ export default async function HomeLandingPage() {
     if (pendingCount > 0) pendingMakeupByStudentId.set(sid, pendingCount);
   }
 
-  const studentsWithPendingMakeup = activeStudentRows
-    .filter((r: any) => pendingMakeupByStudentId.has(String(r.id ?? "")))
-    .map((r: any) => {
-      const sid = String(r.id ?? "");
-      const name = formatStudentDisplayNameOrEmpty(
-        {
-          id: sid,
-          name_zh: r.name_zh,
-          name_en: r.name_en,
-          nickname_en: r.nickname_en,
-        },
-        "full",
-        sid,
-      );
-      const count = pendingMakeupByStudentId.get(sid) ?? 0;
-      return `${name}（${count} 堂）`;
+  const studentsWithPendingMakeup = activeStudentMeta
+    .filter((student) => pendingMakeupByStudentId.has(student.id))
+    .map((student) => {
+      const count = pendingMakeupByStudentId.get(student.id) ?? 0;
+      return `${student.displayName}（${count} 堂）`;
     });
 
   const tutorsBirthdayToday = (tutorRows ?? [])
@@ -298,30 +277,10 @@ export default async function HomeLandingPage() {
   const todayWhatsappHref = `https://wa.me/85251646814?text=${encodeURIComponent(todayWhatsappMessage)}`;
 
   const allBirthdayRows = [
-    ...(studentRows ?? [])
-      .filter((r: any) => {
-        const sid = String(r.id ?? "");
-        const grade = String((r as any).grade ?? "");
-        const inactiveEffective = resolveStudentInactiveEffectiveDate({
-          grade,
-          manualInactiveEffective: manualInactiveEffectiveById.get(sid) ?? null,
-          year,
-        });
-        return !(inactiveEffective && inactiveEffective <= ymdToday);
-      })
-      .map((r: any) => ({
-      md: String(r.birth_date ?? "").slice(5, 10),
-      label: `${formatStudentDisplayNameOrEmpty(
-        {
-          id: String(r.id ?? ""),
-          name_zh: r.name_zh,
-          name_en: r.name_en,
-          nickname_en: r.nickname_en,
-        },
-        "full",
-        String(r.id ?? ""),
-      )}（學生）`,
-      })),
+    ...activeStudentMeta.map((student) => ({
+      md: student.birthMd,
+      label: `${student.displayName}（學生）`,
+    })),
     ...(tutorRows ?? [])
       .filter((r: any) => {
         const status = String(r.status ?? "").trim();
@@ -337,6 +296,13 @@ export default async function HomeLandingPage() {
       }),
   ].filter((r) => r.md.length === 5);
 
+  const birthdayLabelsByMd = new Map<string, string[]>();
+  for (const row of allBirthdayRows) {
+    const existing = birthdayLabelsByMd.get(row.md);
+    if (existing) existing.push(row.label);
+    else birthdayLabelsByMd.set(row.md, [row.label]);
+  }
+
   const weekBirthdayLines: string[] = [];
   const weekBirthdayReminderItems: Array<{
     id: string;
@@ -350,7 +316,7 @@ export default async function HomeLandingPage() {
     const d = new Date(hkTodayDate);
     d.setDate(d.getDate() + offset);
     const md = `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const names = allBirthdayRows.filter((r) => r.md === md).map((r) => r.label);
+    const names = birthdayLabelsByMd.get(md) ?? [];
     if (!names.length) continue;
     const dayName = weekdayNames[d.getDay()];
     const dateLabel = `${d.getDate()}/${d.getMonth() + 1}`;

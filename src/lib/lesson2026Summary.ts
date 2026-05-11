@@ -120,14 +120,21 @@ function buildRows(records: Lesson2026Record[], state: Lesson2026State) {
     if (ed !== 0) return ed;
     return a.createdAt - b.createdAt;
   });
-
-  function activeRuleForDate(dateIso: string): (typeof normalized)[0] | null {
-    let active: (typeof normalized)[0] | null = null;
-    for (const r of sortedRules) {
-      if (r.effectiveDate <= dateIso) active = r;
+  const earliestRuleByWeekday = new Map<string, (typeof normalized)[0]>();
+  for (const r of sortedRules) {
+    if (!earliestRuleByWeekday.has(r.weekday)) {
+      earliestRuleByWeekday.set(r.weekday, r);
     }
-    if (!active && sortedRules.length > 0) active = sortedRules[0];
-    return active;
+  }
+
+  function activeRuleByWeekdayForDate(dateIso: string): Map<string, (typeof normalized)[0]> {
+    const activeByWeekday = new Map<string, (typeof normalized)[0]>();
+    for (const r of sortedRules) {
+      if (r.effectiveDate <= dateIso) {
+        activeByWeekday.set(r.weekday, r);
+      }
+    }
+    return activeByWeekday;
   }
 
   const baseRows: Row[] = [];
@@ -138,9 +145,9 @@ function buildRows(records: Lesson2026Record[], state: Lesson2026State) {
     const hkNum = getHkWeekdayNumber(cur);
     const weekday = numberToWeekday(hkNum);
     const dateIso = toIsoDate(cur);
-    const rule = activeRuleForDate(dateIso);
+    const activeByWeekday = activeRuleByWeekdayForDate(dateIso);
+    const rule = activeByWeekday.get(weekday) ?? earliestRuleByWeekday.get(weekday) ?? null;
     if (!rule) continue;
-    if (weekday !== rule.weekday) continue;
     if (state.hiddenDates[dateIso]) continue;
 
     baseRows.push({
