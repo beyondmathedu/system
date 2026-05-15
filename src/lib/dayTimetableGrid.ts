@@ -444,6 +444,61 @@ export type FetchDayTimetableOptions = {
   regularOnly: boolean;
 };
 
+type DayTimetableStaticBundle = {
+  studentList: StudentRow[];
+  manualInactiveEffectiveById: Record<string, string>;
+  tutorColorByName: Record<string, string>;
+  regularPeriodMaxByRoom: Record<RoomGroup, number>;
+  examById: Record<string, string>;
+};
+
+const loadDayTimetableStaticBundle = unstable_cache(
+  async (): Promise<DayTimetableStaticBundle> => {
+    const supabase = getSupabaseAdmin();
+    const [
+      { data: students },
+      { data: examRows },
+      { data: visibilityRows },
+      { data: tutorRows },
+      { data: classroomRows },
+    ] = await Promise.all([
+      supabase.from("students").select("id, name_zh, name_en, nickname_en, grade").order("id"),
+      supabase.from("student_exam_dates").select("student_id, exam_date"),
+      supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
+      supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
+      supabase.from("classrooms").select("name, regular_period_max"),
+    ]);
+
+    const manualInactiveEffectiveById: Record<string, string> = {};
+    for (const row of visibilityRows ?? []) {
+      const r = row as { student_id?: string; mode?: string; effective_date?: string };
+      const mode = String(r.mode ?? "active").toLowerCase();
+      if (mode !== "inactive") continue;
+      const sid = String(r.student_id ?? "");
+      const eff = String(r.effective_date ?? "");
+      if (sid && eff) manualInactiveEffectiveById[sid] = eff;
+    }
+
+    const examById: Record<string, string> = {};
+    for (const row of examRows ?? []) {
+      const sid = String((row as { student_id?: string }).student_id ?? "");
+      if (sid) examById[sid] = String((row as { exam_date?: string | null }).exam_date ?? "");
+    }
+
+    return {
+      studentList: (students ?? []) as StudentRow[],
+      manualInactiveEffectiveById,
+      tutorColorByName: Object.fromEntries(buildTutorColorByDisplayName(tutorRows ?? [])),
+      regularPeriodMaxByRoom: buildRegularPeriodMaxByRoom(
+        classroomRows as Array<{ name?: string | null; regular_period_max?: number | null }> | null,
+      ),
+      examById,
+    };
+  },
+  ["day-timetable-static-v1"],
+  { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
+);
+
 async function fetchDayTimetablePayloadUncached(
   year: number,
   month: number,
@@ -458,42 +513,35 @@ async function fetchDayTimetablePayloadUncached(
   const { regularOnly } = options;
 
   const supabase = getSupabaseAdmin();
-  const [
-    { data: students },
-    { data: recRows },
-    { data: stateRows },
-    { data: examRows },
-    { data: remarkRows },
-    { data: visibilityRows },
-    { data: tutorRows },
-    { data: classroomRows },
-    { data: feeRowsAll },
-    timetableStyle,
-  ] = await Promise.all([
-    supabase.from("students").select("id, name_zh, name_en, nickname_en, grade").order("id"),
-    supabase.from("student_lesson_records").select("student_id, records"),
-    supabase
-      .from("student_lessons_year_state")
-      .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-      .eq("year", year),
-    // 與學生獨立課堂頁 ExamDateField（saveExamDate）同一資料來源
-    supabase.from("student_exam_dates").select("student_id, exam_date"),
-    supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
-    supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
-    supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
-    supabase.from("classrooms").select("name, regular_period_max"),
-    supabase.from("student_monthly_fee_records").select("student_id, year, month, submitted_amount"),
+  const [staticBundle, timetableStyle] = await Promise.all([
+    loadDayTimetableStaticBundle(),
     loadDayTimetableStyleSettings(),
   ]);
+  const feeLookbackMinYear = lookbackCalendarMonthsInclusive(
+    year,
+    month,
+    timetableStyle.feeLookbackMonths,
+  )[0].y;
+
+  const [{ data: recRows }, { data: stateRows }, { data: remarkRows }, { data: feeRowsAll }] =
+    await Promise.all([
+      supabase.from("student_lesson_records").select("student_id, records"),
+      supabase
+        .from("student_lessons_year_state")
+        .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
+        .eq("year", year),
+      supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
+      supabase
+        .from("student_monthly_fee_records")
+        .select("student_id, year, month, submitted_amount")
+        .gte("year", feeLookbackMinYear),
+    ]);
   const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
 
-  const regularPeriodMaxByRoom = buildRegularPeriodMaxByRoom(
-    classroomRows as Array<{ name?: string | null; regular_period_max?: number | null }> | null,
-  );
+  const { regularPeriodMaxByRoom, tutorColorByName, examById } = staticBundle;
+  const manualInactiveEffectiveById = new Map(Object.entries(staticBundle.manualInactiveEffectiveById));
 
-  const tutorColorByName = buildTutorColorByDisplayName(tutorRows ?? []);
-
-  const studentList = (students ?? []) as StudentRow[];
+  const studentList = staticBundle.studentList;
   const recordsById = new Map<string, unknown>();
   for (const row of recRows ?? []) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
@@ -508,27 +556,12 @@ async function fetchDayTimetablePayloadUncached(
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (sid) stateById.set(sid, normalizeYearState(row));
   }
-  const examById: Record<string, string> = {};
-  for (const row of examRows ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    if (sid) examById[sid] = String((row as { exam_date?: string | null }).exam_date ?? "");
-  }
   const timetableRemarksById: Record<string, string> = {};
   for (const row of remarkRows ?? []) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (!sid) continue;
     timetableRemarksById[sid] = String((row as { remarks?: string | null }).remarks ?? "");
   }
-  const manualInactiveEffectiveById = new Map<string, string>();
-  for (const row of visibilityRows ?? []) {
-    const r = row as { student_id?: string; mode?: string; effective_date?: string };
-    const mode = String(r.mode ?? "active").toLowerCase();
-    if (mode !== "inactive") continue;
-    const sid = String(r.student_id ?? "");
-    const eff = String(r.effective_date ?? "");
-    if (sid && eff) manualInactiveEffectiveById.set(sid, eff);
-  }
-
   const byTimeRoom: Record<string, DayTimetableCell[]> = {};
   const timeSet = new Set<string>();
 
@@ -576,7 +609,7 @@ async function fetchDayTimetablePayloadUncached(
       const tutorKey = tutorDisplay.trim();
       const tutorColorHex =
         tutorKey && tutorKey !== "待定" && tutorKey !== "—"
-          ? tutorColorByName.get(tutorKey)
+          ? tutorColorByName[tutorKey]
           : undefined;
       list.push({
         studentId: st.id,
@@ -667,7 +700,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v3"],
+  ["day-timetable-payload-v4"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

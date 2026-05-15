@@ -3,18 +3,9 @@ import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
-import { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
-import {
-  formatPendingMakeupFromDateLabel,
-  formatPendingMakeupReminderZh,
-  isPendingRescheduleEntry,
-  PENDING_MAKEUP_BUTTON_LABEL_ZH,
-  PENDING_MAKEUP_WITHIN_DAYS,
-} from "@/lib/pendingMakeup";
-import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
-import HomeReminderPanel, { type HomeReminderRow } from "./HomeReminderPanel";
+import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
+import { PENDING_MAKEUP_BUTTON_LABEL_ZH, PENDING_MAKEUP_WITHIN_DAYS } from "@/lib/pendingMakeup";
+import HomeReminderPanel from "./HomeReminderPanel";
 import UpcomingBirthdayReminder from "./UpcomingBirthdayReminder";
 import StressReliefGames from "./StressReliefGames";
 
@@ -139,254 +130,27 @@ function stripPunctuation(input: string) {
 }
 
 export default async function HomeLandingPage() {
-  const viewer = await getViewerContext();
+  const [viewer, dashboard] = await Promise.all([getViewerContext(), fetchHomeDashboardData()]);
   if (!viewer.userId) redirect("/login");
-  const supabase = await createSupabaseServerClient();
-
-  const ymdToday = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-  const mdToday = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-
-  const year = Number(ymdToday.slice(0, 4)) || new Date().getFullYear();
-  const month = Number(ymdToday.slice(5, 7)) || 1;
-
-  const [
-    { data: studentRows },
-    { data: tutorRows },
-    { data: visibilityRows },
-    { data: feeRowsAll },
-    { data: yearStateRowsAll },
-  ] = await Promise.all([
-    supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
-    supabase.from("tutors").select("id, name_zh, name_en, birth_date, status"),
-    supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
-    supabase
-      .from("student_monthly_fee_records")
-      .select("student_id, submitted_amount")
-      .eq("year", year)
-      .eq("month", month),
-    supabase
-      .from("student_lessons_year_state")
-      .select("student_id, attendance, reschedule_entries")
-      .eq("year", year),
-  ]);
-  const manualInactiveEffectiveById = new Map<string, string>();
-  for (const row of visibilityRows ?? []) {
-    const mode = String((row as any).mode ?? "").toLowerCase();
-    const sid = String((row as any).student_id ?? "");
-    const eff = String((row as any).effective_date ?? "");
-    if (mode === "inactive" && sid && eff) manualInactiveEffectiveById.set(sid, eff);
-  }
-
-  const activeStudentRows = (studentRows ?? []).filter((r: any) => {
-    const sid = String(r.id ?? "");
-    const grade = String((r as any).grade ?? "");
-    const inactiveEffective = resolveStudentInactiveEffectiveDate({
-      grade,
-      manualInactiveEffective: manualInactiveEffectiveById.get(sid) ?? null,
-      year,
-    });
-    return !(inactiveEffective && inactiveEffective <= ymdToday);
-  });
-
-  const activeStudentMeta = activeStudentRows.map((r: any) => {
-    const sid = String(r.id ?? "");
-    return {
-      id: sid,
-      birthMd: String(r.birth_date ?? "").slice(5, 10),
-      displayName: formatStudentDisplayNameOrEmpty(
-        {
-          id: sid,
-          name_zh: r.name_zh,
-          name_en: r.name_en,
-          nickname_en: r.nickname_en,
-        },
-        "full",
-        sid,
-      ),
-    };
-  });
-
-  const studentsBirthdayToday = activeStudentMeta
-    .filter((student) => student.birthMd === mdToday)
-    .map((student) => student.displayName);
-
-  const activeStudentIdSet = new Set(
-    activeStudentRows.map((r: any) => String(r.id ?? "")).filter(Boolean),
-  );
-
-  const feeRows = (feeRowsAll ?? []).filter((row: any) => activeStudentIdSet.has(String(row.student_id ?? "")));
-  const yearStateRows = (yearStateRowsAll ?? []).filter((row: any) =>
-    activeStudentIdSet.has(String(row.student_id ?? "")),
-  );
-
-  const paidAmountByStudentId = new Map<string, number>();
-  for (const row of feeRows ?? []) {
-    const sid = String((row as any).student_id ?? "");
-    if (!sid) continue;
-    paidAmountByStudentId.set(sid, Number((row as any).submitted_amount ?? 0) || 0);
-  }
-
-  const unpaidRows: HomeReminderRow[] = activeStudentMeta
-    .filter((student) => (paidAmountByStudentId.get(student.id) ?? 0) <= 0)
-    .map((student) => ({
-      studentId: student.id,
-      displayName: student.displayName,
-      detail: `${month} 月學費紀錄 Tuition Paid ≤ $0（未交或 Zoho 未同步到）`,
-    }))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
-
-  const reschedulePendingByStudent = new Map<string, { displayName: string; details: string[] }>();
-  for (const row of yearStateRows ?? []) {
-    const sid = String((row as any).student_id ?? "");
-    if (!sid) continue;
-    const meta = activeStudentMeta.find((s) => s.id === sid);
-    if (!meta) continue;
-    const attendance = ((row as any).attendance ?? {}) as Record<string, boolean>;
-    const entries = Array.isArray((row as any).reschedule_entries) ? (row as any).reschedule_entries : [];
-    for (const e of entries) {
-      if (isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;
-      const id = String((e as any)?.id ?? "");
-      const toDate = String((e as any)?.toDate ?? "");
-      if (!id || !toDate || toDate > ymdToday) continue;
-      if (attendance[`reschedule:${id}`] === true) continue;
-      const fromDate = String((e as any)?.fromDate ?? "");
-      const line = fromDate
-        ? `補堂 ${formatPendingMakeupFromDateLabel(toDate)}（原課 ${formatPendingMakeupFromDateLabel(fromDate)}）尚未打勾`
-        : `補堂 ${formatPendingMakeupFromDateLabel(toDate)} 尚未打勾`;
-      const bucket = reschedulePendingByStudent.get(sid);
-      if (bucket) bucket.details.push(line);
-      else reschedulePendingByStudent.set(sid, { displayName: meta.displayName, details: [line] });
-    }
-  }
-  const reschedulePendingRows: HomeReminderRow[] = Array.from(reschedulePendingByStudent.entries())
-    .map(([studentId, { displayName, details }]) => ({
-      studentId,
-      displayName,
-      detail: `${details.length} 堂：${details.join("；")}`,
-    }))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
-
-  const pendingLeaveRows: HomeReminderRow[] = [];
-  for (const row of yearStateRows ?? []) {
-    const sid = String((row as any).student_id ?? "");
-    if (!sid) continue;
-    const meta = activeStudentMeta.find((s) => s.id === sid);
-    if (!meta) continue;
-    const entries = Array.isArray((row as any).reschedule_entries)
-      ? (row as any).reschedule_entries
-      : [];
-    for (const e of entries) {
-      if (!isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;
-      const fromDate = String((e as any).fromDate ?? "");
-      if (!fromDate) continue;
-      const reminder = formatPendingMakeupReminderZh(fromDate, ymdToday);
-      pendingLeaveRows.push({
-        studentId: sid,
-        displayName: meta.displayName,
-        detail: `原課 ${formatPendingMakeupFromDateLabel(fromDate)}，${reminder}`,
-      });
-    }
-  }
-  pendingLeaveRows.sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
-
-  const tutorsBirthdayToday = (tutorRows ?? [])
-    .filter((r: any) => {
-      const status = String(r.status ?? "").trim();
-      return status === "工作中" || status === "放假中";
-    })
-    .filter((r: any) => String(r.birth_date ?? "").slice(5, 10) === mdToday)
-    .map((r: any) => {
-      const zh = String(r.name_zh ?? "").trim();
-      const en = String(r.name_en ?? "").trim();
-      return zh || en || String(r.id ?? "");
-    });
-
-  const birthdayLines = [
-    ...studentsBirthdayToday.map((name) => `${name}（學生）`),
-    ...tutorsBirthdayToday.map((name) => `${name}（導師）`),
-  ];
-  const birthdaySummary = birthdayLines.length ? birthdayLines.join("、") : "今日冇生日之星";
-  const todayWhatsappMessage = birthdayLines.length
-    ? `${birthdaySummary} 今日生日`
-    : "今日冇生日之星";
-  const todayWhatsappHref = `https://wa.me/85251646814?text=${encodeURIComponent(todayWhatsappMessage)}`;
-
-  const allBirthdayRows = [
-    ...activeStudentMeta.map((student) => ({
-      md: student.birthMd,
-      label: `${student.displayName}（學生）`,
-    })),
-    ...(tutorRows ?? [])
-      .filter((r: any) => {
-        const status = String(r.status ?? "").trim();
-        return status === "工作中" || status === "放假中";
-      })
-      .map((r: any) => {
-      const zh = String(r.name_zh ?? "").trim();
-      const en = String(r.name_en ?? "").trim();
-      return {
-        md: String(r.birth_date ?? "").slice(5, 10),
-        label: `${zh || en || String(r.id ?? "")}（導師）`,
-      };
-      }),
-  ].filter((r) => r.md.length === 5);
-
-  const birthdayLabelsByMd = new Map<string, string[]>();
-  for (const row of allBirthdayRows) {
-    const existing = birthdayLabelsByMd.get(row.md);
-    if (existing) existing.push(row.label);
-    else birthdayLabelsByMd.set(row.md, [row.label]);
-  }
-
-  const weekBirthdayLines: string[] = [];
-  const weekBirthdayReminderItems: Array<{
-    id: string;
-    dayLabel: string;
-    dateLabel: string;
-    personLabel: string;
-  }> = [];
-  const hkTodayDate = new Date(`${ymdToday}T00:00:00+08:00`);
-  const weekdayNames = ["日", "一", "二", "三", "四", "五", "六"];
-  for (let offset = 1; offset <= 7; offset += 1) {
-    const d = new Date(hkTodayDate);
-    d.setDate(d.getDate() + offset);
-    const md = `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const names = birthdayLabelsByMd.get(md) ?? [];
-    if (!names.length) continue;
-    const dayName = weekdayNames[d.getDay()];
-    const dateLabel = `${d.getDate()}/${d.getMonth() + 1}`;
-    const dayLabel = offset === 1 ? "明天" : offset === 2 ? "後天" : `星期${dayName}`;
-    weekBirthdayLines.push(`星期${dayName} ${dateLabel}：${names.join("、")}`);
-    for (const name of names) {
-      weekBirthdayReminderItems.push({
-        id: `${md}-${name}`,
-        dayLabel,
-        dateLabel,
-        personLabel: name,
-      });
-    }
-    if (d.getDay() === 0) break;
-  }
+  const {
+    ymdToday,
+    year,
+    month,
+    birthdaySummary,
+    todayWhatsappHref,
+    weekBirthdayLines,
+    weekBirthdayReminderItems,
+    unpaidRows,
+    reschedulePendingRows,
+    pendingLeaveRows,
+    priorMakeupMonthLabel,
+    isMonthEndMakeupReminder,
+    daysLeftInMonth,
+  } = dashboard;
 
   const randomLine = stripPunctuation(
     CANTONESE_POSITIVE_LINES[Math.floor(Math.random() * CANTONESE_POSITIVE_LINES.length)],
   );
-
-  const dayOfMonth = Number(ymdToday.slice(8, 10)) || 1;
-  const lastDayOfMonth = new Date(year, month, 0).getDate();
-  const daysLeftInMonth = lastDayOfMonth - dayOfMonth;
-  const isMonthEndMakeupReminder = daysLeftInMonth <= 6;
-  const priorMakeupWindow = getPriorMonthMakeupWindow();
-  const priorMakeupMonthLabel = `${Number(priorMakeupWindow.startIso.slice(5, 7))}月`;
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">
