@@ -546,6 +546,8 @@ function countAttendedLessonsInMonth(params: {
 }): number {
   const { attendance, year, month1to12, extras, reschedules } = params;
   const prefix = `${year}-${String(month1to12).padStart(2, "0")}`;
+  const extraById = new Map(extras.map((e) => [e.id, e]));
+  const rescheduleById = new Map(reschedules.map((r) => [r.id, r]));
   let n = 0;
   for (const [key, v] of Object.entries(attendance)) {
     if (!v) continue;
@@ -554,14 +556,12 @@ function countAttendedLessonsInMonth(params: {
       continue;
     }
     if (key.startsWith("extra:")) {
-      const eid = key.slice("extra:".length);
-      const ex = extras.find((e) => e.id === eid);
+      const ex = extraById.get(key.slice("extra:".length));
       if (ex?.date?.startsWith(prefix)) n += 1;
       continue;
     }
     if (key.startsWith("reschedule:")) {
-      const rid = key.slice("reschedule:".length);
-      const r = reschedules.find((x) => x.id === rid);
+      const r = rescheduleById.get(key.slice("reschedule:".length));
       if (r?.toDate?.startsWith(prefix)) n += 1;
     }
   }
@@ -1629,29 +1629,31 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return out;
   }, [students, balanceBeforeByStudentId, currentMonthExpectedTuitionByStudentId]);
 
-  const monthlyArrearsRowsByStudentId = useMemo(() => {
-    const out: Record<string, MonthlyArrearsRow[]> = {};
+  const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
+
+  const monthlyArrearsRowsForDialog = useMemo(() => {
+    if (!feeDetailDialog || feeDetailDialog.kind !== "arrears") return [];
+    const st = studentById.get(feeDetailDialog.studentId);
+    if (!st) return [];
     const currentMonth = Number(sheetMonth);
-    for (const st of students) {
-      out[st.id] = buildMonthlyArrearsRows({
-        student: st,
-        sheetYear,
-        sheetMonth: currentMonth,
-        openingBalance:
-          sheetYear === OPENING_BALANCE_AS_OF_YEAR
-            ? Number(openingBalanceByStudentId[st.id] ?? 0) || 0
-            : 0,
-        currentRecord: recordsByStudentId[st.id] ?? defaultRecordState(),
-        historicalMonthFee: historicalMonthFeeByStudentId[st.id] ?? {},
-        submittedByMonth: submittedByStudentMonth[st.id] ?? {},
-        weekdays: weekdayTokensByStudentId[st.id] ?? [],
-        extraEntries: extraEntriesByStudentId[st.id] ?? [],
-        feeTierSettings,
-      });
-    }
-    return out;
+    return buildMonthlyArrearsRows({
+      student: st,
+      sheetYear,
+      sheetMonth: currentMonth,
+      openingBalance:
+        sheetYear === OPENING_BALANCE_AS_OF_YEAR
+          ? Number(openingBalanceByStudentId[st.id] ?? 0) || 0
+          : 0,
+      currentRecord: recordsByStudentId[st.id] ?? defaultRecordState(),
+      historicalMonthFee: historicalMonthFeeByStudentId[st.id] ?? {},
+      submittedByMonth: submittedByStudentMonth[st.id] ?? {},
+      weekdays: weekdayTokensByStudentId[st.id] ?? [],
+      extraEntries: extraEntriesByStudentId[st.id] ?? [],
+      feeTierSettings,
+    });
   }, [
-    students,
+    feeDetailDialog,
+    studentById,
     sheetYear,
     sheetMonth,
     recordsByStudentId,
@@ -2271,7 +2273,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
                               onRemarksChange={onRemarksChange}
                               onSendFeeChange={onSendFeeChange}
                               currentMonthExpectedMoney={currentMonthExpectedTuitionByStudentId[st.id] ?? 0}
-                              monthlyArrearsRows={monthlyArrearsRowsByStudentId[st.id] ?? []}
                               feeTierSettings={feeTierSettings}
                               onFeeDetailOpen={onFeeDetailOpen}
                             />
@@ -2480,7 +2481,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
             <div className="max-h-[65vh] overflow-y-auto px-4 py-3 text-sm leading-relaxed text-slate-800">
               {feeDetailDialog.kind === "arrears" ? (
                 <FeeArrearsDetailTable
-                  rows={monthlyArrearsRowsByStudentId[feeDetailDialog.studentId] ?? []}
+                  rows={monthlyArrearsRowsForDialog}
                   totalOutstanding={
                     (Number(totalDueByStudentId[feeDetailDialog.studentId] ?? 0) || 0) -
                     (Number(recordsByStudentId[feeDetailDialog.studentId]?.submitted ?? 0) || 0)
@@ -2543,7 +2544,6 @@ type StudentFeeRowProps = {
   currentMonthExpectedMoney: number;
   /** 本月課表有日期嘅檔位數（用於 $xx(N堂) 顯示）。 */
   thisMonthDatedSlotCount: number;
-  monthlyArrearsRows: MonthlyArrearsRow[];
   feeTierSettings: StudentFeeTierSettings;
   onFeeDetailOpen: (dialog: { kind: "arrears"; studentId: string; title: string } | { kind: "makeup"; studentId: string }) => void;
 };
@@ -2568,7 +2568,6 @@ const StudentFeeRow = memo(function StudentFeeRow({
   onSendFeeChange,
   currentMonthExpectedMoney,
   thisMonthDatedSlotCount,
-  monthlyArrearsRows,
   feeTierSettings,
   onFeeDetailOpen,
 }: StudentFeeRowProps) {

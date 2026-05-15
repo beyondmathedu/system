@@ -159,7 +159,12 @@ export function getCurrentMonthUntickedCount(
   return getLessonUntickedMetrics(records, state, nowMs, calendarYear).currentMonthUntickedCount;
 }
 
-function buildRows(records: Lesson2026Record[], state: Lesson2026State, calendarYear: number) {
+function buildRows(
+  records: Lesson2026Record[],
+  state: Lesson2026State,
+  calendarYear: number,
+  options?: { rangeStartIso?: string; rangeEndIso?: string },
+) {
   const normalized = records.map((r) => ({
     ...r,
     effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
@@ -170,8 +175,18 @@ function buildRows(records: Lesson2026Record[], state: Lesson2026State, calendar
     return a.createdAt - b.createdAt;
   });
   const baseRows: Row[] = [];
-  const start = getLessonSystemStartDate(calendarYear);
-  const end = new Date(calendarYear, 11, 31);
+  const defaultStart = getLessonSystemStartDate(calendarYear);
+  const start = options?.rangeStartIso
+    ? new Date(
+        Math.max(
+          defaultStart.getTime(),
+          new Date(`${options.rangeStartIso}T00:00:00+08:00`).getTime(),
+        ),
+      )
+    : defaultStart;
+  const end = options?.rangeEndIso
+    ? new Date(`${options.rangeEndIso}T00:00:00+08:00`)
+    : new Date(calendarYear, 11, 31);
   const versionCache = new Map<string, (typeof normalized)[0][]>();
 
   for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
@@ -195,29 +210,47 @@ function buildRows(records: Lesson2026Record[], state: Lesson2026State, calendar
     }
   }
 
-  let rows = baseRows.map((r) => ({ ...r }));
+  const rescheduleByFromDate = new Map<string, (typeof state.rescheduleEntries)[number]>();
   for (const e of state.rescheduleEntries) {
-    if (!isOnOrAfterLessonSystemStart(e.toDate, calendarYear)) continue;
-    const idx = rows.findIndex((r) => r.date === e.fromDate && r.rowKind === "normal");
-    if (idx === -1) {
+    if (e.fromDate) rescheduleByFromDate.set(e.fromDate, e);
+  }
+
+  const rows: Row[] = [];
+  for (const orig of baseRows) {
+    const e = rescheduleByFromDate.get(orig.date);
+    if (!e) {
+      rows.push({ ...orig });
+      continue;
+    }
+    if (!isOnOrAfterLessonSystemStart(e.toDate, calendarYear)) {
       rows.push({
-        date: e.toDate,
-        time: e.time,
-        room: e.room,
-        rowKind: "reschedule",
-        rowId: `reschedule-${e.id}`,
-        attendanceKey: `reschedule:${e.id}`,
+        ...orig,
+        rowKind: "cancelled_original",
+        rowId: `cancelled-${e.id}-${e.fromDate}`,
+        attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
       });
       continue;
     }
-    const orig = rows[idx];
-    rows.splice(idx, 1, {
+    rows.push({
       ...orig,
       rowKind: "cancelled_original",
       rowId: `cancelled-${e.id}-${e.fromDate}`,
       attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
     });
-    rows.splice(idx + 1, 0, {
+    rows.push({
+      date: e.toDate,
+      time: e.time,
+      room: e.room,
+      rowKind: "reschedule",
+      rowId: `reschedule-${e.id}`,
+      attendanceKey: `reschedule:${e.id}`,
+    });
+  }
+
+  for (const e of state.rescheduleEntries) {
+    if (!e.fromDate || rescheduleByFromDate.has(e.fromDate)) continue;
+    if (!isOnOrAfterLessonSystemStart(e.toDate, calendarYear)) continue;
+    rows.push({
       date: e.toDate,
       time: e.time,
       room: e.room,
@@ -248,8 +281,8 @@ export function getUpcomingUntickedDates(
   nowMs = Date.now(),
   calendarYear = 2026,
 ): string[] {
-  const rows = buildRows(records, state, calendarYear);
   const { startIso, endIso } = getPriorMonthMakeupWindow(nowMs, calendarYear);
+  const rows = buildRows(records, state, calendarYear, { rangeStartIso: startIso, rangeEndIso: endIso });
   return filterUntickedRowsInMakeupWindow(rows, state, startIso, endIso)
     .map((r) => r.date)
     .sort();

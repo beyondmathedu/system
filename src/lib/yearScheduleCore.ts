@@ -176,12 +176,20 @@ function buildScheduleRows(
     });
   }
 
-  let rows = baseRows.map((r) => ({ ...r }));
+  const rescheduleByFromDate = new Map<string, (typeof state.rescheduleEntries)[number]>();
   for (const e of state.rescheduleEntries) {
-    const idx = rows.findIndex((r) => r.date === e.fromDate && r.rowKind === "normal");
-    if (idx === -1) continue;
-    const orig = rows[idx];
-    rows.splice(idx, 1, {
+    if (e.fromDate) rescheduleByFromDate.set(e.fromDate, e);
+  }
+  const rescheduleById = new Map(state.rescheduleEntries.map((e) => [e.id, e]));
+
+  const rows: Row[] = [];
+  for (const orig of baseRows) {
+    const e = rescheduleByFromDate.get(orig.date);
+    if (!e) {
+      rows.push({ ...orig });
+      continue;
+    }
+    rows.push({
       ...orig,
       time: orig.baseRule
         ? (state.overrides[e.fromDate]?.time ?? orig.baseRule.time).toString()
@@ -196,7 +204,7 @@ function buildScheduleRows(
       fromExtra: false,
     });
     if (!isPendingRescheduleEntry(e)) {
-      rows.splice(idx + 1, 0, {
+      rows.push({
         date: e.toDate,
         time: e.time,
         room: e.room,
@@ -234,9 +242,7 @@ function buildScheduleRows(
     let lessonType: BuiltScheduleRow["lessonType"] = "恆常";
     if (r.rowKind === "cancelled_original") {
       const pendingId = /^cancelled-(.+)-/.exec(r.rowId)?.[1];
-      const pendingEntry = pendingId
-        ? state.rescheduleEntries.find((e) => e.id === pendingId)
-        : undefined;
+      const pendingEntry = pendingId ? rescheduleById.get(pendingId) : undefined;
       lessonType =
         pendingEntry && isPendingRescheduleEntry(pendingEntry)
           ? PENDING_MAKEUP_TYPE_LABEL

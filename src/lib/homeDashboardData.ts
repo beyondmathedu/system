@@ -113,6 +113,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       ),
     };
   });
+  const activeStudentMetaById = new Map(activeStudentMeta.map((s) => [s.id, s]));
 
   const activeStudentIdSet = new Set(activeStudentMeta.map((s) => s.id));
 
@@ -140,7 +141,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   for (const row of yearStateRows) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (!sid) continue;
-    const meta = activeStudentMeta.find((s) => s.id === sid);
+    const meta = activeStudentMetaById.get(sid);
     if (!meta) continue;
     const attendance = ((row as { attendance?: Record<string, boolean> }).attendance ?? {}) as Record<
       string,
@@ -177,7 +178,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   for (const row of yearStateRows) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (!sid) continue;
-    const meta = activeStudentMeta.find((s) => s.id === sid);
+    const meta = activeStudentMetaById.get(sid);
     if (!meta) continue;
     const entries = Array.isArray((row as { reschedule_entries?: unknown }).reschedule_entries)
       ? (row as { reschedule_entries: unknown[] }).reschedule_entries
