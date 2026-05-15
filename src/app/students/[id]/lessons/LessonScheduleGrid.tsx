@@ -1,14 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import {
   loadLessonScheduleRecords,
   saveLessonScheduleRecords,
 } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
 
+function LessonScheduleGridFallback() {
+  return (
+    <div className="space-y-5" aria-hidden>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
+        {Array.from({ length: 8 }, (_, i) => (
+          <div key={i} className="h-14 rounded-lg bg-slate-100" />
+        ))}
+      </div>
+      <div className="h-9 w-28 rounded-md bg-slate-200" />
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="h-40 rounded-xl bg-slate-50" />
+        <div className="h-56 rounded-xl bg-slate-50" />
+      </div>
+    </div>
+  );
+}
+
 const WEEKDAY_OPTIONS = ["一", "二", "三", "四", "五", "六", "日"];
-const ROOM_OPTIONS = ["B", "M前", "M後", "Hope", "Hope 2"];
+const ROOM_OPTIONS = ["B", "M前", "M後", "Hope 1", "Hope 2"];
 const WEEKDAY_LABEL: Record<string, string> = {
   一: "Mon",
   二: "Tue",
@@ -22,7 +40,7 @@ const ROOM_LABEL: Record<string, string> = {
   B: "B",
   M前: "M Front",
   M後: "M Back",
-  Hope: "Hope",
+  "Hope 1": "Hope 1",
   "Hope 2": "Hope 2",
 };
 
@@ -60,7 +78,7 @@ function formatEffectiveDateZh(iso: string) {
   });
 }
 
-type ScheduleRecord = {
+export type LessonScheduleRecord = {
   id: string;
   effectiveDate?: string;
   weekday: string;
@@ -71,14 +89,24 @@ type ScheduleRecord = {
   createdAt: number;
 };
 
+type ScheduleRecord = LessonScheduleRecord;
+
 function normalizeLessonRecord(raw: ScheduleRecord): ScheduleRecord & { effectiveDate: string } {
+  const normalizedRoom = (raw.room ?? "").trim() === "Hope" ? "Hope 1" : (raw.room ?? "").trim();
   return {
     ...raw,
+    room: normalizedRoom,
     effectiveDate: raw.effectiveDate ?? toHkIsoDateFromMs(raw.createdAt),
   };
 }
 
-export default function LessonScheduleGrid({ studentId }: { studentId: string }) {
+export default function LessonScheduleGrid({
+  studentId,
+  initialRecords,
+}: {
+  studentId: string;
+  initialRecords?: LessonScheduleRecord[] | null;
+}) {
   const [weeklyLessons, setWeeklyLessons] = useState<1 | 2>(1);
   const [weekday, setWeekday] = useState("一");
   const [time, setTime] = useState("03:00 PM");
@@ -90,12 +118,15 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
   const [room2, setRoom2] = useState("B");
 
   const RECORDS_STORAGE_KEY = `lesson_schedule_records:${studentId}`;
-  const [records, setRecords] = useState<ScheduleRecord[]>([]);
+  const [records, setRecords] = useState<ScheduleRecord[]>(() =>
+    initialRecords?.map(normalizeLessonRecord) ?? [],
+  );
   const [effectiveDate, setEffectiveDate] = useState("");
   const [filterEffectiveDate, setFilterEffectiveDate] = useState("");
   const [filterWeekday, setFilterWeekday] = useState("");
   const [filterTime, setFilterTime] = useState("");
   const [filterRoom, setFilterRoom] = useState("");
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
 
   const timeOptions = useMemo(() => {
     if (weekday === "六") return SATURDAY_TIME_SUGGESTIONS;
@@ -109,29 +140,37 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
   }, [weekday2]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        const cloudRecords = await loadLessonScheduleRecords(studentId);
-        if (Array.isArray(cloudRecords) && cloudRecords.length > 0) {
-          const normalized = (cloudRecords as ScheduleRecord[]).map(normalizeLessonRecord);
-          setRecords(normalized);
-          window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
-          return;
+    if (initialRecords != null) {
+      const normalized = initialRecords.map(normalizeLessonRecord);
+      setRecords(normalized);
+      window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const cloudRecords = await loadLessonScheduleRecords(studentId);
+      if (cancelled) return;
+      if (Array.isArray(cloudRecords) && cloudRecords.length > 0) {
+        const normalized = (cloudRecords as ScheduleRecord[]).map(normalizeLessonRecord);
+        setRecords(normalized);
+        window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
+        return;
+      }
+      try {
+        const raw = window.localStorage.getItem(RECORDS_STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as ScheduleRecord[];
+        if (Array.isArray(parsed)) {
+          setRecords(parsed.map(normalizeLessonRecord));
         }
-        try {
-          const raw = window.localStorage.getItem(RECORDS_STORAGE_KEY);
-          if (!raw) return;
-          const parsed = JSON.parse(raw) as ScheduleRecord[];
-          if (Array.isArray(parsed)) {
-            setRecords(parsed.map(normalizeLessonRecord));
-          }
-        } catch {
-          // ignore corrupted storage
-        }
-      })();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [RECORDS_STORAGE_KEY]);
+      } catch {
+        // ignore corrupted storage
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [RECORDS_STORAGE_KEY, studentId, initialRecords]);
 
   useEffect(() => {
     if (effectiveDate) return;
@@ -182,10 +221,57 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
     });
   }, [recordsSortedDesc, filterEffectiveDate, filterWeekday, filterTime, filterRoom]);
 
-  const handleAddRecord = () => {
+  function loadRecordIntoForm(r: ScheduleRecord) {
+    setEditingRecordId(r.id);
+    setWeeklyLessons(1);
+    setEffectiveDate(r.effectiveDate ?? "");
+    setWeekday(r.weekday);
+    const isSun = r.weekday === "日";
+    if (isSun) {
+      setTime("");
+      setCustomTime(r.time);
+    } else {
+      setTime(r.time);
+      setCustomTime("");
+    }
+    setRoom(r.room);
+  }
+
+  function clearEditMode() {
+    setEditingRecordId(null);
+  }
+
+  const persistRecords = (next: ScheduleRecord[]) => {
+    const normalized = next.map(normalizeLessonRecord);
+    setRecords(normalized);
+    window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
+    void saveLessonScheduleRecords(studentId, normalized);
+  };
+
+  const handleSaveRecord = () => {
     const nextTime = effectiveTime;
     if (!nextTime) return;
     if (!effectiveDate.trim()) return;
+
+    if (editingRecordId) {
+      const existing = records.find((rec) => rec.id === editingRecordId);
+      if (!existing) {
+        clearEditMode();
+        return;
+      }
+      const updated: ScheduleRecord = {
+        ...existing,
+        effectiveDate: effectiveDate.trim(),
+        weekday,
+        time: nextTime,
+        room,
+      };
+      const merged = records.map((rec) => (rec.id === editingRecordId ? updated : rec));
+      persistRecords(merged);
+      clearEditMode();
+      return;
+    }
+
     const nextTime2 = effectiveTime2;
     if (weeklyLessons === 2 && !nextTime2) return;
 
@@ -211,13 +297,7 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
       });
     }
 
-    const merged = [...records, ...newRecords].map(normalizeLessonRecord);
-    setRecords(merged);
-    window.localStorage.setItem(
-      RECORDS_STORAGE_KEY,
-      JSON.stringify(merged),
-    );
-    void saveLessonScheduleRecords(studentId, merged);
+    persistRecords([...records, ...newRecords]);
   };
 
   return (
@@ -227,6 +307,7 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
         <strong className="font-semibold text-slate-800"> day, time, and room</strong>. When you add a later effective record, earlier records are
         <strong className="font-semibold text-slate-800"> kept</strong> (not overwritten). Use <strong className="font-semibold text-slate-800">Delete</strong> only when needed.
       </p>
+      <ClientOnlyAfterMount fallback={<LessonScheduleGridFallback />}>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8">
         <label className="block">
           <span className="mb-1 block text-xs font-semibold text-slate-700">Weekly Lessons</span>
@@ -394,16 +475,30 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
           </>
         ) : null}
       </div>
-      <div className="mt-3 flex justify-end">
+      {editingRecordId ? (
+        <p className="mt-3 rounded-lg border border-[#1d76c2]/30 bg-[#1d76c2]/5 px-3 py-2 text-xs text-slate-700">
+          正在編輯已儲存紀錄；修改後按 <strong className="font-semibold text-slate-900">Save</strong> 會直接更新該筆（不會新增一筆）。
+        </p>
+      ) : null}
+      <div className="mt-3 flex justify-end gap-2">
+        {editingRecordId ? (
+          <button
+            type="button"
+            onClick={clearEditMode}
+            className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+        ) : null}
         <button
           type="button"
-          onClick={handleAddRecord}
+          onClick={handleSaveRecord}
           className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
         >
           <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
             <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
           </svg>
-          Add Record
+          {editingRecordId ? "Save" : "Add Record"}
         </button>
       </div>
 
@@ -520,7 +615,12 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
                 </thead>
                 <tbody>
                   {filteredRecordsSortedDesc.map((r) => (
-                    <tr key={r.id} className="divide-x divide-slate-100 border-b border-slate-100">
+                    <tr
+                      key={r.id}
+                      className={`divide-x divide-slate-100 border-b border-slate-100 ${
+                        editingRecordId === r.id ? "bg-[#1d76c2]/5" : ""
+                      }`}
+                    >
                       <td className="px-3 py-2 text-slate-800">
                         {formatEffectiveDateZh(r.effectiveDate ?? "")}
                       </td>
@@ -531,43 +631,26 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
                         <div className="inline-flex gap-1">
                           <button
                             type="button"
-                            onClick={() => {
-                              setEffectiveDate(r.effectiveDate ?? "");
-                              setWeekday(r.weekday);
-                              const isSun = r.weekday === "日";
-                              if (isSun) {
-                                setTime("");
-                                setCustomTime(r.time);
-                              } else {
-                                setTime(r.time);
-                                setCustomTime("");
-                              }
-                              setRoom(r.room);
-                            }}
+                            onClick={() => loadRecordIntoForm(r)}
                             className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
                           >
                             <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
-                              <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
+                              <path d="M13.586 3.586a2 2 0 112.828 2.828l-8.793 8.793-2.12.53.53-2.12 8.793-8.793zm1.414-1.414a4 4 0 00-5.656 0l-9.192 9.193a1 1 0 00-.263.464l-1 4a1 1 0 001.213 1.213l4-1a1 1 0 00.464-.263l9.193-9.192a4 4 0 000-5.657z" />
                             </svg>
-                            Add
+                            Edit
                           </button>
                           <button
                             type="button"
                             onClick={() => {
                               if (
                                 !window.confirm(
-                                  "Delete this effective record?\nIf no earlier or complete schedule remains, earlier 2026 timetable months may also change.",
+                                  "Delete this effective record?\nDays before its effective date will no longer use this rule; later days may fall back to an earlier rule if one exists.",
                                 )
                               ) {
                                 return;
                               }
-                              const next = records.filter((rec) => rec.id !== r.id);
-                              setRecords(next);
-                              window.localStorage.setItem(
-                                RECORDS_STORAGE_KEY,
-                                JSON.stringify(next),
-                              );
-                              void saveLessonScheduleRecords(studentId, next);
+                              if (editingRecordId === r.id) clearEditMode();
+                              persistRecords(records.filter((rec) => rec.id !== r.id));
                             }}
                             className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100"
                           >
@@ -586,6 +669,7 @@ export default function LessonScheduleGrid({ studentId }: { studentId: string })
           </div>
         </div>
       </div>
+      </ClientOnlyAfterMount>
     </div>
   );
 }

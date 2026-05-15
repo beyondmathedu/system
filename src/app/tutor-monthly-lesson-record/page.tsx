@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 const SECTION_ORDER: TutorNavStatus[] = ["工作中", "放假中", "已解僱"];
 
 export default async function TutorMonthlyLessonRecordPage() {
-  const [{ tutors, mpfFilterApplied }, firstSeatAmount] = await Promise.all([
+  const [{ tutors }, firstSeatAmount] = await Promise.all([
     fetchTutorsForMonthlyLessonNav(),
     loadMultiStudentFirstAmount(),
   ]);
@@ -29,21 +29,12 @@ export default async function TutorMonthlyLessonRecordPage() {
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">Tutor Monthly Record</h1>
             <p className="mt-1 text-sm text-blue-100">
-              Choose a tutor to view monthly lesson details expanded from schedules.{" "}
-              {mpfFilterApplied ? (
-                <>
-                  Only tutors with <strong className="text-white">MPF = Yes</strong> on the{" "}
-                  <Link href="/tutor" className="underline hover:text-white">
-                    Tutor
-                  </Link>{" "}
-                  page are listed.
-                </>
-              ) : (
-                <>
-                  Add the <span className="font-mono text-blue-50">mpf_enabled</span> column in Supabase to limit this
-                  list to MPF tutors only.
-                </>
-              )}{" "}
+              Choose a tutor to view monthly lesson details expanded from schedules. This page shows{" "}
+              <strong className="text-white">all tutors</strong>; MPF on the{" "}
+              <Link href="/tutor" className="underline hover:text-white">
+                Tutor
+              </Link>{" "}
+              page is used for 5% calculations only.{" "}
               Status groups follow the Tutor page (Active → Occasional → Inactive, then by ID).
             </p>
             <p className="mt-2 text-xs text-blue-100/95">
@@ -59,22 +50,7 @@ export default async function TutorMonthlyLessonRecordPage() {
 
           <div className="p-6">
             {tutors.length === 0 ? (
-              <p className="text-sm text-slate-600">
-                {mpfFilterApplied ? (
-                  <>
-                    No tutors have MPF enabled yet. Turn on MPF for the tutors you need on the{" "}
-                    <Link href="/tutor" className="font-medium text-[#1d76c2] hover:underline">
-                      Tutor
-                    </Link>{" "}
-                    page.
-                  </>
-                ) : (
-                  <>
-                    No tutor records yet, or the <span className="font-mono">mpf_enabled</span> column is missing so
-                    the list could not be loaded.
-                  </>
-                )}
-              </p>
+              <p className="text-sm text-slate-600">No tutor records yet.</p>
             ) : (
               <div className="space-y-8">
                 {SECTION_ORDER.map((status) => {

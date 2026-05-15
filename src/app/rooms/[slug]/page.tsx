@@ -192,7 +192,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                     );
                   })}
                 </div>
-                <form method="get" className="flex flex-wrap items-center gap-1.5">
+                <form method="get" className="flex flex-wrap items-center gap-1.5" suppressHydrationWarning>
                   <input type="hidden" name="year" value={String(year)} />
                   <input type="hidden" name="month" value={String(month)} />
                   <input type="hidden" name="period" value="custom" />
@@ -202,6 +202,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                     name="from"
                     defaultValue={hasCustomRange ? range.startIso : todayIso}
                     className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                    suppressHydrationWarning
                   />
                   <span className="text-xs text-slate-500">to</span>
                   <input
@@ -209,6 +210,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                     name="to"
                     defaultValue={hasCustomRange ? range.endIso : todayIso}
                     className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                    suppressHydrationWarning
                   />
                   <button
                     type="submit"

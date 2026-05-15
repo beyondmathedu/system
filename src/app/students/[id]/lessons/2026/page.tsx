@@ -4,13 +4,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { supabase } from "@/lib/supabase";
 import { loadExamInfo, loadLessonYearState, saveLessonYearState } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
+import {
+  getLessonSystemStartDate,
+  getLessonSystemStartIso,
+  isOnOrAfterLessonSystemStart,
+  LESSON_SYSTEM_START_LABEL_ZH,
+  LESSON_SYSTEM_START_MONTH,
+  LESSON_SYSTEM_START_YEAR,
+} from "@/lib/lessonSystemStart";
+import {
+  getActiveScheduleRulesForDate,
+  isRegularLessonAttended,
+  regularLessonAttendanceKey,
+} from "@/lib/lessonScheduleVersions";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const ROOM_OPTIONS = ["B", "M前", "M後", "Hope", "Hope 2"];
@@ -94,6 +107,8 @@ type ScheduleRow = {
   /** 時段設定（未套用調堂覆寫） */
   baseTime: string;
   baseRoom: string;
+  /** 調堂：原本日期（from），用於顯示 from → to */
+  rescheduleFromDate?: string;
   time: string;
   room: string;
   tutor: string;
@@ -231,13 +246,13 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         return;
       }
       const nextPath = `/students/${encodeURIComponent(studentId)}/lessons/${targetYear}`;
-      const { data: auth } = await supabaseBrowser.auth.getUser();
+      const { data: auth } = await supabase.auth.getUser();
       const user = auth.user;
       if (!user) {
         window.location.href = `/login?next=${encodeURIComponent(nextPath)}`;
         return;
       }
-      const { data: profile } = await supabaseBrowser
+      const { data: profile } = await supabase
         .from("user_profiles")
         .select("role, student_id")
         .eq("user_id", user.id)
@@ -322,7 +337,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
   const [filterType, setFilterType] = useState("");
   const [sortConfig, setSortConfig] = useState<ScheduleSortConfig>(null);
   const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
-  const yearMin = `${targetYear}-01-01`;
+  const yearMin = getLessonSystemStartIso(targetYear);
   const yearMax = `${targetYear}-12-31`;
 
   function displayTutorInCell(raw: string): string {
@@ -384,7 +399,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       setStudentLoaded(false);
       setStudentNotFound(false);
       void (async () => {
-        const { data } = await supabaseBrowser
+        const { data } = await supabase
           .from("students")
           .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
           .eq("id", studentId)
@@ -569,52 +584,42 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       if (ed !== 0) return ed;
       return a.createdAt - b.createdAt;
     });
-    const earliestRuleByWeekday = new Map<string, (typeof sortedRules)[0]>();
-    for (const r of sortedRules) {
-      if (!earliestRuleByWeekday.has(r.weekday)) {
-        earliestRuleByWeekday.set(r.weekday, r);
-      }
-    }
-
-    const start = new Date(targetYear, 0, 1);
+    const start = getLessonSystemStartDate(targetYear);
     const end = new Date(targetYear, 11, 31);
 
     const monthCounter: Record<number, number> = {};
     const rows: ScheduleRow[] = [];
+    const versionCache = new Map<string, (typeof sortedRules)[0][]>();
 
     for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
       const hkNum = getHkWeekdayNumber(cur);
       const weekday = numberToWeekday(hkNum);
       const dateIso = toIsoDate(cur);
-      const activeRuleByWeekday = new Map<string, (typeof sortedRules)[0]>();
-      for (const r of sortedRules) {
-        if (r.effectiveDate <= dateIso) {
-          activeRuleByWeekday.set(r.weekday, r);
-        }
-      }
-      const rule = activeRuleByWeekday.get(weekday) ?? earliestRuleByWeekday.get(weekday);
-      if (!rule) continue;
+      const activeRules = getActiveScheduleRulesForDate(sortedRules, dateIso, versionCache);
+      for (const rec of activeRules) {
+        if (rec.weekday !== weekday) continue;
 
-      const rec = rule;
-      const month = cur.getMonth() + 1;
-      monthCounter[month] = (monthCounter[month] ?? 0) + 1;
-      rows.push({
-        month,
-        lLabel: `L${monthCounter[month]}`,
-        date: dateIso,
-        weekday,
-        baseTime: rec.time.toString(),
-        baseRoom: rec.room.toString(),
-        time: (overrides[dateIso]?.time ?? rec.time).toString(),
-        room: (overrides[dateIso]?.room ?? rec.room).toString(),
-        tutor: (overrides[dateIso]?.tutor ?? rec.tutor ?? "").toString(),
-        lessonSummary: (overrides[dateIso]?.lessonSummary ?? rec.lessonSummary ?? "").toString(),
-        lessonType: TYPE_REGULAR,
-        rowKind: "normal",
-        rowId: `${dateIso}-gen`,
-        attendanceKey: dateIso,
-        displayOrder: 0,
-      });
+        const month = cur.getMonth() + 1;
+        monthCounter[month] = (monthCounter[month] ?? 0) + 1;
+        const attendanceKey = regularLessonAttendanceKey(rec, dateIso);
+        rows.push({
+          month,
+          lLabel: `L${monthCounter[month]}`,
+          date: dateIso,
+          weekday,
+          baseTime: rec.time.toString(),
+          baseRoom: rec.room.toString(),
+          time: (overrides[dateIso]?.time ?? rec.time).toString(),
+          room: (overrides[dateIso]?.room ?? rec.room).toString(),
+          tutor: (overrides[dateIso]?.tutor ?? rec.tutor ?? "").toString(),
+          lessonSummary: (overrides[dateIso]?.lessonSummary ?? rec.lessonSummary ?? "").toString(),
+          lessonType: TYPE_REGULAR,
+          rowKind: "normal",
+          rowId: `${dateIso}-regular-${rec.id}`,
+          attendanceKey,
+          displayOrder: 0,
+        });
+      }
     }
 
     return rows.filter((r) => !hiddenDates[r.date]);
@@ -622,7 +627,9 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
   const baseRowByDate = useMemo(() => {
     const map = new Map<string, ScheduleRow>();
-    for (const r of baseScheduleRows) map.set(r.date, r);
+    for (const r of baseScheduleRows) {
+      if (!map.has(r.date)) map.set(r.date, r);
+    }
     return map;
   }, [baseScheduleRows]);
 
@@ -654,24 +661,17 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     if (!studentId) return [];
 
     let rows: ScheduleRow[] = [];
+    const baseDates = new Set(baseScheduleRows.map((r) => r.date));
     for (const r of baseScheduleRows) {
       const e = rescheduleEntryByFromDate.get(r.date);
       if (!e) {
         rows.push({ ...r });
         continue;
       }
-
-      const cancelled: ScheduleRow = {
-        ...r,
-        time: r.baseTime,
-        room: r.baseRoom,
-        lessonType: TYPE_CANCELLED,
-        rowKind: "cancelled_original",
-        rowId: `cancelled-${e.id}-${e.fromDate}`,
-        attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
-        displayOrder: 0,
-        rescheduleEntryId: e.id,
-      };
+      if (!isOnOrAfterLessonSystemStart(e.toDate, targetYear)) {
+        rows.push({ ...r });
+        continue;
+      }
 
       const toWd = weekdayFromIsoDate(e.toDate);
       const toParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.toDate);
@@ -682,8 +682,9 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         lLabel: "L0",
         date: e.toDate,
         weekday: toWd,
-        baseTime: e.time,
-        baseRoom: e.room,
+        baseTime: r.baseTime,
+        baseRoom: r.baseRoom,
+        rescheduleFromDate: e.fromDate,
         time: e.time,
         room: e.room,
         tutor: "",
@@ -696,10 +697,38 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         rescheduleEntryId: e.id,
       };
 
-      rows.push(cancelled, rescheduleRow);
+      rows.push(rescheduleRow);
+    }
+
+    for (const e of rescheduleEntries) {
+      if (!isOnOrAfterLessonSystemStart(e.toDate, targetYear)) continue;
+      if (baseDates.has(e.fromDate)) continue;
+      const toWd = weekdayFromIsoDate(e.toDate);
+      const toParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.toDate);
+      const toMonth = toParts ? Number(toParts[2]) : 1;
+      rows.push({
+        month: toMonth,
+        lLabel: "L0",
+        date: e.toDate,
+        weekday: toWd,
+        baseTime: e.time,
+        baseRoom: e.room,
+        rescheduleFromDate: e.fromDate,
+        time: e.time,
+        room: e.room,
+        tutor: "",
+        lessonSummary: "",
+        lessonType: TYPE_RESCHEDULE,
+        rowKind: "reschedule",
+        rowId: `reschedule-${e.id}`,
+        attendanceKey: `reschedule:${e.id}`,
+        displayOrder: 0,
+        rescheduleEntryId: e.id,
+      });
     }
 
     for (const e of extraEntries) {
+      if (!isOnOrAfterLessonSystemStart(e.date, targetYear)) continue;
       const wd = weekdayFromIsoDate(e.date);
       const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
       const month = parts ? Number(parts[2]) : 1;
@@ -722,6 +751,8 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         extraEntryId: e.id,
       });
     }
+
+    rows = rows.filter((r) => isOnOrAfterLessonSystemStart(r.date, targetYear));
 
     rows.sort((a, b) => {
       const dc = a.date.localeCompare(b.date);
@@ -757,7 +788,14 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       return { ...r, lLabel: `L${monthCounter[r.month]}`, displayOrder: i };
     });
     return rows;
-  }, [baseScheduleRows, studentId, rescheduleEntryByFromDate, extraEntries]);
+  }, [
+    baseScheduleRows,
+    studentId,
+    targetYear,
+    rescheduleEntryByFromDate,
+    rescheduleEntries,
+    extraEntries,
+  ]);
 
   const scheduleRowById = useMemo(() => {
     const map = new Map<string, ScheduleRow>();
@@ -1097,6 +1135,12 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
           <div className="p-6">
             <h2 className="text-lg font-bold text-slate-900">{targetYear} Lesson Records</h2>
+            {targetYear === LESSON_SYSTEM_START_YEAR ? (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                網站由 {LESSON_SYSTEM_START_LABEL_ZH} 起管理課表；{LESSON_SYSTEM_START_MONTH - 1}{" "}
+                月及之前之 Excel 紀錄不會顯示於此。
+              </p>
+            ) : null}
 
             <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2102,21 +2146,35 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                 aria-label={`${r.date} attendance (read-only)`}
                                 title="Attendance is read-only here. Please mark attendance in the Room page."
                               >
-                                {attendance[r.attendanceKey] ? "✓" : ""}
+                                {r.rowKind === "normal" && r.attendanceKey.startsWith("regular:")
+                                  ? isRegularLessonAttended(attendance, { id: r.attendanceKey.slice("regular:".length) }, r.date)
+                                    ? "✓"
+                                    : ""
+                                  : attendance[r.attendanceKey]
+                                    ? "✓"
+                                    : ""}
                               </span>
                             )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            {r.date}
+                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate
+                              ? `${r.rescheduleFromDate} → ${r.date}`
+                              : r.date}
                           </td>
                           <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
-                            {WEEKDAY_LABEL[r.weekday] ?? r.weekday}
+                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate
+                              ? `${WEEKDAY_LABEL[weekdayFromIsoDate(r.rescheduleFromDate)] ?? weekdayFromIsoDate(r.rescheduleFromDate)} → ${WEEKDAY_LABEL[r.weekday] ?? r.weekday}`
+                              : (WEEKDAY_LABEL[r.weekday] ?? r.weekday)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            {r.time}
+                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate
+                              ? `${r.baseTime} → ${r.time}`
+                              : r.time}
                           </td>
                           <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
-                            {ROOM_LABEL[r.room] ?? r.room}
+                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate
+                              ? `${ROOM_LABEL[r.baseRoom] ?? r.baseRoom} → ${ROOM_LABEL[r.room] ?? r.room}`
+                              : (ROOM_LABEL[r.room] ?? r.room)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                             {displayTutorInCell(r.tutor)}
@@ -2134,22 +2192,24 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                             />
                           </td>
                           <td className="w-24 whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            <span
-                              className={[
-                                "inline-flex rounded-full px-2 py-0.5 text-xs font-semibold",
-                                r.lessonType === TYPE_REGULAR
-                                  ? "bg-slate-100 text-slate-700"
-                                  : r.lessonType === TYPE_RESCHEDULE
-                                    ? "bg-blue-100 text-blue-700"
-                                    : r.lessonType === TYPE_EXTRA
-                                      ? "bg-emerald-100 text-emerald-700"
-                                      : r.lessonType === TYPE_CANCELLED
-                                        ? "bg-rose-100 text-rose-700"
-                                        : "bg-slate-100 text-slate-700",
-                              ].join(" ")}
-                            >
-                              {r.lessonType}
-                            </span>
+                            <div className="space-y-1">
+                              <span
+                                className={[
+                                  "inline-flex rounded-full px-2 py-0.5 text-xs font-semibold",
+                                  r.lessonType === TYPE_REGULAR
+                                    ? "bg-slate-100 text-slate-700"
+                                    : r.lessonType === TYPE_RESCHEDULE
+                                      ? "bg-blue-100 text-blue-700"
+                                      : r.lessonType === TYPE_EXTRA
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : r.lessonType === TYPE_CANCELLED
+                                          ? "bg-rose-100 text-rose-700"
+                                          : "bg-slate-100 text-slate-700",
+                                ].join(" ")}
+                              >
+                                {r.lessonType}
+                              </span>
+                            </div>
                           </td>
                         </tr>
                       ))

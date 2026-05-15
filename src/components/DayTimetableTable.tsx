@@ -7,7 +7,7 @@ import {
   ROOM_GROUPS,
   type DayTimetableCell,
   type DayTimetablePayload,
-} from "@/lib/dayTimetableGrid";
+} from "@/lib/dayTimetableShared";
 import type {
   DayTimetableFeePaymentTone,
   DayTimetableStyleSettings,
@@ -18,8 +18,8 @@ import { formatGradeDisplay } from "@/lib/grade";
 import type { DayTimetableUiLocale } from "@/lib/dayTimetableUiStrings";
 import { dayTimetableTableStrings, formatFeeHeavyLine } from "@/lib/dayTimetableUiStrings";
 
-const TD_BASE = "h-9 border border-slate-300 px-2 py-1 text-sm text-slate-800";
-const TD_BASE_WIDE = "h-9 border border-slate-300 px-3 py-1 text-sm text-slate-700";
+const TD_BASE = "h-9 border border-slate-300 px-2 py-1 text-sm";
+const TD_BASE_WIDE = "h-9 border border-slate-300 px-3 py-1 text-sm";
 
 export function formatExamDateSlashed(iso: string) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -33,6 +33,19 @@ function mergeCellStyle(...parts: (CSSProperties | undefined)[]): CSSProperties 
     if (p) Object.assign(o, p);
   }
   return Object.keys(o).length ? o : undefined;
+}
+
+function isDarkHexBackground(hex: string | undefined | null): boolean {
+  const h = String(hex ?? "").trim();
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(h);
+  if (!m) return false;
+  const v = m[1];
+  const r = parseInt(v.slice(0, 2), 16);
+  const g = parseInt(v.slice(2, 4), 16);
+  const b = parseInt(v.slice(4, 6), 16);
+  // Relative luminance (sRGB-ish). Lower = darker.
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return luminance < 140;
 }
 
 function feeStripeStyle(
@@ -54,43 +67,55 @@ function cellSurface(
   textTone: "dark" | "muted",
   feeTone: DayTimetableFeePaymentTone | undefined,
   timetableStyle: DayTimetableStyleSettings,
-): { className: string; style?: CSSProperties } {
+): { className: string; style?: CSSProperties; isDarkBg: boolean } {
   const td = textTone === "dark" ? TD_BASE : TD_BASE_WIDE;
+  const lightText = textTone === "dark" ? "text-slate-800" : "text-slate-700";
   if (!item) {
     return {
-      className: `${td} bg-white`,
+      className: `${td} bg-white ${lightText}`,
+      isDarkBg: false,
     };
   }
   const stripe = feeStripeStyle(feeTone, timetableStyle);
   if (item.lessonType === "補堂") {
+    const bg = timetableStyle.rescheduleCellBgHex;
+    const isDarkBg = isDarkHexBackground(bg);
     return {
-      className: td,
-      style: mergeCellStyle({ backgroundColor: timetableStyle.rescheduleCellBgHex }, stripe),
+      className: `${td} ${isDarkBg ? "text-white" : lightText}`,
+      style: mergeCellStyle({ backgroundColor: bg }, stripe),
+      isDarkBg,
     };
   }
   if (item.lessonType === "加堂") {
+    const bg = timetableStyle.extraCellBgHex;
+    const isDarkBg = isDarkHexBackground(bg);
     return {
-      className: td,
-      style: mergeCellStyle({ backgroundColor: timetableStyle.extraCellBgHex }, stripe),
+      className: `${td} ${isDarkBg ? "text-white" : lightText}`,
+      style: mergeCellStyle({ backgroundColor: bg }, stripe),
+      isDarkBg,
     };
   }
   const tutor = item.tutorDisplay.trim();
   if (!tutor || tutor === "待定" || tutor === "—") {
     return {
-      className: `${td} bg-slate-100`,
+      className: `${td} bg-slate-100 ${lightText}`,
       style: stripe,
+      isDarkBg: false,
     };
   }
   const hex = item.tutorColorHex;
   if (!hex) {
     return {
-      className: `${td} bg-slate-100`,
+      className: `${td} bg-slate-100 ${lightText}`,
       style: stripe,
+      isDarkBg: false,
     };
   }
+  const isDarkBg = isDarkHexBackground(hex);
   return {
-    className: td,
+    className: `${td} ${isDarkBg ? "text-white" : lightText}`,
     style: mergeCellStyle({ backgroundColor: hex }, stripe),
+    isDarkBg,
   };
 }
 
@@ -318,7 +343,7 @@ export default function DayTimetableTable({
                                 >
                                   <Link
                                     href={`/students/${encodeURIComponent(normalizeStudentId(item.studentId))}/lessons`}
-                                    className="text-[#1d76c2] hover:underline"
+                                    className={`${nameSurf.isDarkBg ? "text-white" : "text-[#1d76c2]"} hover:underline`}
                                   >
                                     {item.name}
                                   </Link>

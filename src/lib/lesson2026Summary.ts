@@ -1,8 +1,20 @@
 "use client";
 
 import { readYmdParts } from "@/lib/intlFormatParts";
+import {
+  clampDateRangeToLessonSystemStart,
+  getLessonSystemStartDate,
+  getLessonSystemStartIso,
+  isOnOrAfterLessonSystemStart,
+} from "@/lib/lessonSystemStart";
+import {
+  getActiveScheduleRulesForDate,
+  isRegularLessonAttended,
+  regularLessonAttendanceKey,
+} from "@/lib/lessonScheduleVersions";
 
 export type Lesson2026Record = {
+  id?: string;
   effectiveDate?: string;
   weekday: string;
   time: string;
@@ -74,43 +86,117 @@ function getHkWeekdayNumber(d: Date) {
   return js === 0 ? 7 : js;
 }
 
+/** 補堂／未打勾統計：只計上一個曆月（HK），例：5 月時只計 4 月 1 日～4 月底。 */
+export function getPriorMonthMakeupWindow(
+  nowMs = Date.now(),
+  calendarYear = 2026,
+): {
+  startIso: string;
+  endIso: string;
+  labelZh: string;
+} {
+  const todayIso = toHkIsoDateFromMs(nowMs);
+  const y = Number(todayIso.slice(0, 4));
+  const m = Number(todayIso.slice(5, 7));
+  let prevY = y;
+  let prevM = m - 1;
+  if (prevM < 1) {
+    prevM = 12;
+    prevY -= 1;
+  }
+  const mm = String(prevM).padStart(2, "0");
+  const lastDay = new Date(Date.UTC(prevY, prevM, 0)).getUTCDate();
+  const rawStart = `${prevY}-${mm}-01`;
+  const rawEnd = `${prevY}-${mm}-${String(lastDay).padStart(2, "0")}`;
+  const clamped = clampDateRangeToLessonSystemStart(rawStart, rawEnd, calendarYear);
+  if (!clamped) {
+    const emptyAt = getLessonSystemStartIso(calendarYear);
+    return {
+      startIso: emptyAt,
+      endIso: emptyAt,
+      labelZh: `${prevY} 年 ${prevM} 月（網站前）`,
+    };
+  }
+  return {
+    startIso: clamped.startIso,
+    endIso: clamped.endIso,
+    labelZh: `${Number(clamped.startIso.slice(0, 4))} 年 ${Number(clamped.startIso.slice(5, 7))} 月`,
+  };
+}
+
+function isRowMarkedAttended(r: Row, state: Lesson2026State): boolean {
+  if (Boolean(state.attendance[r.attendanceKey])) return true;
+  if (r.rowKind === "normal" && r.attendanceKey.startsWith("regular:")) {
+    const ruleId = r.attendanceKey.slice("regular:".length);
+    return isRegularLessonAttended(state.attendance, { id: ruleId }, r.date);
+  }
+  return Boolean(state.attendance[r.date]);
+}
+
+function filterUntickedRowsInMakeupWindow(
+  rows: Row[],
+  state: Lesson2026State,
+  startIso: string,
+  endIso: string,
+) {
+  return rows.filter((r) => {
+    if (r.rowKind === "cancelled_original") return false;
+    if (r.date < startIso || r.date > endIso) return false;
+    return !isRowMarkedAttended(r, state);
+  });
+}
+
+export type LessonUntickedMetrics = {
+  makeupCount: number;
+  makeupDates: string[];
+  currentMonthUntickedCount: number;
+};
+
+/** 只 buildRows 一次，同時算補堂與當月未打勾。 */
+export function getLessonUntickedMetrics(
+  records: Lesson2026Record[],
+  state: Lesson2026State,
+  nowMs = Date.now(),
+  calendarYear = 2026,
+): LessonUntickedMetrics {
+  const rows = buildRows(records, state, calendarYear);
+  const { startIso, endIso } = getPriorMonthMakeupWindow(nowMs, calendarYear);
+  const makeupRows = filterUntickedRowsInMakeupWindow(rows, state, startIso, endIso);
+  const now = new Date(nowMs);
+  const month = now.getMonth() + 1;
+  const currentMonthUntickedCount = rows.filter((r) => {
+    if (r.rowKind === "cancelled_original") return false;
+    if (!isOnOrAfterLessonSystemStart(r.date, calendarYear)) return false;
+    const rowMonth = Number(r.date.slice(5, 7));
+    if (rowMonth !== month) return false;
+    return !isRowMarkedAttended(r, state);
+  }).length;
+  return {
+    makeupCount: makeupRows.length,
+    makeupDates: makeupRows.map((r) => r.date).sort(),
+    currentMonthUntickedCount,
+  };
+}
+
 export function getUpcomingUntickedCount(
   records: Lesson2026Record[],
   state: Lesson2026State,
   nowMs = Date.now(),
+  calendarYear = 2026,
 ) {
-  const rows = buildRows(records, state);
-  const today = new Date(nowMs);
-  const startIso = toIsoDate(today);
-  const endDate = new Date(today);
-  endDate.setMonth(endDate.getMonth() + 2);
-  const endIso = toIsoDate(endDate);
-
-  return rows.filter((r) => {
-    if (r.rowKind === "cancelled_original") return false;
-    if (r.date < startIso || r.date > endIso) return false;
-    return !Boolean(state.attendance[r.attendanceKey]);
-  }).length;
+  return getLessonUntickedMetrics(records, state, nowMs, calendarYear).makeupCount;
 }
 
 export function getCurrentMonthUntickedCount(
   records: Lesson2026Record[],
   state: Lesson2026State,
   nowMs = Date.now(),
+  calendarYear = 2026,
 ) {
-  const rows = buildRows(records, state);
-  const now = new Date(nowMs);
-  const month = now.getMonth() + 1;
-
-  return rows.filter((r) => {
-    if (r.rowKind === "cancelled_original") return false;
-    const rowMonth = Number(r.date.slice(5, 7));
-    if (rowMonth !== month) return false;
-    return !Boolean(state.attendance[r.attendanceKey]);
-  }).length;
+  return getLessonUntickedMetrics(records, state, nowMs, calendarYear).currentMonthUntickedCount;
 }
 
-function buildRows(records: Lesson2026Record[], state: Lesson2026State) {
+function buildRows(records: Lesson2026Record[], state: Lesson2026State, calendarYear: number) {
   const normalized = records.map((r) => ({
     ...r,
     effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
@@ -120,50 +206,47 @@ function buildRows(records: Lesson2026Record[], state: Lesson2026State) {
     if (ed !== 0) return ed;
     return a.createdAt - b.createdAt;
   });
-  const earliestRuleByWeekday = new Map<string, (typeof normalized)[0]>();
-  for (const r of sortedRules) {
-    if (!earliestRuleByWeekday.has(r.weekday)) {
-      earliestRuleByWeekday.set(r.weekday, r);
-    }
-  }
-
-  function activeRuleByWeekdayForDate(dateIso: string): Map<string, (typeof normalized)[0]> {
-    const activeByWeekday = new Map<string, (typeof normalized)[0]>();
-    for (const r of sortedRules) {
-      if (r.effectiveDate <= dateIso) {
-        activeByWeekday.set(r.weekday, r);
-      }
-    }
-    return activeByWeekday;
-  }
-
   const baseRows: Row[] = [];
-  const start = new Date(2026, 0, 1);
-  const end = new Date(2026, 11, 31);
+  const start = getLessonSystemStartDate(calendarYear);
+  const end = new Date(calendarYear, 11, 31);
+  const versionCache = new Map<string, (typeof normalized)[0][]>();
 
   for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
     const hkNum = getHkWeekdayNumber(cur);
     const weekday = numberToWeekday(hkNum);
     const dateIso = toIsoDate(cur);
-    const activeByWeekday = activeRuleByWeekdayForDate(dateIso);
-    const rule = activeByWeekday.get(weekday) ?? earliestRuleByWeekday.get(weekday) ?? null;
-    if (!rule) continue;
     if (state.hiddenDates[dateIso]) continue;
 
-    baseRows.push({
-      date: dateIso,
-      time: (state.overrides[dateIso]?.time ?? rule.time).toString(),
-      room: (state.overrides[dateIso]?.room ?? rule.room).toString(),
-      rowKind: "normal",
-      rowId: `${dateIso}-gen`,
-      attendanceKey: dateIso,
-    });
+    const activeRules = getActiveScheduleRulesForDate(sortedRules, dateIso, versionCache);
+    for (const rule of activeRules) {
+      if (rule.weekday !== weekday) continue;
+      const attendanceKey = regularLessonAttendanceKey(rule, dateIso);
+      baseRows.push({
+        date: dateIso,
+        time: (state.overrides[dateIso]?.time ?? rule.time).toString(),
+        room: (state.overrides[dateIso]?.room ?? rule.room).toString(),
+        rowKind: "normal",
+        rowId: `${dateIso}-regular-${rule.id ?? `${rule.time}-${rule.room}`}`,
+        attendanceKey,
+      });
+    }
   }
 
   let rows = baseRows.map((r) => ({ ...r }));
   for (const e of state.rescheduleEntries) {
+    if (!isOnOrAfterLessonSystemStart(e.toDate, calendarYear)) continue;
     const idx = rows.findIndex((r) => r.date === e.fromDate && r.rowKind === "normal");
-    if (idx === -1) continue;
+    if (idx === -1) {
+      rows.push({
+        date: e.toDate,
+        time: e.time,
+        room: e.room,
+        rowKind: "reschedule",
+        rowId: `reschedule-${e.id}`,
+        attendanceKey: `reschedule:${e.id}`,
+      });
+      continue;
+    }
     const orig = rows[idx];
     rows.splice(idx, 1, {
       ...orig,
@@ -182,6 +265,7 @@ function buildRows(records: Lesson2026Record[], state: Lesson2026State) {
   }
 
   for (const e of state.extraEntries) {
+    if (!isOnOrAfterLessonSystemStart(e.date, calendarYear)) continue;
     rows.push({
       date: e.date,
       time: e.time,
@@ -191,5 +275,19 @@ function buildRows(records: Lesson2026Record[], state: Lesson2026State) {
       attendanceKey: `extra:${e.id}`,
     });
   }
-  return rows;
+  return rows.filter((r) => isOnOrAfterLessonSystemStart(r.date, calendarYear));
+}
+
+/** ISO dates (YYYY-MM-DD) of unticked lessons in the prior calendar month (same window as Makeup Count). */
+export function getUpcomingUntickedDates(
+  records: Lesson2026Record[],
+  state: Lesson2026State,
+  nowMs = Date.now(),
+  calendarYear = 2026,
+): string[] {
+  const rows = buildRows(records, state, calendarYear);
+  const { startIso, endIso } = getPriorMonthMakeupWindow(nowMs, calendarYear);
+  return filterUntickedRowsInMakeupWindow(rows, state, startIso, endIso)
+    .map((r) => r.date)
+    .sort();
 }

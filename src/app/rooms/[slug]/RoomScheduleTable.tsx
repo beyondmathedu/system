@@ -52,6 +52,9 @@ export default function RoomScheduleTable({
   const [saveError, setSaveError] = useState("");
   const [teacherOptions, setTeacherOptions] = useState<string[]>([]);
   const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
+  const [activeTutorAliasToNickname, setActiveTutorAliasToNickname] = useState<Map<string, string>>(
+    new Map(),
+  );
   const [examDatesByStudentId, setExamDatesByStudentId] = useState<Record<string, string>>({});
   const [examContentsByStudentId, setExamContentsByStudentId] = useState<Record<string, string>>({});
   const [tutorFilter, setTutorFilter] = useState("all");
@@ -466,6 +469,7 @@ export default function RoomScheduleTable({
       if (!mounted) return;
       setTeacherOptions(v.activeSelectNames);
       setInactiveTutorNames(v.inactiveNames);
+      setActiveTutorAliasToNickname(v.activeAliasToNickname);
     })();
     return () => {
       mounted = false;
@@ -885,13 +889,13 @@ export default function RoomScheduleTable({
                 <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.room}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-slate-700">
                   <select
-                    value={
-                      r.tutor &&
-                      r.tutor !== "—" &&
-                      !inactiveTutorNames.has(r.tutor.trim())
-                        ? normalizeTutorLabel(r.tutor)
-                        : "TBD"
-                    }
+                    value={(() => {
+                      const raw = r.tutor?.trim() ?? "";
+                      if (!raw || raw === "—") return "TBD";
+                      if (inactiveTutorNames.has(raw)) return "TBD";
+                      const mapped = activeTutorAliasToNickname.get(raw);
+                      return normalizeTutorLabel(mapped ?? raw);
+                    })()}
                     disabled={readOnly || savingRowKey === r.rowKey || savingRowKey === slotKey(r)}
                     onChange={(event) => void onChangeTutor(r, event.target.value)}
                     className="min-w-[120px] rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"

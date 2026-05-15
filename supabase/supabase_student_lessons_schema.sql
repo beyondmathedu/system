@@ -81,6 +81,8 @@ create table if not exists public.student_monthly_fee_records (
   year integer not null,
   month integer not null check (month >= 1 and month <= 12),
   submitted_amount numeric(10,2) not null default 0 check (submitted_amount >= 0),
+  lesson_unit_price numeric(10,2),
+  fee_pricing_grade text,
   remarks text not null default '',
   send_fee boolean not null default false,
   updated_at timestamptz not null default now(),

@@ -1,7 +1,9 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
+import { getPriorMonthMakeupWindow } from "@/lib/lesson2026Summary";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
@@ -337,6 +339,13 @@ export default async function HomeLandingPage() {
     CANTONESE_POSITIVE_LINES[Math.floor(Math.random() * CANTONESE_POSITIVE_LINES.length)],
   );
 
+  const dayOfMonth = Number(ymdToday.slice(8, 10)) || 1;
+  const lastDayOfMonth = new Date(year, month, 0).getDate();
+  const daysLeftInMonth = lastDayOfMonth - dayOfMonth;
+  const isMonthEndMakeupReminder = daysLeftInMonth <= 6;
+  const priorMakeupWindow = getPriorMonthMakeupWindow();
+  const priorMakeupMonthLabel = `${Number(priorMakeupWindow.startIso.slice(5, 7))}月`;
+
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
@@ -390,6 +399,67 @@ export default async function HomeLandingPage() {
                 <UpcomingBirthdayReminder items={weekBirthdayReminderItems} />
               </section>
             </div>
+          </div>
+
+          <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
+            <section
+              className={`rounded-lg border px-4 py-3 ${
+                isMonthEndMakeupReminder
+                  ? "border-amber-300 bg-amber-50"
+                  : "border-slate-200 bg-white"
+              }`}
+            >
+              <p
+                className={`text-sm font-bold ${
+                  isMonthEndMakeupReminder ? "text-amber-950" : "text-slate-800"
+                }`}
+              >
+                <span className="mr-1" aria-hidden>
+                  📅
+                </span>
+                {isMonthEndMakeupReminder ? "月尾提醒" : "補堂提醒"}：請聯絡學生安排補堂
+              </p>
+              <p
+                className={`mt-1 text-sm leading-relaxed ${
+                  isMonthEndMakeupReminder ? "text-amber-900" : "text-slate-600"
+                }`}
+              >
+                {isMonthEndMakeupReminder
+                  ? `本月尚餘 ${daysLeftInMonth === 0 ? "最後一日" : `${daysLeftInMonth + 1} 日`}，`
+                  : "每月月尾請"}
+                提醒仍有「
+                <span className="font-semibold">{priorMakeupMonthLabel}未補堂</span>
+                」的學生盡快補堂，並在課表打勾。
+              </p>
+              {studentsWithPendingMakeup.length > 0 ? (
+                <p
+                  className={`mt-2 text-sm ${
+                    isMonthEndMakeupReminder ? "text-amber-900" : "text-slate-600"
+                  }`}
+                >
+                  目前有 <span className="font-semibold tabular-nums">{studentsWithPendingMakeup.length}</span>{" "}
+                  位學生仍有未完成補堂（見下方列表）。
+                </p>
+              ) : (
+                <p
+                  className={`mt-2 text-sm ${
+                    isMonthEndMakeupReminder ? "text-amber-800" : "text-slate-500"
+                  }`}
+                >
+                  下方列表暫時冇紀錄；仍可到學費頁按「Makeup」欄核對上一個曆月未打勾日期。
+                </p>
+              )}
+              <Link
+                href="/students-lesson-time-fee-record"
+                className={`mt-3 inline-flex rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
+                  isMonthEndMakeupReminder
+                    ? "border-amber-400 bg-white text-amber-950 hover:bg-amber-100"
+                    : "border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100"
+                }`}
+              >
+                前往學費／補堂列表 →
+              </Link>
+            </section>
           </div>
 
           <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-2">

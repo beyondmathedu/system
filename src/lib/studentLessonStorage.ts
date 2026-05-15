@@ -334,7 +334,13 @@ export type StudentMonthlyFeeRecord = {
   year: number;
   month: number;
   submitted_amount: number;
+  /** HKD flat per lesson; when set, overrides tiered FIFO for that month. */
+  lesson_unit_price: number | null;
+  /** Optional F1–F6; when null, infer from students.grade + Sept 1 promotions. */
+  fee_pricing_grade: string | null;
   remarks: string;
+  makeup_remarks: string;
+  balance_due_remarks: string;
   send_fee: boolean;
 };
 
@@ -353,11 +359,19 @@ export async function loadStudentMonthlyFeeRecords(params: {
   if (!studentIds.length) return [];
   const { data } = await supabase
     .from("student_monthly_fee_records")
-    .select("student_id, year, month, submitted_amount, remarks, send_fee")
+    .select(
+      "student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade, remarks, makeup_remarks, balance_due_remarks, send_fee",
+    )
     .eq("year", year)
     .eq("month", month)
     .in("student_id", studentIds);
   return (data ?? []) as unknown as StudentMonthlyFeeRecord[];
+}
+
+function normalizeFeePricingGradeForDb(raw: string): string | null {
+  const s = String(raw ?? "").trim().replace(/\s/g, "").toUpperCase();
+  const m = /^F\.?([1-6])$/.exec(s);
+  return m ? `F${m[1]}` : null;
 }
 
 export async function upsertStudentMonthlyFeeRecord(input: {
@@ -365,17 +379,38 @@ export async function upsertStudentMonthlyFeeRecord(input: {
   year: number;
   month: number;
   submittedAmount: number;
+  lessonUnitPrice: number;
+  feePricingGrade: string;
   remarks: string;
+  makeupRemarks: string;
+  balanceDueRemarks: string;
   sendFee: boolean;
 }) {
-  const { studentId, year, month, submittedAmount, remarks, sendFee } = input;
+  const {
+    studentId,
+    year,
+    month,
+    submittedAmount,
+    lessonUnitPrice,
+    feePricingGrade,
+    remarks,
+    makeupRemarks,
+    balanceDueRemarks,
+    sendFee,
+  } = input;
+  const unit = Number(lessonUnitPrice) || 0;
+  const normalizedFeeGrade = normalizeFeePricingGradeForDb(feePricingGrade);
   await supabase.from("student_monthly_fee_records").upsert(
     {
       student_id: studentId,
       year,
       month,
       submitted_amount: submittedAmount,
+      lesson_unit_price: unit > 0 ? unit : null,
+      fee_pricing_grade: normalizedFeeGrade,
       remarks,
+      makeup_remarks: makeupRemarks,
+      balance_due_remarks: balanceDueRemarks,
       send_fee: sendFee,
       updated_at: new Date().toISOString(),
     },

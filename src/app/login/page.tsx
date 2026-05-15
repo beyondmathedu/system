@@ -1,11 +1,27 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
+function LoginFormFieldsFallback() {
+  return (
+    <div className="mt-5 space-y-4" aria-hidden>
+      <div>
+        <div className="mb-1 h-4 w-12 rounded bg-slate-200" />
+        <div className="h-10 w-full rounded-lg bg-slate-100" />
+      </div>
+      <div>
+        <div className="mb-1 h-4 w-16 rounded bg-slate-200" />
+        <div className="h-10 w-full rounded-lg bg-slate-100" />
+      </div>
+      <div className="h-10 w-full rounded-lg bg-slate-200" />
+    </div>
+  );
+}
+
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next");
   const [email, setEmail] = useState("");
@@ -22,16 +38,21 @@ function LoginForm() {
       email: email.trim(),
       password,
     });
-    setLoading(false);
     if (signInError) {
+      setLoading(false);
       setError(signInError.message || "登入失敗");
+      return;
+    }
+    const { data: sessionData, error: sessionError } = await supabaseBrowser.auth.getSession();
+    if (sessionError || !sessionData.session) {
+      setLoading(false);
+      setError(sessionError?.message || "登入成功但未能建立工作階段，請再試一次");
       return;
     }
     let target = next && next.startsWith("/") ? next : "";
     if (target === "/") target = "";
-    if (!target) target = "/daily-time-table";
-    router.replace(target);
-    router.refresh();
+    if (!target) target = "/home";
+    window.location.assign(target);
   }
 
   return (
@@ -44,17 +65,19 @@ function LoginForm() {
         <p className="mt-1 text-sm text-slate-600">
           用於課堂排課、學生課堂記錄、房間使用與 Tutor Monthly Record 管理。
         </p>
-        <form className="mt-5 space-y-4" onSubmit={onSubmit}>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
-              required
-            />
-          </div>
+        <ClientOnlyAfterMount fallback={<LoginFormFieldsFallback />}>
+          <form className="mt-5 space-y-4" onSubmit={onSubmit}>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
+                required
+                autoComplete="email"
+              />
+            </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
             <div className="relative">
@@ -64,6 +87,7 @@ function LoginForm() {
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-12 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
                 required
+                autoComplete="current-password"
               />
               <button
                 type="button"
@@ -84,18 +108,19 @@ function LoginForm() {
                     <circle cx="12" cy="12" r="3" />
                   </svg>
                 )}
-              </button>
+                </button>
+              </div>
             </div>
-          </div>
-          {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-lg bg-[#1d76c2] px-4 py-2 font-semibold text-white hover:bg-[#165f9d] disabled:opacity-60"
-          >
-            {loading ? "登入中..." : "登入"}
-          </button>
-        </form>
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-lg bg-[#1d76c2] px-4 py-2 font-semibold text-white hover:bg-[#165f9d] disabled:opacity-60"
+            >
+              {loading ? "登入中..." : "登入"}
+            </button>
+          </form>
+        </ClientOnlyAfterMount>
       </div>
     </div>
   );

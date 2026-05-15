@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -11,18 +12,30 @@ import {
   saveStudentVisibilityMode,
   saveLesson2026Metrics,
 } from "@/lib/studentLessonStorage";
-import {
-  getCurrentMonthUntickedCount,
-  getUpcomingUntickedCount,
-} from "@/lib/lesson2026Summary";
+import { getLessonUntickedMetrics, type Lesson2026State } from "@/lib/lesson2026Summary";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import AppTopNav from "@/components/AppTopNav";
 import ExamDateField from "./ExamDateField";
-import LessonScheduleGrid from "./LessonScheduleGrid";
+import type { LessonScheduleRecord } from "./LessonScheduleGrid";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
 
+const LessonScheduleGrid = dynamic(() => import("./LessonScheduleGrid"), {
+  ssr: false,
+  loading: () => <div className="h-48 animate-pulse rounded-xl bg-slate-100" aria-hidden />,
+});
+
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
+
+function toLesson2026State(state: Awaited<ReturnType<typeof loadLesson2026State>>): Lesson2026State {
+  return {
+    attendance: state.attendance as Record<string, boolean>,
+    hiddenDates: state.hiddenDates as Record<string, boolean>,
+    overrides: state.overrides as Lesson2026State["overrides"],
+    rescheduleEntries: state.rescheduleEntries as Lesson2026State["rescheduleEntries"],
+    extraEntries: state.extraEntries as Lesson2026State["extraEntries"],
+  };
+}
 
 type StudentSummary = {
   id: string;
@@ -53,10 +66,9 @@ export default function StudentLessonsPage() {
   const [upcomingUntickedCount, setUpcomingUntickedCount] = useState(0);
   const [currentMonthUntickedCount, setCurrentMonthUntickedCount] = useState(0);
   const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">("active");
-  const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
+  const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
+  const [scheduleRecords, setScheduleRecords] = useState<LessonScheduleRecord[] | null>(null);
   const availableYears = useMemo(() => {
     const startYear = 2026;
     const now = new Date();
@@ -76,136 +88,68 @@ export default function StudentLessonsPage() {
 
   useEffect(() => {
     if (!studentId) return;
+    let cancelled = false;
     setStudentLoaded(false);
     setStudentNotFound(false);
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        const { data } = await supabase
+    setScheduleRecords(null);
+
+    void (async () => {
+      const [studentRes, visibility, records, yearState] = await Promise.all([
+        supabase
           .from("students")
           .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
           .eq("id", studentId)
-          .maybeSingle();
+          .maybeSingle(),
+        loadStudentVisibilityMode(studentId),
+        loadLessonScheduleRecords(studentId),
+        loadLesson2026State(studentId),
+      ]);
 
-        if (!data) {
-          setStudentSummary({
-            id: studentId,
-            nameZh: "",
-            nameEn: "",
-            nicknameEn: "",
-            grade: "",
-            school: "",
-            textbookPublisher: "",
-          });
-          setStudentNotFound(true);
-          setStudentLoaded(true);
-          return;
-        }
+      if (cancelled) return;
+
+      const data = studentRes.data;
+      if (!data) {
         setStudentSummary({
-          id: data.id,
-          nameZh: data.name_zh ?? "",
-          nameEn: data.name_en ?? "",
-          nicknameEn: data.nickname_en ?? "",
-          grade: data.grade ?? "",
-          school: data.school ?? "",
-          textbookPublisher: data.textbook_publisher ?? "",
+          id: studentId,
+          nameZh: "",
+          nameEn: "",
+          nicknameEn: "",
+          grade: "",
+          school: "",
+          textbookPublisher: "",
         });
+        setStudentNotFound(true);
         setStudentLoaded(true);
-      })();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [studentId]);
+        return;
+      }
 
-  useEffect(() => {
-    if (!studentId) return;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        const mode = await loadStudentVisibilityMode(studentId);
-        setVisibilityMode(mode.mode);
-        setVisibilityEffectiveDate(mode.effective_date || new Date().toISOString().slice(0, 10));
-      })();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [studentId]);
+      setStudentSummary({
+        id: data.id,
+        nameZh: data.name_zh ?? "",
+        nameEn: data.name_en ?? "",
+        nicknameEn: data.nickname_en ?? "",
+        grade: data.grade ?? "",
+        school: data.school ?? "",
+        textbookPublisher: data.textbook_publisher ?? "",
+      });
+      setStudentNotFound(false);
+      setVisibilityMode(visibility.mode);
+      setVisibilityEffectiveDate(visibility.effective_date || new Date().toISOString().slice(0, 10));
 
-  useEffect(() => {
-    if (!studentId) return;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        const [records, state] = await Promise.all([
-          loadLessonScheduleRecords(studentId),
-          loadLesson2026State(studentId),
-        ]);
+      const metrics = getLessonUntickedMetrics(
+        records as Parameters<typeof getLessonUntickedMetrics>[0],
+        toLesson2026State(yearState),
+      );
+      setUpcomingUntickedCount(metrics.makeupCount);
+      setCurrentMonthUntickedCount(metrics.currentMonthUntickedCount);
+      setScheduleRecords(records as LessonScheduleRecord[]);
+      setStudentLoaded(true);
+      void saveLesson2026Metrics(studentId, metrics.makeupCount, metrics.currentMonthUntickedCount);
+    })();
 
-        const count = getUpcomingUntickedCount(
-          records as Array<{
-            effectiveDate?: string;
-            weekday: string;
-            time: string;
-            room: string;
-            tutor?: string;
-            lessonSummary?: string;
-            createdAt: number;
-          }>,
-          {
-            attendance: state.attendance as Record<string, boolean>,
-            hiddenDates: state.hiddenDates as Record<string, boolean>,
-            overrides: state.overrides as Record<
-              string,
-              { time?: string; room?: string; tutor?: string; lessonSummary?: string }
-            >,
-            rescheduleEntries: state.rescheduleEntries as Array<{
-              id: string;
-              fromDate: string;
-              toDate: string;
-              time: string;
-              room: string;
-            }>,
-            extraEntries: state.extraEntries as Array<{
-              id: string;
-              date: string;
-              time: string;
-              room: string;
-            }>,
-          },
-        );
-        const monthCount = getCurrentMonthUntickedCount(
-          records as Array<{
-            effectiveDate?: string;
-            weekday: string;
-            time: string;
-            room: string;
-            tutor?: string;
-            lessonSummary?: string;
-            createdAt: number;
-          }>,
-          {
-            attendance: state.attendance as Record<string, boolean>,
-            hiddenDates: state.hiddenDates as Record<string, boolean>,
-            overrides: state.overrides as Record<
-              string,
-              { time?: string; room?: string; tutor?: string; lessonSummary?: string }
-            >,
-            rescheduleEntries: state.rescheduleEntries as Array<{
-              id: string;
-              fromDate: string;
-              toDate: string;
-              time: string;
-              room: string;
-            }>,
-            extraEntries: state.extraEntries as Array<{
-              id: string;
-              date: string;
-              time: string;
-              room: string;
-            }>,
-          },
-        );
-        setUpcomingUntickedCount(count);
-        setCurrentMonthUntickedCount(monthCount);
-        void saveLesson2026Metrics(studentId, count, monthCount);
-      })();
-    }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+    };
   }, [studentId]);
 
   return (
@@ -363,7 +307,11 @@ export default function StudentLessonsPage() {
 
           <div className="p-6">
             <h2 className="mb-4 text-lg font-bold text-slate-900">Lesson Schedule Settings</h2>
-            <LessonScheduleGrid studentId={studentId} />
+            {scheduleRecords ? (
+              <LessonScheduleGrid studentId={studentId} initialRecords={scheduleRecords} />
+            ) : (
+              <div className="h-48 animate-pulse rounded-xl bg-slate-100" aria-hidden />
+            )}
           </div>
         </div>
       </div>

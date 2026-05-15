@@ -1,10 +1,13 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { unstable_cache } from "next/cache";
 import { SCHEDULE_CACHE_TAG_AGGREGATES } from "@/lib/scheduleCacheTags";
 import { fetchClassroomScheduleLabel } from "@/lib/classroomsRegistry";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
-import { supabase } from "@/lib/supabase";
-import { isInactiveTutorName, loadInactiveTutorNames } from "@/lib/tutorVisibility";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { isInactiveTutorName } from "@/lib/tutorVisibility";
+import { fetchInactiveTutorNames } from "@/lib/tutorVisibilityCore";
+import { isScheduleAttendanceMarked } from "@/lib/lessonScheduleVersions";
 import {
   buildYearScheduleRowsForMonth,
   formatDateSlash,
@@ -182,6 +185,7 @@ function hasTutorNameCandidate(
 async function loadStatesForYear(
   studentIds: string[],
   year: number,
+  supabase: SupabaseClient,
 ): Promise<Map<string, YearLessonState>> {
   const map = new Map<string, YearLessonState>();
   for (const id of studentIds) {
@@ -233,6 +237,8 @@ async function loadStudentsScheduleBundle(year: number): Promise<{
   bundle: StudentsScheduleBundle | null;
   error: string | null;
 }> {
+  // Service role：此函數會在 unstable_cache 內呼叫，不可使用 cookies()。
+  const supabase = getSupabaseAdmin();
   const { data: students, error: stErr } = await supabase
     .from("students")
     .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
@@ -293,7 +299,7 @@ async function loadStudentsScheduleBundle(year: number): Promise<{
     recMap.set(r.student_id, r.records);
   }
 
-  const stateMap = await loadStatesForYear(ids, year);
+  const stateMap = await loadStatesForYear(ids, year, supabase);
   return {
     bundle: {
       students: students as ScheduleStudentRow[],
@@ -372,7 +378,12 @@ async function fetchRoomScheduleAggregateUncached(
         studentName: name,
         grade: (st.grade ?? "").toString(),
         attendanceKey: r.attendanceKey,
-        attended: Boolean(state.attendance[r.attendanceKey]),
+        attended: isScheduleAttendanceMarked(state.attendance, {
+          attendanceKey: r.attendanceKey,
+          dateIso: r.date,
+          lessonType: r.lessonType,
+          scheduleRuleId: r.scheduleRuleId,
+        }),
         dateIso: r.date,
         dateDisplay: formatDateSlash(r.date),
         weekdayDisplay: weekdayCnParen(r.date),
@@ -389,7 +400,7 @@ async function fetchRoomScheduleAggregateUncached(
     }
   }
 
-  const inactiveNames = await loadInactiveTutorNames();
+  const inactiveNames = await fetchInactiveTutorNames(getSupabaseAdmin());
   for (const r of out) {
     if (isInactiveTutorName(inactiveNames, r.tutor)) r.tutor = "";
   }
@@ -490,6 +501,13 @@ async function fetchTutorMonthLessonRowsUncached(
     for (const r of filtered) {
       const td = r.tutorDisplay.trim();
       if (!nameSet.has(td)) continue;
+      const attended = isScheduleAttendanceMarked(state.attendance, {
+        attendanceKey: r.attendanceKey,
+        dateIso: r.date,
+        lessonType: r.lessonType,
+        scheduleRuleId: r.scheduleRuleId,
+      });
+      if (!attended) continue;
       out.push({
         rowKey: `${st.id}:${r.rowId}`,
         studentId: st.id,
@@ -502,7 +520,7 @@ async function fetchTutorMonthLessonRowsUncached(
         room: r.room,
         lessonType: r.lessonType,
         note: r.noteDisplay,
-        attended: Boolean(state.attendance[r.attendanceKey]),
+        attended: true,
         sortTime: r.sortTime,
       });
     }

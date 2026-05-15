@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 const STATUS_ORDER = ["工作中", "放假中", "已解僱"] as const;
 
@@ -42,9 +42,9 @@ function rowToEntry(row: {
   const z = String(row.name_zh ?? "").trim();
   const e = String(row.name_en ?? "").trim();
   const nick = String(row.nickname_en ?? "").trim();
-  // Prefer Tutor page "Nickname" (name_zh), then legacy nickname_en, then English.
-  const displayName = z || nick || e || n || row.id;
-  const englishName = e || nick || z || n || row.id;
+  // Prefer Tutor page Nickname (stored in `name`), then Chinese, then legacy nickname_en, then English.
+  const displayName = n || z || nick || e || row.id;
+  const englishName = e || n || nick || z || row.id;
   const matchNames = [...new Set([n, z, e, nick].filter(Boolean))];
   return {
     id: row.id,
@@ -64,9 +64,8 @@ type TutorRowForNav = Parameters<typeof rowToEntry>[0];
 
 export async function fetchTutorsForMonthlyLessonNav(): Promise<{
   tutors: TutorNavEntry[];
-  mpfFilterApplied: boolean;
 }> {
-  let mpfFilterApplied = false;
+  const supabase = await createSupabaseServerClient();
   const first = await supabase.from("tutors").select(TUTORS_SELECT_WITH_MPF).order("id");
   let rows: TutorRowForNav[] | null = first.data as TutorRowForNav[] | null;
   let error = first.error;
@@ -74,25 +73,20 @@ export async function fetchTutorsForMonthlyLessonNav(): Promise<{
     const second = await supabase.from("tutors").select(TUTORS_SELECT_BASE).order("id");
     rows = second.data as TutorRowForNav[] | null;
     error = second.error;
-    mpfFilterApplied = false;
-  } else if (!error) {
-    mpfFilterApplied = true;
   }
-  if (error || !rows?.length) return { tutors: [], mpfFilterApplied };
-  let entries = rows.map((row) => rowToEntry(row));
-  if (mpfFilterApplied) {
-    entries = entries.filter((e) => e.mpfEnabled);
-  }
+  if (error || !rows?.length) return { tutors: [] };
+  const entries = rows.map((row) => rowToEntry(row));
   entries.sort((a, b) => {
     const ra = rankStatus(a.status);
     const rb = rankStatus(b.status);
     if (ra !== rb) return ra - rb;
     return a.id.localeCompare(b.id);
   });
-  return { tutors: entries, mpfFilterApplied };
+  return { tutors: entries };
 }
 
 export async function fetchTutorNavEntryById(id: string): Promise<TutorNavEntry | null> {
+  const supabase = await createSupabaseServerClient();
   const first = await supabase
     .from("tutors")
     .select(TUTORS_SELECT_WITH_MPF)

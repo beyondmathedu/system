@@ -38,7 +38,11 @@ type ExistingFeeRow = {
   year: number;
   month: number;
   remarks: string | null;
+  makeup_remarks: string | null;
+  balance_due_remarks: string | null;
   send_fee: boolean | null;
+  lesson_unit_price: number | null;
+  fee_pricing_grade: string | null;
 };
 
 const MONTH_MAP: Record<string, number> = {
@@ -100,6 +104,42 @@ function monthFromText(text: string): number | null {
   );
   if (!en) return null;
   return MONTH_MAP[en[1].toLowerCase()] ?? null;
+}
+
+/** Zoho Books 行常見：quantity＝堂數、item_total／rate 先至係港幣；舊碼用 quantity 當 submitted 會變成「5 堂＝$5」。 */
+function lineItemSubmittedAmountHkd(li: Record<string, unknown>): number {
+  const n = (v: unknown): number => {
+    if (v == null) return NaN;
+    if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+    const x = parseFloat(String(v).replace(/,/g, ""));
+    return Number.isFinite(x) ? x : NaN;
+  };
+  const positiveTotals = [
+    n(li.item_total),
+    n(li.line_total),
+    n(li.bcy_line_total),
+    n(li.bcy_item_total),
+    n(li.item_sub_total),
+    n(li.amount),
+  ].filter((x) => Number.isFinite(x) && x > 0);
+  if (positiveTotals.length > 0) {
+    return Math.round(Math.max(...positiveTotals) * 100) / 100;
+  }
+
+  const qty = n(li.quantity);
+  const rates = [
+    n(li.rate),
+    n(li.price),
+    n(li.unit_price),
+    n(li.selling_price),
+    n(li.bcy_rate),
+  ].filter((x) => Number.isFinite(x) && x > 0);
+  const rate = rates.length > 0 ? Math.max(...rates) : NaN;
+  if (Number.isFinite(qty) && qty > 0 && Number.isFinite(rate) && rate > 0) {
+    return Math.round(qty * rate * 100) / 100;
+  }
+
+  return 0;
 }
 
 async function getZohoAccessToken(): Promise<string> {
@@ -312,7 +352,7 @@ export async function POST(request: Request) {
     let detailFetchError = 0;
     const detailErrorSamples: string[] = [];
 
-    const qtyByStudentMonth = new Map<string, number>();
+    const amountByStudentMonth = new Map<string, number>();
     let unmatchedReceipts = 0;
     let parsedMonthLineItems = 0;
     let totalLineItems = 0;
@@ -372,31 +412,50 @@ export async function POST(request: Request) {
         const month = monthFromText(text);
         if (!month) continue;
         parsedMonthLineItems += 1;
-        const qty = Number(li.quantity ?? 0) || 0;
-        if (qty <= 0) continue;
+        const lineAmt = lineItemSubmittedAmountHkd(li as Record<string, unknown>);
+        if (lineAmt <= 0) continue;
         const key = `${studentId}:${month}`;
-        qtyByStudentMonth.set(key, (qtyByStudentMonth.get(key) ?? 0) + qty);
+        amountByStudentMonth.set(key, (amountByStudentMonth.get(key) ?? 0) + lineAmt);
       }
     }
 
-    const studentIds = Array.from(new Set(Array.from(qtyByStudentMonth.keys()).map((k) => k.split(":")[0])));
+    const studentIds = Array.from(new Set(Array.from(amountByStudentMonth.keys()).map((k) => k.split(":")[0])));
     const { data: existing } = studentIds.length
       ? await admin
           .from("student_monthly_fee_records")
-          .select("student_id, year, month, remarks, send_fee")
+          .select(
+            "student_id, year, month, remarks, makeup_remarks, balance_due_remarks, send_fee, lesson_unit_price, fee_pricing_grade",
+          )
           .eq("year", year)
           .in("student_id", studentIds)
           .returns<ExistingFeeRow[]>()
       : { data: [] as ExistingFeeRow[] };
 
-    const existingMap = new Map<string, { remarks: string; send_fee: boolean }>();
+    const existingMap = new Map<
+      string,
+      {
+        remarks: string;
+        makeup_remarks: string;
+        balance_due_remarks: string;
+        send_fee: boolean;
+        lesson_unit_price: number | null;
+        fee_pricing_grade: string | null;
+      }
+    >();
     for (const row of existing ?? []) {
       const sid = String(row.student_id ?? "");
       const mo = Number(row.month ?? 0);
       if (!sid || !mo) continue;
       existingMap.set(`${sid}:${mo}`, {
         remarks: String(row.remarks ?? ""),
+        makeup_remarks: String(row.makeup_remarks ?? ""),
+        balance_due_remarks: String(row.balance_due_remarks ?? ""),
         send_fee: Boolean(row.send_fee),
+        lesson_unit_price:
+          row.lesson_unit_price == null || Number.isNaN(Number(row.lesson_unit_price))
+            ? null
+            : Number(row.lesson_unit_price),
+        fee_pricing_grade: row.fee_pricing_grade == null ? null : String(row.fee_pricing_grade),
       });
     }
 
@@ -406,9 +465,13 @@ export async function POST(request: Request) {
       month: number;
       submitted_amount: number;
       remarks: string;
+      makeup_remarks: string;
+      balance_due_remarks: string;
       send_fee: boolean;
+      lesson_unit_price: number | null;
+      fee_pricing_grade: string | null;
     }> = [];
-    for (const [key, qty] of qtyByStudentMonth) {
+    for (const [key, amt] of amountByStudentMonth) {
       const [student_id, mStr] = key.split(":");
       const month = Number(mStr);
       const ex = existingMap.get(key);
@@ -416,9 +479,13 @@ export async function POST(request: Request) {
         student_id,
         year,
         month,
-        submitted_amount: Math.round(qty * 100) / 100,
+        submitted_amount: Math.round(amt * 100) / 100,
         remarks: ex?.remarks ?? "",
+        makeup_remarks: ex?.makeup_remarks ?? "",
+        balance_due_remarks: ex?.balance_due_remarks ?? "",
         send_fee: ex?.send_fee ?? false,
+        lesson_unit_price: ex?.lesson_unit_price ?? null,
+        fee_pricing_grade: ex?.fee_pricing_grade ?? null,
       });
     }
 
@@ -433,10 +500,10 @@ export async function POST(request: Request) {
 
     const monthSubmittedByStudentId: Record<string, number> = {};
     if (Number.isFinite(targetMonth) && targetMonth >= 1 && targetMonth <= 12) {
-      for (const [key, qty] of qtyByStudentMonth) {
+      for (const [key, amt] of amountByStudentMonth) {
         const [sid, mStr] = key.split(":");
         if (Number(mStr) !== targetMonth) continue;
-        monthSubmittedByStudentId[sid] = (monthSubmittedByStudentId[sid] ?? 0) + qty;
+        monthSubmittedByStudentId[sid] = (monthSubmittedByStudentId[sid] ?? 0) + amt;
       }
     }
 

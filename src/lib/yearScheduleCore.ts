@@ -32,6 +32,8 @@ export type BuiltScheduleRow = {
   rowKind: "normal" | "cancelled_original" | "reschedule";
   attendanceKey: string;
   rowId: string;
+  /** 恆常課對應的課表規則 id（用於 regular:id 出席鍵） */
+  scheduleRuleId?: string;
   /** 恆常 / 補堂 / 加堂 / 取消 */
   lessonType: "恆常" | "補堂" | "加堂" | "取消";
   tutorDisplay: string;
@@ -246,6 +248,7 @@ function buildScheduleRows(
       rowKind: r.rowKind,
       attendanceKey: r.attendanceKey,
       rowId: r.rowId,
+      scheduleRuleId: r.baseRule?.id,
       lessonType,
       tutorDisplay,
       noteDisplay,

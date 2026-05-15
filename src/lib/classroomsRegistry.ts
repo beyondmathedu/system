@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { FALLBACK_ROOM_PAGE_META, FALLBACK_SLUG_TO_SCHEDULE_LABEL } from "@/lib/roomConstants";
 
 export type ClassroomRow = {
@@ -13,6 +13,7 @@ export type ClassroomRow = {
 };
 
 async function fetchClassroomScheduleLabelUncached(slugKey: string): Promise<string | null> {
+  const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("classrooms").select("name").eq("slug", slugKey).maybeSingle();
   if (!error && data?.name) {
     const n = String(data.name).trim();
@@ -36,6 +37,7 @@ async function fetchClassroomMetaUncached(slugKey: string): Promise<{
   label: string;
   description: string;
 } | null> {
+  const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("classrooms")
     .select("id, name, description")

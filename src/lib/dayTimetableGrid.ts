@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { unstable_cache } from "next/cache";
 import { SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
 import {
@@ -9,46 +9,29 @@ import {
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
-import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorVisibility";
-import type {
-  DayTimetableFeePaymentTone,
-  DayTimetableStyleSettings,
-} from "@/lib/dayTimetableStyleSettings";
-import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings";
+import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorConstants";
+import type { DayTimetableFeePaymentTone } from "@/lib/dayTimetableStyleSettings";
+import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings.server";
+import {
+  ROOM_GROUPS,
+  hkTodayYmd,
+  parseDayParams,
+  toDayIso,
+  type DayTimetableCell,
+  type DayTimetablePayload,
+  type DayTimetableRowFrame,
+  type RoomGroup,
+} from "@/lib/dayTimetableShared";
 
-export const ROOM_GROUPS = ["B", "M前", "M後", "Hope", "Hope 2"] as const;
-
-export type RoomGroup = (typeof ROOM_GROUPS)[number];
-
-export type DayTimetableCell = {
-  studentId: string;
-  name: string;
-  grade: string;
-  /** 課表／Lesson Summary 帶入；若無「當日備註」則顯示此文字 */
-  scheduleRemarks: string;
-  lessonType: "恆常" | "補堂" | "加堂" | "取消";
-  tutorDisplay: string;
-  tutorColorHex?: string;
-};
-
-export type DayTimetableRowFrame = { time: string; maxRows: number };
-
-export type DayTimetablePayload = {
-  year: number;
-  month: number;
-  day: number;
-  dateIso: string;
-  titleDate: string;
-  examById: Record<string, string>;
-  timetableRemarksById: Record<string, string>;
-  byTimeRoom: Record<string, DayTimetableCell[]>;
-  rowFrames: DayTimetableRowFrame[];
-  /** 各房恆常每時段人數上限（Rooms 可改；未設定欄位時用預設） */
-  regularPeriodMaxByRoom: Record<RoomGroup, number>;
-  /** 依 student_monthly_fee_records 粗算 */
-  feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>;
-  /** 課表底色／學費色帶／回溯設定（可在 Daily／恆常課表頁編輯） */
-  timetableStyle: DayTimetableStyleSettings;
+export {
+  ROOM_GROUPS,
+  hkTodayYmd,
+  parseDayParams,
+  toDayIso,
+  type DayTimetableCell,
+  type DayTimetablePayload,
+  type DayTimetableRowFrame,
+  type RoomGroup,
 };
 
 const FALLBACK_CELL_BG = "#f1f5f9";
@@ -263,30 +246,6 @@ function buildRowsForTargetDate(
     });
 }
 
-export function hkTodayYmd() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const { y: ys, m: ms, d: ds } = readYmdParts(parts, { y: "2026", m: "01", d: "01" });
-  return { y: Number(ys) || 2026, m: Number(ms) || 1, d: Number(ds) || 1 };
-}
-
-export function parseDayParams(sp: { year?: string; month?: string; day?: string } | undefined) {
-  const now = hkTodayYmd();
-  const year = Number(sp?.year ?? now.y) || now.y;
-  const month = Math.min(12, Math.max(1, Number(sp?.month ?? now.m) || now.m));
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const day = Math.min(daysInMonth, Math.max(1, Number(sp?.day ?? now.d) || now.d));
-  return { year, month, day, daysInMonth };
-}
-
-export function toDayIso(y: number, m: number, d: number) {
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
 function normalizeYearState(raw: unknown): YearLessonState {
   const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   return {
@@ -476,6 +435,7 @@ async function fetchDayTimetablePayloadUncached(
   const titleDate = `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
   const { regularOnly } = options;
 
+  const supabase = getSupabaseAdmin();
   const [
     { data: students },
     { data: recRows },

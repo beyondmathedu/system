@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import type { TutorPayRates } from "@/lib/tutorMonthlyPayroll";
 
 const TABLE = "app_payroll_settings";
@@ -6,6 +6,7 @@ const ROW_ID = 1;
 
 /** 該導師在 Tutor 頁設定的初中／高中／單人價（latest_tutor_rates） */
 export async function loadLatestTutorRates(tutorId: string): Promise<TutorPayRates> {
+  const supabase = await createSupabaseServerClient();
   const { data } = await supabase
     .from("latest_tutor_rates")
     .select("junior_rate, senior_rate, single_student_rate")
@@ -25,6 +26,7 @@ export async function loadLatestTutorRates(tutorId: string): Promise<TutorPayRat
 
 /** 多人同一時段時，排序後第一位學生的金額（全站設定；預設 120） */
 export async function loadMultiStudentFirstAmount(): Promise<number> {
+  const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from(TABLE)
     .select("multi_student_first_amount")
