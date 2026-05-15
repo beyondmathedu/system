@@ -90,13 +90,16 @@ function coerceReschedule(raw: unknown): YearLessonState["rescheduleEntries"] {
     const id = String(o.id ?? "");
     const fromDate = String(o.fromDate ?? "");
     const toDate = String(o.toDate ?? "");
-    if (!id || !fromDate || !toDate) continue;
+    const pending = o.pending === true || !toDate;
+    if (!id || !fromDate) continue;
+    if (!pending && !toDate) continue;
     out.push({
       id,
       fromDate,
       toDate,
       time: String(o.time ?? ""),
       room: String(o.room ?? ""),
+      ...(pending ? { pending: true as const } : {}),
     });
   }
   return out;
@@ -182,6 +185,29 @@ function hasTutorNameCandidate(
   return false;
 }
 
+/** 課表記錄／補堂／加堂／覆寫是否可能出現在目標房間（避免對全體學生展開整月）。 */
+function hasRoomScheduleCandidate(
+  records: YearLessonRecord[],
+  state: YearLessonState,
+  roomLabel: string,
+): boolean {
+  const target = roomLabel.trim();
+  if (!target) return false;
+  for (const r of records) {
+    if (String(r.room ?? "").trim() === target) return true;
+  }
+  for (const ov of Object.values(state.overrides)) {
+    if (String(ov?.room ?? "").trim() === target) return true;
+  }
+  for (const e of state.extraEntries) {
+    if (String(e.room ?? "").trim() === target) return true;
+  }
+  for (const e of state.rescheduleEntries) {
+    if (String(e.room ?? "").trim() === target) return true;
+  }
+  return false;
+}
+
 async function loadStatesForYear(
   studentIds: string[],
   year: number,
@@ -191,26 +217,36 @@ async function loadStatesForYear(
   for (const id of studentIds) {
     map.set(id, emptyState());
   }
+  if (studentIds.length === 0) return map;
 
-  if (year === 2026 && studentIds.length > 0) {
-    const { data: legacy } = await supabase
-      .from("student_lessons_2026_state")
-      .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-      .in("student_id", studentIds);
-    for (const row of legacy ?? []) {
-      map.set(row.student_id, dbRowToState(row));
-    }
-  }
+  const stateSelect =
+    "student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries" as const;
 
-  if (studentIds.length > 0) {
-    const { data: yearRows } = await supabase
+  const loadLegacy =
+    year === 2026
+      ? supabase
+          .from("student_lessons_2026_state")
+          .select(stateSelect)
+          .in("student_id", studentIds)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> });
+
+  const [legacyResult, yearResult] = await Promise.all([
+    loadLegacy,
+    supabase
       .from("student_lessons_year_state")
-      .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
+      .select(stateSelect)
       .eq("year", year)
-      .in("student_id", studentIds);
-    for (const row of yearRows ?? []) {
-      map.set(row.student_id, dbRowToState(row));
-    }
+      .in("student_id", studentIds),
+  ]);
+
+  type StateRow = Parameters<typeof dbRowToState>[0];
+  for (const row of (legacyResult.data ?? []) as StateRow[]) {
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    if (sid) map.set(sid, dbRowToState(row));
+  }
+  for (const row of (yearResult.data ?? []) as StateRow[]) {
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    if (sid) map.set(sid, dbRowToState(row));
   }
 
   return map;
@@ -233,11 +269,35 @@ type StudentsScheduleBundle = {
   inactiveEffectiveById: Map<string, string>;
 };
 
-async function loadStudentsScheduleBundle(year: number): Promise<{
+type SerializableScheduleBundle = {
+  students: ScheduleStudentRow[];
+  recEntries: Array<[string, unknown]>;
+  stateEntries: Array<[string, YearLessonState]>;
+  inactiveEntries: Array<[string, string]>;
+};
+
+function serializeScheduleBundle(bundle: StudentsScheduleBundle): SerializableScheduleBundle {
+  return {
+    students: bundle.students,
+    recEntries: [...bundle.recMap.entries()],
+    stateEntries: [...bundle.stateMap.entries()],
+    inactiveEntries: [...bundle.inactiveEffectiveById.entries()],
+  };
+}
+
+function deserializeScheduleBundle(serialized: SerializableScheduleBundle): StudentsScheduleBundle {
+  return {
+    students: serialized.students,
+    recMap: new Map(serialized.recEntries),
+    stateMap: new Map(serialized.stateEntries),
+    inactiveEffectiveById: new Map(serialized.inactiveEntries),
+  };
+}
+
+async function loadStudentsScheduleBundleUncached(year: number): Promise<{
   bundle: StudentsScheduleBundle | null;
   error: string | null;
 }> {
-  // Service role：此函數會在 unstable_cache 內呼叫，不可使用 cookies()。
   const supabase = getSupabaseAdmin();
   const { data: students, error: stErr } = await supabase
     .from("students")
@@ -261,16 +321,22 @@ async function loadStudentsScheduleBundle(year: number): Promise<{
   }
 
   const ids = students.map((s) => s.id);
-  const { data: visibilityRows } = await supabase
-    .from("student_visibility_modes")
-    .select("student_id, mode, effective_date")
-    .in("student_id", ids);
+  const [{ data: visibilityRows }, { data: recRows, error: recErr }, stateMap] = await Promise.all([
+    supabase.from("student_visibility_modes").select("student_id, mode, effective_date").in("student_id", ids),
+    supabase.from("student_lesson_records").select("student_id, records").in("student_id", ids),
+    loadStatesForYear(ids, year, supabase),
+  ]);
+
+  if (recErr) {
+    return { bundle: null, error: recErr.message };
+  }
+
   const manualInactiveEffectiveById = new Map<string, string>();
   for (const row of visibilityRows ?? []) {
-    const mode = String((row as any).mode ?? "active").toLowerCase();
+    const mode = String((row as { mode?: string }).mode ?? "active").toLowerCase();
     if (mode !== "inactive") continue;
-    const sid = String((row as any).student_id ?? "");
-    const eff = String((row as any).effective_date ?? "");
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    const eff = String((row as { effective_date?: string }).effective_date ?? "");
     if (sid && eff) manualInactiveEffectiveById.set(sid, eff);
   }
   const inactiveEffectiveById = new Map<string, string>();
@@ -285,21 +351,11 @@ async function loadStudentsScheduleBundle(year: number): Promise<{
     if (eff) inactiveEffectiveById.set(sid, eff);
   }
 
-  const { data: recRows, error: recErr } = await supabase
-    .from("student_lesson_records")
-    .select("student_id, records")
-    .in("student_id", ids);
-
-  if (recErr) {
-    return { bundle: null, error: recErr.message };
-  }
-
   const recMap = new Map<string, unknown>();
   for (const r of recRows ?? []) {
     recMap.set(r.student_id, r.records);
   }
 
-  const stateMap = await loadStatesForYear(ids, year, supabase);
   return {
     bundle: {
       students: students as ScheduleStudentRow[],
@@ -309,6 +365,38 @@ async function loadStudentsScheduleBundle(year: number): Promise<{
     },
     error: null,
   };
+}
+
+const loadStudentsScheduleBundleCached = unstable_cache(
+  async (year: number): Promise<{ bundle: SerializableScheduleBundle | null; error: string | null }> => {
+    const result = await loadStudentsScheduleBundleUncached(year);
+    if (result.error || !result.bundle) {
+      return { bundle: null, error: result.error };
+    }
+    return { bundle: serializeScheduleBundle(result.bundle), error: null };
+  },
+  ["students-schedule-bundle-v1"],
+  { revalidate: 45, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+);
+
+async function loadStudentsScheduleBundle(year: number): Promise<{
+  bundle: StudentsScheduleBundle | null;
+  error: string | null;
+}> {
+  const cached = await loadStudentsScheduleBundleCached(year);
+  if (cached.error) return { bundle: null, error: cached.error };
+  if (!cached.bundle) {
+    return {
+      bundle: {
+        students: [],
+        recMap: new Map(),
+        stateMap: new Map(),
+        inactiveEffectiveById: new Map(),
+      },
+      error: null,
+    };
+  }
+  return { bundle: deserializeScheduleBundle(cached.bundle), error: null };
 }
 
 async function fetchRoomScheduleAggregateUncached(
@@ -335,8 +423,14 @@ async function fetchRoomScheduleAggregateUncached(
 
   const { students, recMap, stateMap, inactiveEffectiveById } = bundle;
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
+  const roomCandidateStudents: ScheduleStudentRow[] = [];
   for (const st of students) {
-    normalizedRecordsById.set(st.id, normalizeRecords(recMap.get(st.id)));
+    const records = normalizeRecords(recMap.get(st.id));
+    normalizedRecordsById.set(st.id, records);
+    const state = stateMap.get(st.id) ?? emptyState();
+    if (hasRoomScheduleCandidate(records, state, roomLabel)) {
+      roomCandidateStudents.push(st);
+    }
   }
   const startIso = options?.startIso?.trim() || "";
   const endIso = options?.endIso?.trim() || "";
@@ -355,7 +449,7 @@ async function fetchRoomScheduleAggregateUncached(
   })();
   const out: RoomScheduleRow[] = [];
 
-  for (const st of students) {
+  for (const st of roomCandidateStudents) {
     const records = normalizedRecordsById.get(st.id) ?? [];
     const state = stateMap.get(st.id) ?? emptyState();
     const monthRows = monthsToLoad.flatMap((m) => buildYearScheduleRowsForMonth(records, state, year, m));
@@ -410,7 +504,7 @@ async function fetchRoomScheduleAggregateUncached(
     const elapsedMs = Date.now() - perfStartedAt;
     const computeMs = Math.max(0, elapsedMs - perfDbElapsedMs);
     console.info(
-      `[perf] fetchRoomScheduleAggregate slug=${slug} room=${roomLabel} y=${year} m=${month} students=${students.length} rows=${sortedRows.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
+      `[perf] fetchRoomScheduleAggregate slug=${slug} room=${roomLabel} y=${year} m=${month} students=${students.length} candidates=${roomCandidateStudents.length} rows=${sortedRows.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
     );
   }
   return { roomLabel, rows: sortedRows, loadError: null };

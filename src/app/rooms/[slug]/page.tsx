@@ -83,11 +83,10 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
   const { slug } = await params;
   const sp = searchParams ? await searchParams : undefined;
   const key = slug.toLowerCase();
-  const room = await fetchClassroomMeta(key);
+  const [room, viewer] = await Promise.all([fetchClassroomMeta(key), getViewerContext()]);
   if (!room) notFound();
 
   const { year, month } = parseYearMonth(sp);
-  const viewer = await getViewerContext();
   const isTutorView = viewer.role === "tutor";
   const periodRaw = String(sp?.period ?? "").toLowerCase();
   const period = !isTutorView && (periodRaw === "today" || periodRaw === "week" || periodRaw === "month" || periodRaw === "custom")

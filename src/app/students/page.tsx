@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import AppTopNav from "@/components/AppTopNav";
+import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
@@ -205,7 +206,12 @@ export default function StudentsPage() {
     setIsLoading(true);
     setDataError("");
     const [{ data, error }, { data: visibilityRows, error: visibilityError }] = await Promise.all([
-      supabase.from("students").select("*").order("id", { ascending: true }),
+      supabase
+        .from("students")
+        .select(
+          "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language",
+        )
+        .order("id", { ascending: true }),
       supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
     ]);
 
@@ -568,30 +574,42 @@ export default function StudentsPage() {
                   <legend className="mb-1 block text-sm font-semibold text-slate-700">
                     Maths instruction language
                   </legend>
-                  <div className="flex h-[42px] items-center gap-4 rounded-lg border border-slate-300 bg-white px-3">
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-800">
-                      <input
-                        type="radio"
-                        name="mathLanguage"
-                        value="Chinese"
-                        checked={form.mathLanguage === "Chinese"}
-                        onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
-                        className="h-4 w-4 accent-[#1d76c2]"
-                      />
-                      Chinese
-                    </label>
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-800">
-                      <input
-                        type="radio"
-                        name="mathLanguage"
-                        value="English"
-                        checked={form.mathLanguage === "English"}
-                        onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
-                        className="h-4 w-4 accent-[#1d76c2]"
-                      />
-                      English
-                    </label>
-                  </div>
+                  <ClientOnlyAfterMount
+                    fallback={
+                      <div
+                        className="flex h-[42px] items-center gap-4 rounded-lg border border-slate-300 bg-slate-50 px-3"
+                        aria-hidden
+                      >
+                        <span className="text-sm text-slate-500">Chinese</span>
+                        <span className="text-sm text-slate-500">English</span>
+                      </div>
+                    }
+                  >
+                    <div className="flex h-[42px] items-center gap-4 rounded-lg border border-slate-300 bg-white px-3">
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                        <input
+                          type="radio"
+                          name="mathLanguage"
+                          value="Chinese"
+                          checked={form.mathLanguage === "Chinese"}
+                          onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
+                          className="h-4 w-4 accent-[#1d76c2]"
+                        />
+                        Chinese
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                        <input
+                          type="radio"
+                          name="mathLanguage"
+                          value="English"
+                          checked={form.mathLanguage === "English"}
+                          onChange={(event) => onFieldChange("mathLanguage", event.target.value)}
+                          className="h-4 w-4 accent-[#1d76c2]"
+                        />
+                        English
+                      </label>
+                    </div>
+                  </ClientOnlyAfterMount>
                 </fieldset>
 
                 <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-3 md:basis-[55%] md:flex-none md:pr-[1%] md:pb-[2px]">
@@ -646,14 +664,23 @@ export default function StudentsPage() {
                   <span>Search by ID / Chinese name / English name / nickname / Contact number</span>
                 </span>
               </label>
-              <input
-                id="student-search"
-                type="text"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="e.g. 00001, 王小明, Tom, 91234567, Oxford"
-                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-0 transition focus:border-blue-500 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15)]"
-              />
+              <ClientOnlyAfterMount
+                fallback={
+                  <div
+                    className="h-[42px] w-full rounded-lg border border-slate-300 bg-slate-50"
+                    aria-hidden
+                  />
+                }
+              >
+                <input
+                  id="student-search"
+                  type="text"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="e.g. 00001, 王小明, Tom, 91234567, Oxford"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-0 transition focus:border-blue-500 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15)]"
+                />
+              </ClientOnlyAfterMount>
             </div>
             <div className="md:col-span-4">
               <div className="flex items-center justify-start gap-3 overflow-x-auto md:justify-center">
@@ -738,6 +765,7 @@ export default function StudentsPage() {
               ref={tableScrollRef}
               className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
+              <ClientOnlyAfterMount fallback={<StudentsTableSkeleton />}>
               <table className="min-w-[1500px] divide-y divide-slate-200">
                 <thead className="bg-slate-50">
                   <tr className="divide-x divide-slate-200">
@@ -864,6 +892,7 @@ export default function StudentsPage() {
                   })}
                 </tbody>
               </table>
+              </ClientOnlyAfterMount>
             </div>
 
             {sideScrollHeight > sideScrollClientHeight ? (
@@ -954,6 +983,33 @@ export default function StudentsPage() {
   );
 }
 
+function StudentsTableSkeleton() {
+  return (
+    <table className="min-w-[1500px] divide-y divide-slate-200" aria-hidden>
+      <thead className="bg-slate-50">
+        <tr className="divide-x divide-slate-200">
+          {Array.from({ length: 12 }, (_, i) => (
+            <th key={i} className="px-4 py-3">
+              <div className="h-4 w-12 rounded bg-slate-200" />
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100">
+        {Array.from({ length: 10 }, (_, ri) => (
+          <tr key={ri} className="divide-x divide-slate-100">
+            {Array.from({ length: 12 }, (_, ci) => (
+              <td key={ci} className="px-6 py-4">
+                <div className="h-4 max-w-[140px] rounded bg-slate-100" />
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 type InputFieldProps = {
   label: string;
   value: string;
@@ -962,36 +1018,58 @@ type InputFieldProps = {
   options?: string[];
 };
 
+function InputFieldControlFallback({ label }: { label: string }) {
+  return (
+    <>
+      <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
+      <div
+        className="h-[42px] w-full rounded-lg border border-slate-300 bg-slate-50"
+        aria-hidden
+      />
+    </>
+  );
+}
+
 function InputField({ label, value, onChange, type = "text", options = [] }: InputFieldProps) {
+  const controlFallback = <InputFieldControlFallback label={label} />;
+
   if (type === "select") {
     return (
       <label className="block">
-        <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
-        <select
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-        >
-          <option value="">Select</option>
-          {options.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+        <ClientOnlyAfterMount fallback={controlFallback}>
+          <>
+            <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
+            <select
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+            >
+              <option value="">Select</option>
+              {options.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </>
+        </ClientOnlyAfterMount>
       </label>
     );
   }
 
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-      />
+      <ClientOnlyAfterMount fallback={controlFallback}>
+        <>
+          <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
+          <input
+            type={type}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+          />
+        </>
+      </ClientOnlyAfterMount>
     </label>
   );
 }

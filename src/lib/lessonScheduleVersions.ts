@@ -1,3 +1,5 @@
+import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
+
 /** 平日規則：同一 effectiveDate 為一版課表；較新生效日取代舊版（非按星期几疊加）。 */
 
 export type LessonScheduleVersionRule = {
@@ -78,12 +80,12 @@ export function isScheduleAttendanceMarked(
   opts: {
     attendanceKey: string;
     dateIso: string;
-    lessonType: "恆常" | "補堂" | "加堂" | "取消";
+    lessonType: "恆常" | "補堂" | "加堂" | "取消" | typeof PENDING_MAKEUP_TYPE_LABEL;
     scheduleRuleId?: string;
   },
 ): boolean {
   const { attendanceKey, dateIso, lessonType, scheduleRuleId } = opts;
-  if (lessonType === "取消") return false;
+  if (lessonType === "取消" || lessonType === PENDING_MAKEUP_TYPE_LABEL) return false;
   if (lessonType === "補堂" || lessonType === "加堂") {
     return Boolean(attendance[attendanceKey]);
   }

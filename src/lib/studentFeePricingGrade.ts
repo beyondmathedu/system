@@ -51,6 +51,33 @@ export function inferGradeAtSheetEnd(currentGrade: string, sheetYear: number, sh
   return `F${level}`;
 }
 
+/** 忽略資料庫殘值（如 $1）；真正劃一每堂價一般 ≥ $50。 */
+export function effectiveFlatLessonUnit(price: number): number {
+  const n = Number(price) || 0;
+  return n >= 50 ? n : 0;
+}
+
+export function gradeForFeePricing(
+  currentGrade: string,
+  sheetYear: number,
+  sheetMonth: number,
+  feePricingGradeStored: string,
+): string {
+  const fgRaw = normalizeGradeCode(feePricingGradeStored);
+  return /^F[1-6]$/.test(fgRaw) ? fgRaw : inferGradeAtSheetEnd(currentGrade, sheetYear, sheetMonth);
+}
+
+/** 劃一每堂價：先讀 fee record，否則按年級 tier 第 1–8 堂價。 */
+export function flatLessonUnitPrice(
+  storedUnitPrice: number | null | undefined,
+  gradeForPricing: string,
+  tier: StudentFeeTierSettings,
+): number {
+  const flat = effectiveFlatLessonUnit(Number(storedUnitPrice) || 0);
+  if (flat > 0) return flat;
+  return isLowerFeeTier(gradeForPricing) ? tier.f_low_tier_1_8 : tier.f_high_tier_1_8;
+}
+
 /** F1–F3 = lower tuition tier; F4–F6 = higher. */
 export function isLowerFeeTier(grade: string): boolean {
   const r = gradeRank(grade);

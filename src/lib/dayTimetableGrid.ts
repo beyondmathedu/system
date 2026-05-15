@@ -2,6 +2,11 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { unstable_cache } from "next/cache";
 import { SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
 import {
+  formatPendingMakeupReminder,
+  isPendingRescheduleEntry,
+  PENDING_MAKEUP_TYPE_LABEL,
+} from "@/lib/pendingMakeup";
+import {
   LESSON_TYPE_DISPLAY_PRIORITY,
   type YearLessonRecord,
   type YearLessonState,
@@ -125,15 +130,17 @@ type DayBuiltRow = {
   date: string;
   time: string;
   room: string;
-  lessonType: "恆常" | "補堂" | "加堂" | "取消";
+  lessonType: "恆常" | "補堂" | "加堂" | "取消" | typeof PENDING_MAKEUP_TYPE_LABEL;
   tutorDisplay: string;
   noteDisplay: string;
+  pendingMakeupLabel?: string;
 };
 
 type DayCandidateIndex = {
   weekdaySet: Set<string>;
   extraDateSet: Set<string>;
   rescheduleToDateSet: Set<string>;
+  pendingFromDateSet: Set<string>;
 };
 
 function buildRowsForTargetDate(
@@ -188,6 +195,7 @@ function buildRowsForTargetDate(
   }
 
   for (const e of state.rescheduleEntries) {
+    if (isPendingRescheduleEntry(e)) continue;
     if (e.toDate !== targetDateIso) continue;
     rows.push({
       date: e.toDate,
@@ -222,8 +230,16 @@ function buildRowsForTargetDate(
     })
     .map((r) => {
       let lessonType: DayBuiltRow["lessonType"] = "恆常";
-      if (r.rowKind === "cancelled_original") lessonType = "取消";
-      else if (r.rowKind === "reschedule") lessonType = "補堂";
+      let pendingMakeupLabel: string | undefined;
+      if (r.rowKind === "cancelled_original") {
+        const rescheduled = rescheduleByFromDate.get(r.date);
+        if (rescheduled && isPendingRescheduleEntry(rescheduled)) {
+          lessonType = PENDING_MAKEUP_TYPE_LABEL;
+          pendingMakeupLabel = formatPendingMakeupReminder(rescheduled.fromDate, targetDateIso);
+        } else {
+          lessonType = "取消";
+        }
+      } else if (r.rowKind === "reschedule") lessonType = "補堂";
       else if (r.fromExtra) lessonType = "加堂";
 
       const tutorDisplay =
@@ -242,6 +258,7 @@ function buildRowsForTargetDate(
         lessonType,
         tutorDisplay,
         noteDisplay,
+        pendingMakeupLabel,
       };
     });
 }
@@ -298,11 +315,16 @@ function buildDayCandidateIndex(records: YearLessonRecord[], state: YearLessonSt
   }
 
   const rescheduleToDateSet = new Set<string>();
+  const pendingFromDateSet = new Set<string>();
   for (const e of state.rescheduleEntries) {
+    if (isPendingRescheduleEntry(e)) {
+      if (e.fromDate) pendingFromDateSet.add(e.fromDate);
+      continue;
+    }
     if (e.toDate) rescheduleToDateSet.add(e.toDate);
   }
 
-  return { weekdaySet, extraDateSet, rescheduleToDateSet };
+  return { weekdaySet, extraDateSet, rescheduleToDateSet, pendingFromDateSet };
 }
 
 /** 由當月往前共 `count` 個曆月（含當月），最舊在前 */
@@ -445,6 +467,7 @@ async function fetchDayTimetablePayloadUncached(
     { data: visibilityRows },
     { data: tutorRows },
     { data: classroomRows },
+    { data: feeRowsAll },
     timetableStyle,
   ] = await Promise.all([
     supabase.from("students").select("id, name_zh, name_en, nickname_en, grade").order("id"),
@@ -459,6 +482,7 @@ async function fetchDayTimetablePayloadUncached(
     supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
     supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
     supabase.from("classrooms").select("name, regular_period_max"),
+    supabase.from("student_monthly_fee_records").select("student_id, year, month, submitted_amount"),
     loadDayTimetableStyleSettings(),
   ]);
   const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
@@ -524,7 +548,10 @@ async function fetchDayTimetablePayloadUncached(
     const hasRegularOnWeekday = targetWeekday ? index.weekdaySet.has(targetWeekday) : records.length > 0;
     const hasExtraOnDate = index.extraDateSet.has(dateIso);
     const hasRescheduleToDate = index.rescheduleToDateSet.has(dateIso);
-    if (!hasRegularOnWeekday && !hasExtraOnDate && !hasRescheduleToDate) continue;
+    const hasPendingFromDate = index.pendingFromDateSet.has(dateIso);
+    if (!hasRegularOnWeekday && !hasExtraOnDate && !hasRescheduleToDate && !hasPendingFromDate) {
+      continue;
+    }
 
     const studentDisplayName = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
@@ -535,7 +562,8 @@ async function fetchDayTimetablePayloadUncached(
       .map((r) => ({ ...r, normalizedRoom: normalizeRoom(r.room) }))
       .filter((r) => {
         if (r.lessonType === "取消") return false;
-        if (regularOnly && r.lessonType !== "恆常") return false;
+        if (regularOnly && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL)
+          return false;
         return ROOM_GROUPS.includes(r.normalizedRoom as RoomGroup);
       });
 
@@ -558,6 +586,7 @@ async function fetchDayTimetablePayloadUncached(
         lessonType: row.lessonType,
         tutorDisplay,
         tutorColorHex,
+        pendingMakeupLabel: row.pendingMakeupLabel,
       });
       byTimeRoom[key] = list;
       timeSet.add(time);
@@ -590,26 +619,22 @@ async function fetchDayTimetablePayloadUncached(
       studentIdsOnTimetable.add(c.studentId);
     }
   }
-  let feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone> = {};
-  if (studentIdsOnTimetable.size > 0) {
-    const { data: feeRows } = await supabase
-      .from("student_monthly_fee_records")
-      .select("student_id, year, month, submitted_amount")
-      .in("student_id", Array.from(studentIdsOnTimetable));
-    feePaymentToneByStudentId = buildFeePaymentToneByStudentId(
-      Array.from(studentIdsOnTimetable),
-      (feeRows ?? []) as Array<{
-        student_id?: string;
-        year?: number;
-        month?: number;
-        submitted_amount?: number | null;
-      }>,
-      year,
-      month,
-      timetableStyle.feeLookbackMonths,
-      timetableStyle.feeHeavyUnpaidThreshold,
-    );
-  }
+  const feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone> =
+    studentIdsOnTimetable.size > 0
+      ? buildFeePaymentToneByStudentId(
+          Array.from(studentIdsOnTimetable),
+          (feeRowsAll ?? []) as Array<{
+            student_id?: string;
+            year?: number;
+            month?: number;
+            submitted_amount?: number | null;
+          }>,
+          year,
+          month,
+          timetableStyle.feeLookbackMonths,
+          timetableStyle.feeHeavyUnpaidThreshold,
+        )
+      : {};
 
   const payload = {
     year,

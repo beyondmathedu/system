@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type StudentFeeTierSettings = {
   f_low_tier_1_8: number;
@@ -20,7 +21,7 @@ const TABLE = "app_student_fee_tier_settings";
 const ROW_ID = 1;
 const LS_KEY = "beyondmath:student_fee_tier_settings:v1";
 
-function coerceTierSettings(row: Record<string, unknown>): StudentFeeTierSettings {
+export function coerceStudentFeeTierSettings(row: Record<string, unknown>): StudentFeeTierSettings {
   const num = (k: string, d: number) => {
     const v = Number(row[k]);
     return Number.isFinite(v) && v > 0 ? v : d;
@@ -46,7 +47,7 @@ function readFeeTierSettingsFromLocalStorage(): StudentFeeTierSettings | null {
     if (!raw) return null;
     const o = JSON.parse(raw) as unknown;
     if (!o || typeof o !== "object") return null;
-    return coerceTierSettings(o as Record<string, unknown>);
+    return coerceStudentFeeTierSettings(o as Record<string, unknown>);
   } catch {
     return null;
   }
@@ -57,11 +58,22 @@ function writeFeeTierSettingsToLocalStorage(row: StudentFeeTierSettings): void {
   window.localStorage.setItem(LS_KEY, JSON.stringify(row));
 }
 
+/** API／server：只讀 Supabase，失敗用預設。 */
+export async function loadStudentFeeTierSettingsAdmin(
+  admin: SupabaseClient,
+): Promise<StudentFeeTierSettings> {
+  const { data, error } = await admin.from(TABLE).select("*").eq("id", ROW_ID).maybeSingle();
+  if (!error && data) {
+    return coerceStudentFeeTierSettings(data as Record<string, unknown>);
+  }
+  return { ...DEFAULT_FEE_TIER_SETTINGS };
+}
+
 /** 先讀資料庫；無表或失敗則讀本機；再唔得用預設。 */
 export async function loadStudentFeeTierSettings(): Promise<StudentFeeTierSettings> {
   const { data, error } = await supabase.from(TABLE).select("*").eq("id", ROW_ID).maybeSingle();
   if (!error && data) {
-    const parsed = coerceTierSettings(data as Record<string, unknown>);
+    const parsed = coerceStudentFeeTierSettings(data as Record<string, unknown>);
     try {
       writeFeeTierSettingsToLocalStorage(parsed);
     } catch {

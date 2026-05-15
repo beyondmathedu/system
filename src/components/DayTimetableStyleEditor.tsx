@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import { supabase } from "@/lib/supabase";
 import type { DayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings";
 import { DEFAULT_DAY_TIMETABLE_STYLE } from "@/lib/dayTimetableStyleSettings";
@@ -19,6 +20,55 @@ function normalizeHexInput(v: string): string {
   if (/^#[0-9A-Fa-f]{6}$/.test(s)) return s.toLowerCase();
   if (/^[0-9A-Fa-f]{6}$/.test(s)) return `#${s.toLowerCase()}`;
   return s;
+}
+
+function colorSwatch(hex: string, fallback: string) {
+  return /^#[0-9A-Fa-f]{6}$/.test(hex) ? hex : fallback;
+}
+
+function StyleEditorFormFallback({
+  settings,
+  te,
+}: {
+  settings: DayTimetableStyleSettings;
+  te: (typeof dayTimetableStyleEditorStrings)[DayTimetableUiLocale];
+}) {
+  const colorRow = (label: string, hex: string, fallback: string) => (
+    <label className="block text-xs text-slate-700">
+      <span className="font-semibold text-slate-800">{label}</span>
+      <div className="mt-1 flex items-center gap-2">
+        <span
+          className="h-9 w-10 shrink-0 rounded border border-slate-300"
+          style={{ backgroundColor: colorSwatch(hex, fallback) }}
+          aria-hidden
+        />
+        <span className="font-mono text-xs text-slate-600">{hex}</span>
+      </div>
+    </label>
+  );
+
+  return (
+    <>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {colorRow(te.rescheduleBg, settings.rescheduleCellBgHex, "#ede9fe")}
+        {colorRow(te.extraBg, settings.extraCellBgHex, "#fef3c7")}
+        {colorRow(te.feeUnpaid, settings.feeUnpaidStripeHex, "#f59e0b")}
+        {colorRow(te.feeArrears, settings.feeArrearsStripeHex, "#e11d48")}
+        <label className="block text-xs text-slate-700">
+          <span className="font-semibold text-slate-800">{te.threshold}</span>
+          <span className="ml-1 font-normal text-slate-500">{te.thresholdHint}</span>
+          <div className="mt-1 font-mono text-sm tabular-nums text-slate-600">
+            {settings.feeHeavyUnpaidThreshold}
+          </div>
+        </label>
+      </div>
+      <div className="mt-3">
+        <span className="inline-block rounded-lg bg-[#1d76c2]/60 px-4 py-2 text-sm font-semibold text-white">
+          {te.save}
+        </span>
+      </div>
+    </>
+  );
 }
 
 export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Props) {
@@ -85,6 +135,7 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
         </button>
       </div>
       <p className="mt-1 text-xs text-slate-600">{te.intro}</p>
+      <ClientOnlyAfterMount fallback={<StyleEditorFormFallback settings={initial} te={te} />}>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {field(
           te.rescheduleBg,
@@ -217,6 +268,7 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
         </button>
         {status ? <span className="text-xs text-slate-600">{status}</span> : null}
       </div>
+      </ClientOnlyAfterMount>
     </div>
   );
 }

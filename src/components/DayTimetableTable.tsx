@@ -13,6 +13,7 @@ import type {
   DayTimetableStyleSettings,
 } from "@/lib/dayTimetableStyleSettings";
 import { deleteTimetableDayRemark, upsertTimetableDayRemark } from "@/lib/studentLessonStorage";
+import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
 import type { DayTimetableUiLocale } from "@/lib/dayTimetableUiStrings";
@@ -77,6 +78,13 @@ function cellSurface(
     };
   }
   const stripe = feeStripeStyle(feeTone, timetableStyle);
+  if (item.lessonType === PENDING_MAKEUP_TYPE_LABEL) {
+    return {
+      className: `${td} text-amber-950`,
+      style: mergeCellStyle({ backgroundColor: "#fef3c7" }, stripe),
+      isDarkBg: false,
+    };
+  }
   if (item.lessonType === "補堂") {
     const bg = timetableStyle.rescheduleCellBgHex;
     const isDarkBg = isDarkHexBackground(bg);
@@ -150,7 +158,12 @@ export default function DayTimetableTable({
     timetableStyle,
   } = payload;
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
-  const [hoverStudentId, setHoverStudentId] = useState<string | null>(null);
+  const [hoverPanel, setHoverPanel] = useState<{
+    studentId: string;
+    name: string;
+    scheduleRemarks: string;
+    roomIdx: number;
+  } | null>(null);
   const [remarksById, setRemarksById] = useState<Record<string, string>>(payload.timetableRemarksById ?? {});
   const [savingById, setSavingById] = useState<Record<string, boolean>>({});
   const saveTimersRef = useRef<Map<string, number>>(new Map());
@@ -158,7 +171,7 @@ export default function DayTimetableTable({
 
   useEffect(() => {
     setRemarksById(payload.timetableRemarksById ?? {});
-    setHoverStudentId(null);
+    setHoverPanel(null);
   }, [payload.timetableRemarksById, payload.dateIso]);
 
   const flushSave = useCallback(async (studentId: string, nextText: string) => {
@@ -190,20 +203,32 @@ export default function DayTimetableTable({
     };
   }, []);
 
-  function openHover(studentId: string) {
+  function openHover(
+    studentId: string,
+    name: string,
+    scheduleRemarks: string,
+    roomIdx: number,
+  ) {
     if (hideHoverTimerRef.current) {
       window.clearTimeout(hideHoverTimerRef.current);
       hideHoverTimerRef.current = null;
     }
-    setHoverStudentId(studentId);
+    setHoverPanel({ studentId, name, scheduleRemarks, roomIdx });
   }
 
   function closeHoverLater(studentId: string) {
     if (hideHoverTimerRef.current) window.clearTimeout(hideHoverTimerRef.current);
     hideHoverTimerRef.current = window.setTimeout(() => {
-      setHoverStudentId((prev) => (prev === studentId ? null : prev));
+      setHoverPanel((prev) => (prev?.studentId === studentId ? null : prev));
       hideHoverTimerRef.current = null;
     }, 380);
+  }
+
+  function keepHoverOpen() {
+    if (hideHoverTimerRef.current) {
+      window.clearTimeout(hideHoverTimerRef.current);
+      hideHoverTimerRef.current = null;
+    }
   }
 
   return (
@@ -211,6 +236,7 @@ export default function DayTimetableTable({
       <p className="border-b border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-600">
         <span className="font-semibold text-slate-700">{t.examBlurbTitle}</span>
         {t.examDateBlurb}
+        <span className="ml-2 text-slate-500">{t.remarkBlurb}</span>
       </p>
       <p className="border-b border-slate-200 bg-white px-3 py-2 text-xs leading-relaxed text-slate-600">
         <span className="font-semibold text-slate-700">{t.coloursLegendTitle}</span>
@@ -334,11 +360,18 @@ export default function DayTimetableTable({
                         const examSurf = cellSurface(item, "muted", feeTone, timetableStyle);
                         return (
                           <Fragment key={`${frame.time}-${idx}-${room}`}>
-                            <td className={`${nameSurf.className} ${noGridCls}`} style={nameSurf.style}>
+                            <td className={`${nameSurf.className} ${noGridCls} overflow-visible`} style={nameSurf.style}>
                               {item ? (
                                 <div
                                   className="relative"
-                                  onMouseEnter={() => openHover(item.studentId)}
+                                  onMouseEnter={() =>
+                                    openHover(
+                                      item.studentId,
+                                      item.name,
+                                      item.scheduleRemarks,
+                                      roomIdx,
+                                    )
+                                  }
                                   onMouseLeave={() => closeHoverLater(item.studentId)}
                                 >
                                   <Link
@@ -346,21 +379,57 @@ export default function DayTimetableTable({
                                     className={`${nameSurf.isDarkBg ? "text-white" : "text-[#1d76c2]"} hover:underline`}
                                   >
                                     {item.name}
+                                    {(remarksById[item.studentId] ?? "").trim() ? (
+                                      <span
+                                        className={`ml-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
+                                          nameSurf.isDarkBg ? "bg-white/70" : "bg-slate-400"
+                                        }`}
+                                        title={t.remarkHasNote}
+                                        aria-hidden
+                                      />
+                                    ) : null}
                                   </Link>
-                                  {hoverStudentId === item.studentId ? (
+                                  {item.pendingMakeupLabel ? (
+                                    <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-900">
+                                      {item.pendingMakeupLabel}
+                                    </p>
+                                  ) : null}
+                                  {hoverPanel?.studentId === item.studentId ? (
                                     <div
-                                      className="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-slate-300 bg-white p-2 shadow-xl"
-                                      onMouseEnter={() => openHover(item.studentId)}
+                                      role="dialog"
+                                      aria-label={t.remarks}
+                                      className={[
+                                        "absolute z-50 w-72 rounded-lg border border-slate-300 bg-white p-2 shadow-2xl ring-1 ring-slate-200",
+                                        roomIdx >= 2
+                                          ? "right-0 top-0 -translate-x-full -translate-y-0 pr-1"
+                                          : "left-0 top-full mt-1",
+                                      ].join(" ")}
+                                      onMouseEnter={keepHoverOpen}
                                       onMouseLeave={() => closeHoverLater(item.studentId)}
                                     >
-                                      <p className="mb-1 text-[11px] font-semibold tracking-wide text-slate-600">
-                                        Remarks
+                                      <p className="text-xs font-semibold text-slate-800">{item.name}</p>
+                                      <p className="mb-1 mt-0.5 text-[11px] font-semibold tracking-wide text-slate-500">
+                                        {t.remarks}
+                                        <span className="ml-1 font-normal text-slate-400">
+                                          ({t.remarkHoverHint})
+                                        </span>
                                       </p>
+                                      {item.scheduleRemarks.trim() ? (
+                                        <p className="mb-2 rounded-md bg-slate-50 px-2 py-1 text-[11px] leading-relaxed text-slate-600">
+                                          <span className="font-medium text-slate-700">
+                                            {t.lessonSummaryLabel}:{" "}
+                                          </span>
+                                          {item.scheduleRemarks.trim()}
+                                        </p>
+                                      ) : null}
                                       <textarea
                                         value={remarksById[item.studentId] ?? ""}
                                         onChange={(e) => {
                                           const v = e.target.value;
-                                          setRemarksById((prev) => ({ ...prev, [item.studentId]: v }));
+                                          setRemarksById((prev) => ({
+                                            ...prev,
+                                            [item.studentId]: v,
+                                          }));
                                           scheduleSave(item.studentId, v);
                                         }}
                                         placeholder={t.remarkPlaceholder}

@@ -1,5 +1,6 @@
 "use client";
 
+import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import { useEffect, useMemo, useState } from "react";
 
 type BreathPhase = "吸氣" | "停住" | "呼氣";
@@ -89,6 +90,7 @@ export default function StressReliefGames() {
       <h2 className="text-base font-bold text-slate-900">減壓小遊戲</h2>
       <p className="mt-1 text-sm text-slate-600">直接喺度玩，抖一抖再做野。</p>
 
+      <ClientOnlyAfterMount fallback={<StressReliefGamesFallback />}>
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-4">
         <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
           <p className="text-sm font-semibold text-slate-800">1) 呼吸節奏</p>
@@ -249,6 +251,20 @@ export default function StressReliefGames() {
           </button>
         </section>
       </div>
+      </ClientOnlyAfterMount>
+    </div>
+  );
+}
+
+function StressReliefGamesFallback() {
+  return (
+    <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-4">
+      {["1) 呼吸節奏", "2) 15 秒快手點擊", "3) 猜數字 1-10", "4) Rock Scissor Stone"].map((title) => (
+        <section key={title} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-semibold text-slate-800">{title}</p>
+          <p className="mt-2 text-sm text-slate-500">載入中…</p>
+        </section>
+      ))}
     </div>
   );
 }

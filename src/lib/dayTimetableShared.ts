@@ -1,4 +1,5 @@
 import { readYmdParts } from "@/lib/intlFormatParts";
+import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import type { DayTimetableFeePaymentTone, DayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings";
 
 export const ROOM_GROUPS = ["B", "M前", "M後", "Hope", "Hope 2"] as const;
@@ -10,7 +11,9 @@ export type DayTimetableCell = {
   name: string;
   grade: string;
   scheduleRemarks: string;
-  lessonType: "恆常" | "補堂" | "加堂" | "取消";
+  lessonType: "恆常" | "補堂" | "加堂" | "取消" | typeof PENDING_MAKEUP_TYPE_LABEL;
+  /** Leave / pending makeup — e.g. "Make up within 3 days" */
+  pendingMakeupLabel?: string;
   tutorDisplay: string;
   tutorColorHex?: string;
 };

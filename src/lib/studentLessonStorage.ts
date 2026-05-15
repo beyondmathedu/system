@@ -1,6 +1,12 @@
 "use client";
 
 import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
+import {
+  FEE_RECORD_SELECT_BASE,
+  FEE_RECORD_SELECT_WITH_SPLIT_REMARKS,
+  isMissingFeeRecordColumnError,
+  normalizeFeeRecordRow,
+} from "@/lib/studentMonthlyFeeRecordsCompat";
 import { supabase } from "@/lib/supabase";
 
 export type StudentLesson2026State = {
@@ -357,15 +363,25 @@ export async function loadStudentMonthlyFeeRecords(params: {
 }) {
   const { studentIds, year, month } = params;
   if (!studentIds.length) return [];
-  const { data } = await supabase
+  const extended = await supabase
     .from("student_monthly_fee_records")
-    .select(
-      "student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade, remarks, makeup_remarks, balance_due_remarks, send_fee",
-    )
+    .select(FEE_RECORD_SELECT_WITH_SPLIT_REMARKS)
     .eq("year", year)
     .eq("month", month)
     .in("student_id", studentIds);
-  return (data ?? []) as unknown as StudentMonthlyFeeRecord[];
+  const result =
+    extended.error && isMissingFeeRecordColumnError(extended.error.message)
+      ? await supabase
+          .from("student_monthly_fee_records")
+          .select(FEE_RECORD_SELECT_BASE)
+          .eq("year", year)
+          .eq("month", month)
+          .in("student_id", studentIds)
+      : extended;
+  if (result.error) throw result.error;
+  return (result.data ?? []).map((row) =>
+    normalizeFeeRecordRow(row as Record<string, unknown>),
+  ) as StudentMonthlyFeeRecord[];
 }
 
 function normalizeFeePricingGradeForDb(raw: string): string | null {
@@ -400,22 +416,31 @@ export async function upsertStudentMonthlyFeeRecord(input: {
   } = input;
   const unit = Number(lessonUnitPrice) || 0;
   const normalizedFeeGrade = normalizeFeePricingGradeForDb(feePricingGrade);
-  await supabase.from("student_monthly_fee_records").upsert(
-    {
-      student_id: studentId,
-      year,
-      month,
-      submitted_amount: submittedAmount,
-      lesson_unit_price: unit > 0 ? unit : null,
-      fee_pricing_grade: normalizedFeeGrade,
-      remarks,
-      makeup_remarks: makeupRemarks,
-      balance_due_remarks: balanceDueRemarks,
-      send_fee: sendFee,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id,year,month" },
-  );
+  const basePayload = {
+    student_id: studentId,
+    year,
+    month,
+    submitted_amount: submittedAmount,
+    lesson_unit_price: unit > 0 ? unit : null,
+    fee_pricing_grade: normalizedFeeGrade,
+    remarks,
+    send_fee: sendFee,
+    updated_at: new Date().toISOString(),
+  };
+  const fullPayload = {
+    ...basePayload,
+    makeup_remarks: makeupRemarks,
+    balance_due_remarks: balanceDueRemarks,
+  };
+  let { error } = await supabase
+    .from("student_monthly_fee_records")
+    .upsert(fullPayload, { onConflict: "student_id,year,month" });
+  if (error && isMissingFeeRecordColumnError(error.message)) {
+    ({ error } = await supabase
+      .from("student_monthly_fee_records")
+      .upsert(basePayload, { onConflict: "student_id,year,month" }));
+  }
+  if (error) throw error;
 }
 
 export async function loadStudentVisibilityMode(studentId: string): Promise<StudentVisibilityMode> {

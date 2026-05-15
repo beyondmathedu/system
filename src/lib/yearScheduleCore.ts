@@ -5,6 +5,10 @@
 
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { gradeRank } from "@/lib/grade";
+import {
+  isPendingRescheduleEntry,
+  PENDING_MAKEUP_TYPE_LABEL,
+} from "@/lib/pendingMakeup";
 
 export type YearLessonRecord = {
   id?: string;
@@ -21,7 +25,14 @@ export type YearLessonState = {
   attendance: Record<string, boolean>;
   hiddenDates: Record<string, boolean>;
   overrides: Record<string, { time?: string; room?: string; tutor?: string; lessonSummary?: string }>;
-  rescheduleEntries: Array<{ id: string; fromDate: string; toDate: string; time: string; room: string }>;
+  rescheduleEntries: Array<{
+    id: string;
+    fromDate: string;
+    toDate: string;
+    time: string;
+    room: string;
+    pending?: boolean;
+  }>;
   extraEntries: Array<{ id: string; date: string; time: string; room: string }>;
 };
 
@@ -34,8 +45,8 @@ export type BuiltScheduleRow = {
   rowId: string;
   /** 恆常課對應的課表規則 id（用於 regular:id 出席鍵） */
   scheduleRuleId?: string;
-  /** 恆常 / 補堂 / 加堂 / 取消 */
-  lessonType: "恆常" | "補堂" | "加堂" | "取消";
+  /** 恆常 / 補堂 / 加堂 / 取消 / Pending makeup（请假补堂日期待定） */
+  lessonType: "恆常" | "補堂" | "加堂" | "取消" | typeof PENDING_MAKEUP_TYPE_LABEL;
   tutorDisplay: string;
   noteDisplay: string;
   sortTime: string;
@@ -184,16 +195,18 @@ function buildScheduleRows(
       baseRule: orig.baseRule,
       fromExtra: false,
     });
-    rows.splice(idx + 1, 0, {
-      date: e.toDate,
-      time: e.time,
-      room: e.room,
-      rowKind: "reschedule",
-      rowId: `reschedule-${e.id}`,
-      attendanceKey: `reschedule:${e.id}`,
-      baseRule: null,
-      fromExtra: false,
-    });
+    if (!isPendingRescheduleEntry(e)) {
+      rows.splice(idx + 1, 0, {
+        date: e.toDate,
+        time: e.time,
+        room: e.room,
+        rowKind: "reschedule",
+        rowId: `reschedule-${e.id}`,
+        attendanceKey: `reschedule:${e.id}`,
+        baseRule: null,
+        fromExtra: false,
+      });
+    }
   }
 
   for (const ex of state.extraEntries) {
@@ -219,8 +232,16 @@ function buildScheduleRows(
 
   return rows.map((r) => {
     let lessonType: BuiltScheduleRow["lessonType"] = "恆常";
-    if (r.rowKind === "cancelled_original") lessonType = "取消";
-    else if (r.rowKind === "reschedule") lessonType = "補堂";
+    if (r.rowKind === "cancelled_original") {
+      const pendingId = /^cancelled-(.+)-/.exec(r.rowId)?.[1];
+      const pendingEntry = pendingId
+        ? state.rescheduleEntries.find((e) => e.id === pendingId)
+        : undefined;
+      lessonType =
+        pendingEntry && isPendingRescheduleEntry(pendingEntry)
+          ? PENDING_MAKEUP_TYPE_LABEL
+          : "取消";
+    } else if (r.rowKind === "reschedule") lessonType = "補堂";
     else if (r.fromExtra) lessonType = "加堂";
 
     const tutorDisplay =
@@ -281,6 +302,7 @@ export function filterRowsByRoomAndMonth(
 ) {
   return rows.filter((r) => {
     if (r.lessonType === "取消") return false;
+    // Pending makeup still shows in the original lesson slot
     if (r.room.trim() !== roomLabel) return false;
     const m = Number(r.date.slice(5, 7));
     return m === month;
@@ -288,7 +310,12 @@ export function filterRowsByRoomAndMonth(
 }
 
 /** 數字愈小愈前排（日課表、房間聚合等顯示順序） */
-export const LESSON_TYPE_DISPLAY_PRIORITY: Record<string, number> = { 恆常: 1, 補堂: 2, 加堂: 3 };
+export const LESSON_TYPE_DISPLAY_PRIORITY: Record<string, number> = {
+  恆常: 1,
+  [PENDING_MAKEUP_TYPE_LABEL]: 2,
+  補堂: 3,
+  加堂: 4,
+};
 const TYPE_PRIORITY = LESSON_TYPE_DISPLAY_PRIORITY;
 export function sortAggregatedRoomRows<
   T extends {

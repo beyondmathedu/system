@@ -24,6 +24,12 @@ import {
   isRegularLessonAttended,
   regularLessonAttendanceKey,
 } from "@/lib/lessonScheduleVersions";
+import {
+  formatPendingMakeupReminder,
+  isPendingRescheduleEntry,
+  PENDING_MAKEUP_BUTTON_LABEL,
+  PENDING_MAKEUP_TYPE_LABEL,
+} from "@/lib/pendingMakeup";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const ROOM_OPTIONS = ["B", "M前", "M後", "Hope", "Hope 2"];
@@ -48,6 +54,7 @@ const SATURDAY_TIME_SUGGESTIONS = ["10:00 AM", "11:30 AM", "01:00 PM", "02:30 PM
 const TYPE_REGULAR = "Regular";
 const TYPE_CANCELLED = "Cancelled";
 const TYPE_RESCHEDULE = "Reschedule";
+const TYPE_PENDING = PENDING_MAKEUP_TYPE_LABEL;
 const TYPE_EXTRA = "Extra";
 const MONTH_LABEL: Record<number, string> = {
   1: "Jan",
@@ -123,6 +130,7 @@ type ScheduleRow = {
   displayOrder: number;
   rescheduleEntryId?: string;
   extraEntryId?: string;
+  pendingMakeupLabel?: string;
 };
 
 type RescheduleEntry = {
@@ -131,6 +139,7 @@ type RescheduleEntry = {
   toDate: string;
   time: string;
   room: string;
+  pending?: boolean;
 };
 
 type ExtraEntry = {
@@ -299,6 +308,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
   const [fromLessonDate, setFromLessonDate] = useState<string>("");
   const [toLessonDate, setToLessonDate] = useState<string>("");
   const [showEditPanel, setShowEditPanel] = useState(false);
+  const [reschedulePanelMode, setReschedulePanelMode] = useState<"reschedule" | "pending">("reschedule");
   const [showExtraPanel, setShowExtraPanel] = useState(false);
   const [lockFromLessonDate, setLockFromLessonDate] = useState(false);
   const [extraForm, setExtraForm] = useState<{
@@ -657,6 +667,8 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     return map;
   }, [rescheduleEntries]);
 
+  const hkTodayYmd = useMemo(() => toHkIsoDateFromMs(Date.now()), []);
+
   const scheduleRows = useMemo(() => {
     if (!studentId) return [];
 
@@ -666,6 +678,22 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       const e = rescheduleEntryByFromDate.get(r.date);
       if (!e) {
         rows.push({ ...r });
+        continue;
+      }
+      if (isPendingRescheduleEntry(e)) {
+        const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.fromDate);
+        const fromMonth = parts ? Number(parts[2]) : r.month;
+        rows.push({
+          ...r,
+          month: fromMonth,
+          lessonType: TYPE_PENDING,
+          rowKind: "cancelled_original",
+          rowId: `pending-${e.id}`,
+          attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
+          lLabel: "/",
+          pendingMakeupLabel: formatPendingMakeupReminder(e.fromDate, hkTodayYmd),
+          rescheduleEntryId: e.id,
+        });
         continue;
       }
       if (!isOnOrAfterLessonSystemStart(e.toDate, targetYear)) {
@@ -701,6 +729,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     }
 
     for (const e of rescheduleEntries) {
+      if (isPendingRescheduleEntry(e)) continue;
       if (!isOnOrAfterLessonSystemStart(e.toDate, targetYear)) continue;
       if (baseDates.has(e.fromDate)) continue;
       const toWd = weekdayFromIsoDate(e.toDate);
@@ -795,6 +824,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     rescheduleEntryByFromDate,
     rescheduleEntries,
     extraEntries,
+    hkTodayYmd,
   ]);
 
   const scheduleRowById = useMemo(() => {
@@ -1156,6 +1186,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         return;
                       }
                       setShowExtraPanel(false);
+                      setReschedulePanelMode("reschedule");
                       setSelectionError("");
                       if (selectedRowIds.length === 1) {
                         const row = scheduleRowById.get(selectedRowIds[0]);
@@ -1198,9 +1229,13 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         }
                         setEditingRescheduleId(entry.id);
                         setFromLessonDate(entry.fromDate);
-                        setToLessonDate(entry.toDate);
+                        setToLessonDate(
+                          isPendingRescheduleEntry(entry) ? "" : entry.toDate,
+                        );
                         setLockFromLessonDate(true);
-                        const wd = weekdayFromIsoDate(entry.toDate);
+                        const wd = weekdayFromIsoDate(
+                          isPendingRescheduleEntry(entry) ? entry.fromDate : entry.toDate,
+                        );
                         const opts =
                           wd === "六"
                             ? SATURDAY_TIME_SUGGESTIONS
@@ -1236,6 +1271,39 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                       <path d="M4.5 5.75a.75.75 0 010-1.5h9.69l-2.22-2.22a.75.75 0 111.06-1.06l3.5 3.5a.75.75 0 010 1.06l-3.5 3.5a.75.75 0 01-1.06-1.06l2.22-2.22H4.5zm11 8.5a.75.75 0 010 1.5H5.81l2.22 2.22a.75.75 0 11-1.06 1.06l-3.5-3.5a.75.75 0 010-1.06l3.5-3.5a.75.75 0 011.06 1.06l-2.22 2.22H15.5z" />
                     </svg>
                     Reschedule
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedRowIds.length > 1) {
+                        setSelectionError(
+                          "For pending leave, select only 1 regular lesson row.",
+                        );
+                        return;
+                      }
+                      setShowExtraPanel(false);
+                      setReschedulePanelMode("pending");
+                      setSelectionError("");
+                      setEditingRescheduleId(null);
+                      if (selectedRowIds.length === 1) {
+                        const row = scheduleRowById.get(selectedRowIds[0]);
+                        if (!row || row.rowKind !== "normal") {
+                          setSelectionError("Select a regular lesson row to mark leave / pending makeup.");
+                          return;
+                        }
+                        setFromLessonDate(row.date);
+                        setToLessonDate("");
+                        setLockFromLessonDate(true);
+                      } else {
+                        setFromLessonDate("");
+                        setToLessonDate("");
+                        setLockFromLessonDate(false);
+                      }
+                      setShowEditPanel(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100"
+                  >
+                    {PENDING_MAKEUP_BUTTON_LABEL}
                   </button>
                   <button
                     type="button"
@@ -1413,10 +1481,30 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                 </div>
 
                 <div>
-                  <p className="text-sm font-bold text-slate-900">Reschedule Settings</p>
+                  <p className="text-sm font-bold text-slate-900">
+                    {reschedulePanelMode === "pending"
+                      ? PENDING_MAKEUP_BUTTON_LABEL
+                      : "Reschedule Settings"}
+                  </p>
                   <p className="mt-1 text-xs text-slate-600">
-                    Fill in <strong className="font-semibold text-slate-800">Original Date</strong> and
-                    <strong className="font-semibold text-slate-800"> New Date</strong>. The new weekday is auto-filled. After saving, the original row becomes attendance &quot;/&quot; with type &quot;Cancelled&quot;, and a &quot;Reschedule&quot; row is inserted below it.
+                    {reschedulePanelMode === "pending" ? (
+                      <>
+                        Enter only the{" "}
+                        <strong className="font-semibold text-slate-800">original lesson date</strong>;
+                        leave the new date empty. Home and the daily timetable show a countdown
+                        (e.g. &quot;Make up within 3 days&quot;). Later use Reschedule with a new
+                        date to complete the makeup lesson.
+                      </>
+                    ) : (
+                      <>
+                        Fill in{" "}
+                        <strong className="font-semibold text-slate-800">Original Date</strong> and
+                        <strong className="font-semibold text-slate-800"> New Date</strong>. The new
+                        weekday is auto-filled. After saving, the original row becomes attendance
+                        &quot;/&quot; with type &quot;Cancelled&quot;, and a &quot;Reschedule&quot;
+                        row is inserted below it.
+                      </>
+                    )}
                   </p>
                 </div>
 
@@ -1437,24 +1525,28 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                     ) : null}
                   </label>
 
-                  <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">New Date</span>
-                    <input
-                      type="date"
-                      min={yearMin}
-                      max={yearMax}
-                      value={toLessonDate}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setToLessonDate(v);
-                        if (v) {
-                          applyEditDefaultsForDate(v);
-                        }
-                      }}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-                    />
-                  </label>
+                  {reschedulePanelMode === "reschedule" ? (
+                    <label className="block">
+                      <span className="mb-1 block text-sm font-semibold text-slate-700">New Date</span>
+                      <input
+                        type="date"
+                        min={yearMin}
+                        max={yearMax}
+                        value={toLessonDate}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setToLessonDate(v);
+                          if (v) {
+                            applyEditDefaultsForDate(v);
+                          }
+                        }}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                      />
+                    </label>
+                  ) : null}
 
+                  {reschedulePanelMode === "reschedule" ? (
+                  <>
                   <label className="block">
                     <span className="mb-1 block text-sm font-semibold text-slate-700">Weekday (New)</span>
                     <input
@@ -1556,6 +1648,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                         toDate: to,
                                         time: finalTime,
                                         room: editForm.room.trim(),
+                                        pending: false,
                                       }
                                     : e,
                                 )
@@ -1668,6 +1761,91 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                       Double Lesson enabled: the second lesson uses the same day, time, and room.
                     </div>
                   ) : null}
+                  </>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2 lg:col-span-4">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowEditPanel(false);
+                          setEditSaveStatus("");
+                          setReschedulePanelMode("reschedule");
+                          setFromLessonDate("");
+                          setToLessonDate("");
+                          setLockFromLessonDate(false);
+                        }}
+                        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          try {
+                            setEditSaveStatus("Saving...");
+                            setSelectionError("Saving...");
+                            if (!fromLessonDate.trim()) {
+                              setEditSaveStatus("Please fill the original lesson date.");
+                              setSelectionError("Please fill the original lesson date.");
+                              return;
+                            }
+                            const from = fromLessonDate.trim();
+                            if (!baseRowByDate.has(from)) {
+                              setEditSaveStatus("Original date is not a regular lesson date.");
+                              setSelectionError("Original date must be an existing regular lesson date.");
+                              return;
+                            }
+                            const ids = rescheduleIdsByFromDate.get(from) ?? [];
+                            if (ids.length > 0) {
+                              setEditSaveStatus("This original date already has a reschedule record.");
+                              setSelectionError("This original date already has a reschedule record.");
+                              return;
+                            }
+                            const nextList = [
+                              ...rescheduleEntries,
+                              {
+                                id: `${Date.now()}`,
+                                fromDate: from,
+                                toDate: "",
+                                time: "",
+                                room: "",
+                                pending: true,
+                              },
+                            ];
+                            setRescheduleEntries(nextList);
+                            window.localStorage.setItem(
+                              RESCHEDULE_STORAGE_KEY,
+                              JSON.stringify(nextList),
+                            );
+                            persistYearState({ rescheduleEntries: nextList });
+                            setSelectionError("Saved.");
+                            setEditSaveStatus("Saved.");
+                            window.setTimeout(() => {
+                              setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+                              setEditSaveStatus((prev) => (prev === "Saved." ? "" : prev));
+                              setShowEditPanel(false);
+                              setReschedulePanelMode("reschedule");
+                              setFromLessonDate("");
+                              setToLessonDate("");
+                              setLockFromLessonDate(false);
+                              setSelectedRowIds([]);
+                            }, 1200);
+                          } catch (error) {
+                            const message =
+                              error instanceof Error ? error.message : "Unexpected error while saving.";
+                            setEditSaveStatus(`Error: ${message}`);
+                            setSelectionError(`Save failed: ${message}`);
+                          }
+                        }}
+                        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
+                      >
+                        Save
+                      </button>
+                      {editSaveStatus ? (
+                        <span className="shrink-0 text-xs font-semibold text-slate-600">{editSaveStatus}</span>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
 
               </div>
@@ -2105,7 +2283,9 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                             filteredScheduleRows[idx + 1].month !== r.month
                               ? "border-b-2 border-slate-400"
                               : "",
-                            r.rowKind === "cancelled_original"
+                            r.lessonType === TYPE_PENDING
+                              ? "bg-amber-50/80"
+                              : r.rowKind === "cancelled_original"
                               ? "bg-slate-50"
                               : r.rowKind === "reschedule"
                                 ? "bg-blue-50/50"
@@ -2198,6 +2378,8 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                   "inline-flex rounded-full px-2 py-0.5 text-xs font-semibold",
                                   r.lessonType === TYPE_REGULAR
                                     ? "bg-slate-100 text-slate-700"
+                                    : r.lessonType === TYPE_PENDING
+                                      ? "bg-amber-100 text-amber-900"
                                     : r.lessonType === TYPE_RESCHEDULE
                                       ? "bg-blue-100 text-blue-700"
                                       : r.lessonType === TYPE_EXTRA
@@ -2209,6 +2391,11 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                               >
                                 {r.lessonType}
                               </span>
+                              {r.pendingMakeupLabel ? (
+                                <p className="text-[11px] font-semibold text-amber-800">
+                                  {r.pendingMakeupLabel}
+                                </p>
+                              ) : null}
                             </div>
                           </td>
                         </tr>

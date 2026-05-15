@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
-import DayTimetableStyleEditor from "@/components/DayTimetableStyleEditor";
+import DayTimetableStyleEditorLazy from "@/components/DayTimetableStyleEditorLazy";
 import DayTimetableTable from "@/components/DayTimetableTable";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
@@ -21,8 +21,11 @@ function shiftDay(year: number, month: number, day: number, delta: number) {
 export default async function RegularClassTimetablePage({ searchParams }: PageProps) {
   const sp = searchParams ? await searchParams : undefined;
   const { year, month, day } = parseDayParams(sp);
-  const viewer = await getViewerContext();
   const nextHref = `/regular-class-timetable?year=${year}&month=${month}&day=${day}`;
+  const [viewer, payload] = await Promise.all([
+    getViewerContext(),
+    fetchDayTimetablePayload(year, month, day, { regularOnly: true }),
+  ]);
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
     redirect(`/students/${encodeURIComponent(normalizeStudentId(viewer.studentId))}/lessons/2026`);
@@ -30,7 +33,6 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   if (viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");
   }
-  const payload = await fetchDayTimetablePayload(year, month, day, { regularOnly: true });
   const prev = shiftDay(year, month, day, -1);
   const next = shiftDay(year, month, day, 1);
   const base = "/regular-class-timetable";
@@ -89,7 +91,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
                 uiLocale="en"
               />
               <div className="mt-6">
-                <DayTimetableStyleEditor initial={payload.timetableStyle} uiLocale="en" />
+                <DayTimetableStyleEditorLazy initial={payload.timetableStyle} uiLocale="en" />
               </div>
             </div>
           </div>

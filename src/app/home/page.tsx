@@ -3,10 +3,18 @@ import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
-import { getPriorMonthMakeupWindow } from "@/lib/lesson2026Summary";
+import { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
+import {
+  formatPendingMakeupFromDateLabel,
+  formatPendingMakeupReminderZh,
+  isPendingRescheduleEntry,
+  PENDING_MAKEUP_BUTTON_LABEL_ZH,
+  PENDING_MAKEUP_WITHIN_DAYS,
+} from "@/lib/pendingMakeup";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import HomeReminderPanel, { type HomeReminderRow } from "./HomeReminderPanel";
 import UpcomingBirthdayReminder from "./UpcomingBirthdayReminder";
 import StressReliefGames from "./StressReliefGames";
 
@@ -227,34 +235,68 @@ export default async function HomeLandingPage() {
     paidAmountByStudentId.set(sid, Number((row as any).submitted_amount ?? 0) || 0);
   }
 
-  const unpaidStudents = activeStudentMeta
+  const unpaidRows: HomeReminderRow[] = activeStudentMeta
     .filter((student) => (paidAmountByStudentId.get(student.id) ?? 0) <= 0)
-    .map((student) => student.displayName);
+    .map((student) => ({
+      studentId: student.id,
+      displayName: student.displayName,
+      detail: `${month} 月學費紀錄 Tuition Paid ≤ $0（未交或 Zoho 未同步到）`,
+    }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
 
-  const pendingMakeupByStudentId = new Map<string, number>();
+  const reschedulePendingByStudent = new Map<string, { displayName: string; details: string[] }>();
   for (const row of yearStateRows ?? []) {
     const sid = String((row as any).student_id ?? "");
     if (!sid) continue;
+    const meta = activeStudentMeta.find((s) => s.id === sid);
+    if (!meta) continue;
     const attendance = ((row as any).attendance ?? {}) as Record<string, boolean>;
     const entries = Array.isArray((row as any).reschedule_entries) ? (row as any).reschedule_entries : [];
-    let pendingCount = 0;
     for (const e of entries) {
+      if (isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;
       const id = String((e as any)?.id ?? "");
       const toDate = String((e as any)?.toDate ?? "");
-      if (!id || !toDate) continue;
-      if (toDate > ymdToday) continue;
+      if (!id || !toDate || toDate > ymdToday) continue;
       if (attendance[`reschedule:${id}`] === true) continue;
-      pendingCount += 1;
+      const fromDate = String((e as any)?.fromDate ?? "");
+      const line = fromDate
+        ? `補堂 ${formatPendingMakeupFromDateLabel(toDate)}（原課 ${formatPendingMakeupFromDateLabel(fromDate)}）尚未打勾`
+        : `補堂 ${formatPendingMakeupFromDateLabel(toDate)} 尚未打勾`;
+      const bucket = reschedulePendingByStudent.get(sid);
+      if (bucket) bucket.details.push(line);
+      else reschedulePendingByStudent.set(sid, { displayName: meta.displayName, details: [line] });
     }
-    if (pendingCount > 0) pendingMakeupByStudentId.set(sid, pendingCount);
   }
+  const reschedulePendingRows: HomeReminderRow[] = Array.from(reschedulePendingByStudent.entries())
+    .map(([studentId, { displayName, details }]) => ({
+      studentId,
+      displayName,
+      detail: `${details.length} 堂：${details.join("；")}`,
+    }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
 
-  const studentsWithPendingMakeup = activeStudentMeta
-    .filter((student) => pendingMakeupByStudentId.has(student.id))
-    .map((student) => {
-      const count = pendingMakeupByStudentId.get(student.id) ?? 0;
-      return `${student.displayName}（${count} 堂）`;
-    });
+  const pendingLeaveRows: HomeReminderRow[] = [];
+  for (const row of yearStateRows ?? []) {
+    const sid = String((row as any).student_id ?? "");
+    if (!sid) continue;
+    const meta = activeStudentMeta.find((s) => s.id === sid);
+    if (!meta) continue;
+    const entries = Array.isArray((row as any).reschedule_entries)
+      ? (row as any).reschedule_entries
+      : [];
+    for (const e of entries) {
+      if (!isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;
+      const fromDate = String((e as any).fromDate ?? "");
+      if (!fromDate) continue;
+      const reminder = formatPendingMakeupReminderZh(fromDate, ymdToday);
+      pendingLeaveRows.push({
+        studentId: sid,
+        displayName: meta.displayName,
+        detail: `原課 ${formatPendingMakeupFromDateLabel(fromDate)}，${reminder}`,
+      });
+    }
+  }
+  pendingLeaveRows.sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
 
   const tutorsBirthdayToday = (tutorRows ?? [])
     .filter((r: any) => {
@@ -275,7 +317,7 @@ export default async function HomeLandingPage() {
   const birthdaySummary = birthdayLines.length ? birthdayLines.join("、") : "今日冇生日之星";
   const todayWhatsappMessage = birthdayLines.length
     ? `${birthdaySummary} 今日生日`
-    : "今日沒有生日之星";
+    : "今日冇生日之星";
   const todayWhatsappHref = `https://wa.me/85251646814?text=${encodeURIComponent(todayWhatsappMessage)}`;
 
   const allBirthdayRows = [
@@ -357,7 +399,7 @@ export default async function HomeLandingPage() {
               <span className="mr-2" aria-hidden>
                 👋
               </span>
-              Welcome!
+              歡迎！
             </h1>
             <p className="mt-2 text-sm text-blue-100 sm:text-base">
               {randomLine}
@@ -403,7 +445,7 @@ export default async function HomeLandingPage() {
 
           <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
             <section
-              className={`rounded-lg border px-4 py-3 ${
+              className={`rounded-xl border px-4 py-4 ${
                 isMonthEndMakeupReminder
                   ? "border-amber-300 bg-amber-50"
                   : "border-slate-200 bg-white"
@@ -415,79 +457,107 @@ export default async function HomeLandingPage() {
                 }`}
               >
                 <span className="mr-1" aria-hidden>
-                  📅
+                  📋
                 </span>
-                {isMonthEndMakeupReminder ? "月尾提醒" : "補堂提醒"}：請聯絡學生安排補堂
+                首頁待辦說明（{month} 月 · 香港時間 {ymdToday}）
               </p>
-              <p
-                className={`mt-1 text-sm leading-relaxed ${
-                  isMonthEndMakeupReminder ? "text-amber-900" : "text-slate-600"
-                }`}
-              >
-                {isMonthEndMakeupReminder
-                  ? `本月尚餘 ${daysLeftInMonth === 0 ? "最後一日" : `${daysLeftInMonth + 1} 日`}，`
-                  : "每月月尾請"}
-                提醒仍有「
-                <span className="font-semibold">{priorMakeupMonthLabel}未補堂</span>
-                」的學生盡快補堂，並在課表打勾。
-              </p>
-              {studentsWithPendingMakeup.length > 0 ? (
-                <p
-                  className={`mt-2 text-sm ${
-                    isMonthEndMakeupReminder ? "text-amber-900" : "text-slate-600"
-                  }`}
-                >
-                  目前有 <span className="font-semibold tabular-nums">{studentsWithPendingMakeup.length}</span>{" "}
-                  位學生仍有未完成補堂（見下方列表）。
+              <div className="mt-3 grid gap-3 text-xs leading-relaxed text-slate-700 sm:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="font-semibold text-slate-800">A. 上月恆常課未打勾</p>
+                  <p className="mt-1">
+                    指 <span className="font-medium">{priorMakeupMonthLabel}</span>
+                    仍缺席、未在課表打勾的恆常堂（與學費頁 Makeup 欄一致）。請到學費頁逐日核對。
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="font-semibold text-slate-800">B. 已排補堂但未打勾</p>
+                  <p className="mt-1">
+                    已在課表用 Reschedule 填好補堂日，且補堂日 ≤ 今天，但補堂列仍未打勾。見下方琥珀色列表
+                    {reschedulePendingRows.length > 0
+                      ? `（目前 ${reschedulePendingRows.length} 人）`
+                      : ""}
+                    。
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:col-span-2">
+                  <p className="font-semibold text-slate-800">C. {PENDING_MAKEUP_BUTTON_LABEL_ZH}</p>
+                  <p className="mt-1">
+                    只在課表記了原課日、新日留空（按「{PENDING_MAKEUP_BUTTON_LABEL_ZH}」）。須{" "}
+                    {PENDING_MAKEUP_WITHIN_DAYS} 日內安排補堂；日課表顯示「X 天內待補」。與 A、B
+                    不同，唔會計入 B 列表。
+                  </p>
+                </div>
+              </div>
+              {isMonthEndMakeupReminder ? (
+                <p className="mt-3 text-sm font-medium text-amber-900">
+                  月尾提醒：本月尚餘 {daysLeftInMonth === 0 ? "最後一日" : `${daysLeftInMonth + 1} 日`}，請盡快處理 A、B、C。
                 </p>
-              ) : (
-                <p
-                  className={`mt-2 text-sm ${
-                    isMonthEndMakeupReminder ? "text-amber-800" : "text-slate-500"
-                  }`}
-                >
-                  下方列表暫時冇紀錄；仍可到學費頁按「Makeup」欄核對上一個曆月未打勾日期。
-                </p>
-              )}
+              ) : null}
               <Link
                 href="/students-lesson-time-fee-record"
-                className={`mt-3 inline-flex rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
-                  isMonthEndMakeupReminder
-                    ? "border-amber-400 bg-white text-amber-950 hover:bg-amber-100"
-                    : "border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100"
-                }`}
+                className="mt-3 inline-flex rounded-md border border-[#1d76c2]/30 bg-[#1d76c2]/5 px-3 py-1.5 text-xs font-semibold text-[#1d76c2] hover:bg-[#1d76c2]/10"
               >
-                前往學費／補堂列表 →
+                學費頁（Makeup 欄 · Zoho Tuition Paid）→
               </Link>
             </section>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-2">
-            <section className="rounded-2xl border border-rose-200 bg-rose-50/60 p-5">
-              <h2 className="text-base font-bold text-rose-900">未交學費學生（{month}月）</h2>
-              {unpaidStudents.length ? (
-                <ul className="mt-3 space-y-1 text-sm text-rose-900">
-                  {unpaidStudents.map((name) => (
-                    <li key={name}>- {name}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-3 text-sm text-rose-700">暫時全部已交學費</p>
-              )}
-            </section>
+          <div className="grid grid-cols-1 gap-4 p-6 xl:grid-cols-3">
+            <HomeReminderPanel
+              title={`未交學費（${month} 月）· ${unpaidRows.length} 人`}
+              titleClassName="text-rose-900"
+              borderClassName="border-rose-200"
+              bgClassName="bg-rose-50/60"
+              logicTitle="點解會出現？"
+              logicLines={[
+                "讀取 student_monthly_fee_records 當月 submitted_amount。",
+                "≤ $0 視為未交（含未填、Zoho 未同步）。",
+                "Zoho 同步：收據 quantity（堂數）× 該生每堂單價 → 寫入 Tuition Paid。",
+              ]}
+              rows={unpaidRows}
+              emptyTitle="本月全部已有 Tuition Paid 紀錄"
+              footerLink={{
+                href: "/students-lesson-time-fee-record",
+                label: "開啟學費紀錄表 →",
+              }}
+            />
 
-            <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5">
-              <h2 className="text-base font-bold text-amber-900">未完成補堂學生</h2>
-              {studentsWithPendingMakeup.length ? (
-                <ul className="mt-3 space-y-1 text-sm text-amber-900">
-                  {studentsWithPendingMakeup.map((line) => (
-                    <li key={line}>- {line}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-3 text-sm text-amber-700">暫時冇未完成補堂</p>
-              )}
-            </section>
+            <HomeReminderPanel
+              title={`已排補堂未打勾 · ${reschedulePendingRows.length} 人`}
+              titleClassName="text-amber-900"
+              borderClassName="border-amber-200"
+              bgClassName="bg-amber-50/70"
+              logicTitle="點解會出現？（≠ 上月 Makeup 未打勾）"
+              logicLines={[
+                "reschedule_entries 已有補堂日 toDate，且 toDate ≤ 今天。",
+                "attendance「reschedule:ID」仍未打勾。",
+                "補堂日係未來的唔會列出；請假待定（無 toDate）亦唔會列出。",
+              ]}
+              rows={reschedulePendingRows}
+              emptyTitle="暫時冇已過期未打勾的補堂"
+              emptyHint="若上月恆常課未打勾，請用學費頁 Makeup 欄，唔係此列表。"
+              footerLink={{
+                href: "/students-lesson-time-fee-record",
+                label: "學費頁 Makeup 欄（上月恆常未打勾）→",
+              }}
+            />
+
+            <HomeReminderPanel
+              title={`${PENDING_MAKEUP_BUTTON_LABEL_ZH} · ${pendingLeaveRows.length} 筆`}
+              titleClassName="text-orange-950"
+              borderClassName="border-orange-200"
+              bgClassName="bg-orange-50/80"
+              logicTitle="點樣建立？"
+              logicLines={[
+                `學生課表 2026 → 勾選恆常課 →「${PENDING_MAKEUP_BUTTON_LABEL_ZH}」。`,
+                "只記原課日；新日留空；pending 存入 reschedule_entries。",
+                "確定補堂日後改用 Reschedule 填新日期（會離開此列表）。",
+                `原課日起 ${PENDING_MAKEUP_WITHIN_DAYS} 日內須安排；日課表顯示「X 天內待補」。`,
+              ]}
+              rows={pendingLeaveRows}
+              emptyTitle={`目前沒有 ${PENDING_MAKEUP_BUTTON_LABEL_ZH}`}
+              emptyHint="有學生請假但補堂日未定時，在課表用上方按鈕登記，就會出現在此。"
+            />
           </div>
         </div>
 
