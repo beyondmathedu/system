@@ -5,6 +5,7 @@
 
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { gradeRank } from "@/lib/grade";
+import { isOnOrAfterLessonSystemStart, normalizeCalendarDateIso } from "@/lib/lessonSystemStart";
 import {
   isPendingRescheduleEntry,
   PENDING_MAKEUP_TYPE_LABEL,
@@ -230,7 +231,17 @@ function buildScheduleRows(
     });
   }
 
-  rows.sort((a, b) => {
+  const monthEndIso = toIsoDate(end);
+  let visibleRows = rows.filter((r) => isOnOrAfterLessonSystemStart(r.date, targetYear));
+  if (hasMonth) {
+    visibleRows = visibleRows.filter((r) => {
+      const nd = normalizeCalendarDateIso(r.date);
+      if (!nd) return false;
+      return nd >= startIso && nd <= monthEndIso;
+    });
+  }
+
+  visibleRows.sort((a, b) => {
     const dc = a.date.localeCompare(b.date);
     if (dc !== 0) return dc;
     const tc = a.time.localeCompare(b.time, "en", { numeric: true });
@@ -238,7 +249,7 @@ function buildScheduleRows(
     return a.rowId.localeCompare(b.rowId);
   });
 
-  return rows.map((r) => {
+  return visibleRows.map((r) => {
     let lessonType: BuiltScheduleRow["lessonType"] = "恆常";
     if (r.rowKind === "cancelled_original") {
       const pendingId = /^cancelled-(.+)-/.exec(r.rowId)?.[1];
@@ -269,7 +280,7 @@ function buildScheduleRows(
       r.time && r.time !== "待定" ? sortTimeFromDisplay(r.time) : "99:99";
 
     return {
-      date: r.date,
+      date: normalizeCalendarDateIso(r.date) ?? r.date,
       time: r.time || "待定",
       room: r.room,
       rowKind: r.rowKind,

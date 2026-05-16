@@ -3,11 +3,13 @@ import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
+import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
 import { PENDING_MAKEUP_BUTTON_LABEL_ZH, PENDING_MAKEUP_WITHIN_DAYS } from "@/lib/pendingMakeup";
 import HomeReminderPanel from "./HomeReminderPanel";
 import UpcomingBirthdayReminder from "./UpcomingBirthdayReminder";
-import StressReliefGames from "./StressReliefGames";
+import StressReliefGamesDynamic from "./StressReliefGamesDynamic";
+import SharedIpadHomePortal from "./SharedIpadHomePortal";
 
 const CANTONESE_POSITIVE_LINES = [
   "今日都會順順利利。",
@@ -130,8 +132,13 @@ function stripPunctuation(input: string) {
 }
 
 export default async function HomeLandingPage() {
-  const [viewer, dashboard] = await Promise.all([getViewerContext(), fetchHomeDashboardData()]);
+  const viewer = await getViewerContext();
   if (!viewer.userId) redirect("/login");
+  if (viewer.isSharedIpadTutor) {
+    return <SharedIpadHomePortal viewer={viewer} />;
+  }
+  redirectTutorAwayFromAdminPages(viewer);
+  const dashboard = await fetchHomeDashboardData();
   const {
     ymdToday,
     year,
@@ -325,7 +332,7 @@ export default async function HomeLandingPage() {
           </div>
         </div>
 
-        <StressReliefGames />
+        <StressReliefGamesDynamic />
       </div>
     </div>
   );

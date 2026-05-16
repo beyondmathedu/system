@@ -13,10 +13,10 @@ export type DayTimetableStyleSettings = {
 export const DEFAULT_DAY_TIMETABLE_STYLE: DayTimetableStyleSettings = {
   rescheduleCellBgHex: "#ede9fe",
   extraCellBgHex: "#fef3c7",
-  feeUnpaidStripeHex: "#f59e0b",
-  feeArrearsStripeHex: "#e11d48",
+  feeUnpaidStripeHex: "#e11d48",
+  feeArrearsStripeHex: "#000000",
   feeLookbackMonths: 6,
-  feeHeavyUnpaidThreshold: 3,
+  feeHeavyUnpaidThreshold: 2,
 };
 
 function normalizeHex(raw: unknown, fallback: string): string {

@@ -17,14 +17,55 @@ export type HighlightKey =
   | "room"
   | null;
 
+type MeNavResponse = {
+  ok?: boolean;
+  role?: string | null;
+  isSharedIpadTutor?: boolean;
+  roomNavLinks?: RoomNavItem[] | null;
+};
+
 export default function AppTopNavContent({ highlight = null }: { highlight?: HighlightKey }) {
   const [roomLinks, setRoomLinks] = useState<RoomNavItem[]>(FALLBACK_ROOM_NAV_LINKS);
+  const [viewerRole, setViewerRole] = useState<string | null>(null);
+  const [isSharedIpadNav, setIsSharedIpadNav] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const pathname = usePathname();
+  const isAdminNav = viewerRole === "admin";
+  const isTutorNav = viewerRole === "tutor" && !isSharedIpadNav;
+  const showRoomsNav = isAdminNav || isTutorNav;
+
+  async function onLogOut() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      window.location.assign("/login");
+    }
+  }
 
   useEffect(() => {
     let mounted = true;
 
-    async function loadRoomLinks() {
+    async function loadNav() {
+      try {
+        const res = await fetch("/api/me", { credentials: "same-origin" });
+        if (res.ok) {
+          const body = (await res.json()) as MeNavResponse;
+          if (!mounted) return;
+          const role = String(body.role ?? "").toLowerCase() || null;
+          const sharedIpad = Boolean(body.isSharedIpadTutor);
+          setViewerRole(role);
+          setIsSharedIpadNav(sharedIpad);
+          if (role === "tutor" && !sharedIpad && body.roomNavLinks?.length) {
+            setRoomLinks(body.roomNavLinks);
+            return;
+          }
+        }
+      } catch {
+        /* fallback to classrooms list */
+      }
+
       const { data, error } = await supabase
         .from("classrooms")
         .select("id, name, slug, sort_order")
@@ -40,10 +81,10 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
       );
     }
 
-    void loadRoomLinks();
+    void loadNav();
 
     const onClassroomsUpdated = () => {
-      void loadRoomLinks();
+      void loadNav();
     };
     window.addEventListener("beyondmath:classrooms-updated", onClassroomsUpdated);
 
@@ -54,7 +95,7 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
   }, []);
 
   const base =
-    "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 font-medium transition active:bg-white/30 active:font-semibold";
+    "shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium transition active:bg-white/30 active:font-semibold sm:px-2.5 sm:text-sm";
   const idle = "bg-white/15 hover:bg-white/25";
   const active = "bg-white/30 font-semibold";
   const isMatch = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -79,77 +120,105 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
       >
         <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6" suppressHydrationWarning>
           <div className="overflow-visible">
-            <div className="flex flex-col gap-3 px-6 py-4 text-white sm:flex-row sm:items-center sm:justify-between">
-              <div className="inline-flex items-center gap-3 whitespace-nowrap text-2xl font-bold tracking-tight sm:text-3xl">
-                <Link href="/home" className="inline-flex items-center hover:opacity-90" aria-label="Go to home">
+            <div className="flex items-center gap-2 px-3 py-2 text-white sm:gap-3 sm:px-5 sm:py-2.5">
+              <div className="flex min-w-0 shrink-0 items-center gap-2">
+                <Link
+                  href={isTutorNav ? "/rooms" : "/home"}
+                  className="inline-flex shrink-0 items-center hover:opacity-90"
+                  aria-label={isSharedIpadNav ? "Go to home" : isTutorNav ? "Go to my rooms" : "Go to home"}
+                >
                   <img
                     src="/logo.png"
                     alt="Beyond Math logo"
-                    className="h-9 w-9 rounded object-contain sm:h-10 sm:w-10"
+                    className="h-7 w-7 rounded object-contain sm:h-8 sm:w-8"
                   />
                 </Link>
-                <span>Beyond Math Management</span>
+                <span className="hidden truncate text-sm font-bold leading-tight tracking-tight sm:inline lg:text-base">
+                  Beyond Math Management
+                </span>
+                <span className="truncate text-sm font-bold leading-tight sm:hidden">Beyond Math</span>
               </div>
-              <div className="flex flex-nowrap items-center gap-2 overflow-x-auto overflow-y-hidden sm:overflow-visible text-sm whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <Link
-                  href="/daily-time-table"
-                  className={`${base} ${isActive("daily-timetable") ? active : idle}`}
-                >
-                  Daily Timetable
-                </Link>
-                <Link
-                  href="/regular-class-timetable"
-                  className={`${base} ${isActive("regular-timetable") ? active : idle}`}
-                  aria-current={isActive("regular-timetable") ? "page" : undefined}
-                >
-                  Regular Timetable
-                </Link>
-                <Link href="/students" className={`${base} ${isActive("students") ? active : idle}`}>
-                  Student Info
-                </Link>
-                <Link
-                  href="/students-lesson-time-fee-record"
-                  className={`${base} ${isMatch("/students-lesson-time-fee-record") ? active : idle}`}
-                >
-                  Student Lesson Time & Fee Records
-                </Link>
-                <div className="relative group">
+              <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 overflow-visible sm:gap-2">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-1.5 gap-y-1 overflow-visible sm:gap-x-2">
+                {isAdminNav ? (
+                  <>
+                    <Link
+                      href="/daily-time-table"
+                      className={`${base} ${isActive("daily-timetable") ? active : idle}`}
+                    >
+                      Daily Timetable
+                    </Link>
+                    <Link
+                      href="/regular-class-timetable"
+                      className={`${base} ${isActive("regular-timetable") ? active : idle}`}
+                      aria-current={isActive("regular-timetable") ? "page" : undefined}
+                    >
+                      Regular Timetable
+                    </Link>
+                    <Link href="/students" className={`${base} ${isActive("students") ? active : idle}`}>
+                      Student Info
+                    </Link>
+                    <Link
+                      href="/students-lesson-time-fee-record"
+                      className={`${base} ${isMatch("/students-lesson-time-fee-record") ? active : idle}`}
+                    >
+                      Student Lesson Time & Fee Records
+                    </Link>
+                  </>
+                ) : null}
+                {showRoomsNav ? (
+                  <div className="relative z-[70] shrink-0 group">
                   <Link
                     href="/rooms"
                     className={`${base} ${isActive("room") ? active : idle} inline-flex items-center gap-0.5`}
                   >
-                    Rooms
+                    {isTutorNav ? "我的教室" : "Rooms"}
                     <span className="ml-0.5 text-[10px] opacity-80">▼</span>
                   </Link>
-                  <div className="pointer-events-none invisible absolute left-0 top-full z-50 pt-1 opacity-0 transition group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100">
-                    <div className="overflow-hidden rounded-md border border-slate-200 bg-white py-1 text-slate-800 shadow-lg">
-                      {roomLinks.map((item) => (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          className="block px-3 py-2 text-sm font-semibold hover:bg-slate-100"
-                        >
-                          {item.label}
-                        </Link>
-                      ))}
+                    <div className="pointer-events-none invisible absolute left-0 top-full z-[70] min-w-[9rem] pt-1 opacity-0 transition group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:visible group-focus-within:opacity-100">
+                      <div className="overflow-hidden rounded-md border border-slate-200 bg-white py-1 text-slate-800 shadow-lg">
+                        {roomLinks.map((item) => (
+                          <Link
+                            key={item.href}
+                            href={item.href}
+                            className="block px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100"
+                          >
+                            {item.label}
+                          </Link>
+                        ))}
+                      </div>
                     </div>
                   </div>
+                ) : null}
+                {isAdminNav ? (
+                  <>
+                    <Link href="/tutor" className={`${base} ${isActive("reports") ? active : idle}`}>
+                      Tutors
+                    </Link>
+                    <Link
+                      href="/tutor-monthly-lesson-record"
+                      className={`${base} ${isMatch("/tutor-monthly-lesson-record") ? active : idle}`}
+                    >
+                      Tutor Monthly Record
+                    </Link>
+                  </>
+                ) : null}
                 </div>
-                <Link href="/tutor" className={`${base} ${isActive("reports") ? active : idle}`}>
-                  Tutors
-                </Link>
-                <Link
-                  href="/tutor-monthly-lesson-record"
-                  className={`${base} ${isMatch("/tutor-monthly-lesson-record") ? active : idle}`}
+                <button
+                  type="button"
+                  onClick={() => void onLogOut()}
+                  disabled={loggingOut}
+                  className={`${base} ${idle} shrink-0 border border-white/35 bg-white/15 font-semibold disabled:cursor-not-allowed disabled:opacity-60`}
+                  aria-label="Log out"
                 >
-                  Tutor Monthly Record
-                </Link>
+                  {loggingOut ? "…" : "Log Out"}
+                </button>
               </div>
             </div>
           </div>
         </div>
       </nav>
-      <div className="h-[56px] sm:h-[56px]" />
+      <div className="min-h-[52px] sm:min-h-[56px]" />
     </div>
   );
 }

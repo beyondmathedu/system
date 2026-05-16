@@ -7,6 +7,7 @@ import { fetchClassroomMeta } from "@/lib/classroomsRegistry";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
 import { fetchRoomScheduleAggregate } from "@/lib/roomScheduleAggregate";
+import { getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
 import { readMonthPart, readYmdParts } from "@/lib/intlFormatParts";
 import { normalizeStudentId } from "@/lib/studentId";
 import RoomScheduleTable from "./RoomScheduleTable";
@@ -87,13 +88,18 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
   if (!room) notFound();
 
   const { year, month } = parseYearMonth(sp);
+  const isSharedIpadTutor = viewer.isSharedIpadTutor;
   const isTutorView = viewer.role === "tutor";
+  const isRoomStaffView = isTutorView || isSharedIpadTutor;
+  const canUsePeriodNav = !isTutorView || isSharedIpadTutor;
   const periodRaw = String(sp?.period ?? "").toLowerCase();
-  const period = !isTutorView && (periodRaw === "today" || periodRaw === "week" || periodRaw === "month" || periodRaw === "custom")
-    ? periodRaw
-    : isTutorView
-      ? "month"
-      : "today";
+  const period =
+    canUsePeriodNav &&
+    (periodRaw === "today" || periodRaw === "week" || periodRaw === "month" || periodRaw === "custom")
+      ? periodRaw
+      : isTutorView
+        ? "month"
+        : "today";
   const isIsoDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
   const fromIso = String(sp?.from ?? "");
   const toIso = String(sp?.to ?? "");
@@ -105,16 +111,15 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
   if (viewer.role === "student" && viewer.studentId) {
     redirect(`/students/${encodeURIComponent(normalizeStudentId(viewer.studentId))}/lessons/2026`);
   }
-  if (viewer.role !== "admin" && viewer.role !== "tutor") {
+  if (!viewer.isSharedIpadTutor && viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");
   }
-  if (viewer.role === "tutor") {
-    const allowed = new Set(viewer.allowedRoomSlugs.map((s) => s.toLowerCase()));
-    if (!allowed.has(key.toLowerCase())) redirect("/rooms");
+  if (!tutorCanAccessRoomSlug(viewer, key)) {
+    redirect(getTutorLandingPath(viewer) ?? "/rooms");
   }
   const todayIso = hkTodayIso();
   const range = (() => {
-    if (isTutorView || period === "month") return { startIso: "", endIso: "" };
+    if (period === "month") return { startIso: "", endIso: "" };
     if (period === "today") return { startIso: todayIso, endIso: todayIso };
     if (period === "custom" && hasCustomRange) return { startIso: fromIso, endIso: toIso };
     return mondayToSundayRange(todayIso);
@@ -123,7 +128,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
 
   const basePath = `/rooms/${key}`;
   const titleSuffix = (() => {
-    if (isTutorView || period === "month") return `${year} ${MONTH_SHORT[month - 1]}`;
+    if (period === "month") return `${year} ${MONTH_SHORT[month - 1]}`;
     if (period === "today") return `Today (${todayIso})`;
     if (period === "custom" && hasCustomRange) {
       return `Period (${formatIsoRangeShort(range.startIso, range.endIso)})`;
@@ -131,7 +136,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
     return `This Week (${formatIsoRangeShort(range.startIso, range.endIso)})`;
   })();
   const summaryPrefix = (() => {
-    if (isTutorView || period === "month") return "This month";
+    if (period === "month") return "This month";
     if (period === "today") return "Today";
     if (period === "custom" && hasCustomRange) return "Selected period";
     return "This week";
@@ -145,13 +150,15 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <div className="flex flex-wrap items-center gap-3">
-              <BackNavButton
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
-                ariaLabel="Go back"
-                fallbackHref="/students"
-              >
-                ←
-              </BackNavButton>
+              {!isSharedIpadTutor ? (
+                <BackNavButton
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
+                  ariaLabel="Go back"
+                  fallbackHref="/students"
+                >
+                  ←
+                </BackNavButton>
+              ) : null}
               <div className="min-w-0 flex-1">
                 <h1 className="text-2xl font-bold tracking-tight">
                   Classroom {room.id ? `${room.id} · ` : ""}
@@ -166,7 +173,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
             </div>
           </div>
 
-          {!isTutorView ? (
+          {canUsePeriodNav ? (
             <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap gap-1.5">
@@ -271,7 +278,15 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
             ) : null}
 
             {rows.length > 0 ? (
-              <RoomScheduleTable rows={rows} year={year} canOpenStudentLink={!isTutorView} readOnly={isTutorView} />
+              <RoomScheduleTable
+                rows={rows}
+                year={year}
+                canOpenStudentLink={!isRoomStaffView}
+                hideStudentId={isSharedIpadTutor}
+                attendanceLocked={isRoomStaffView && !isSharedIpadTutor}
+                tutorFieldLocked={isRoomStaffView}
+                allowSummaryEdit={isRoomStaffView}
+              />
             ) : null}
 
           </div>

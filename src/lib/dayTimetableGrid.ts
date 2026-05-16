@@ -27,6 +27,7 @@ import {
   type DayTimetableRowFrame,
   type RoomGroup,
 } from "@/lib/dayTimetableShared";
+import { normalizeStudentId } from "@/lib/studentId";
 
 export {
   ROOM_GROUPS,
@@ -353,7 +354,7 @@ function buildFeePaymentToneByStudentId(
 ): Record<string, DayTimetableFeePaymentTone> {
   const amountByKey = new Map<string, number>();
   for (const r of feeRows) {
-    const sid = String((r as { student_id?: string }).student_id ?? "");
+    const sid = normalizeStudentId(String((r as { student_id?: string }).student_id ?? ""));
     const y = Number((r as { year?: number }).year);
     const mo = Number((r as { month?: number }).month);
     if (!sid || !Number.isFinite(y) || !Number.isFinite(mo)) continue;
@@ -361,7 +362,7 @@ function buildFeePaymentToneByStudentId(
     amountByKey.set(`${sid}-${y}-${mo}`, amt);
   }
   function amountFor(sid: string, y: number, mo: number): number {
-    return amountByKey.get(`${sid}-${y}-${mo}`) ?? 0;
+    return amountByKey.get(`${normalizeStudentId(sid)}-${y}-${mo}`) ?? 0;
   }
   const window = lookbackCalendarMonthsInclusive(
     refYear,
@@ -371,17 +372,21 @@ function buildFeePaymentToneByStudentId(
   const threshold = Math.min(24, Math.max(1, heavyUnpaidThreshold));
   const out: Record<string, DayTimetableFeePaymentTone> = {};
   for (const sid of studentIds) {
+    const key = normalizeStudentId(sid);
     let unpaidInWindow = 0;
     for (const { y, m } of window) {
-      if (amountFor(sid, y, m) <= 0) unpaidInWindow += 1;
+      if (amountFor(key, y, m) <= 0) unpaidInWindow += 1;
     }
-    const currentUnpaid = amountFor(sid, refYear, refMonth) <= 0;
+    const currentUnpaid = amountFor(key, refYear, refMonth) <= 0;
+    if (!currentUnpaid) {
+      out[key] = "ok";
+      continue;
+    }
+    // 參考曆月未繳才顯示色帶；≥threshold 個未繳月 → 黑帶，否則（只得 1 個月未繳）→ 紅帶
     if (unpaidInWindow >= threshold) {
-      out[sid] = "many_months_unpaid";
-    } else if (currentUnpaid) {
-      out[sid] = "unpaid_current";
+      out[key] = "many_months_unpaid";
     } else {
-      out[sid] = "ok";
+      out[key] = "unpaid_current";
     }
   }
   return out;
@@ -700,7 +705,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v4"],
+  ["day-timetable-payload-v6"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

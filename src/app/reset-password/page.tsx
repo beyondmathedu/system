@@ -17,19 +17,39 @@ export default function ResetPasswordPage() {
 
   useEffect(() => {
     let mounted = true;
+
+    const { data: authSub } = supabaseBrowser.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+      if (event === "PASSWORD_RECOVERY" || session) {
+        setChecking(false);
+        setError("");
+      }
+    });
+
     void (async () => {
+      const hash = typeof window !== "undefined" ? window.location.hash : "";
+      if (hash.includes("access_token") || hash.includes("type=recovery")) {
+        const { data, error: hashErr } = await supabaseBrowser.auth.getSession();
+        if (mounted && !hashErr && data.session) {
+          setChecking(false);
+          setError("");
+          return;
+        }
+      }
       const {
         data: { session },
       } = await supabaseBrowser.auth.getSession();
       if (mounted) {
         setChecking(false);
         if (!session) {
-          setError("重設連結可能已過期，請回登入頁重新發送。");
+          setError("重設連結可能已過期或未開啟成功。請回登入頁按「忘記密碼（發送重設電郵）」再發一次。");
         }
       }
     })();
+
     return () => {
       mounted = false;
+      authSub.subscription.unsubscribe();
     };
   }, []);
 
@@ -140,6 +160,12 @@ export default function ResetPasswordPage() {
           >
             {loading ? "更新中..." : "更新密碼"}
           </button>
+          <a
+            href="/login"
+            className="block w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            返回登入
+          </a>
         </form>
       </div>
     </div>

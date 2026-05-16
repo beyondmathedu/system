@@ -9,6 +9,10 @@ import { isInactiveTutorName } from "@/lib/tutorVisibility";
 import { fetchInactiveTutorNames } from "@/lib/tutorVisibilityCore";
 import { isScheduleAttendanceMarked } from "@/lib/lessonScheduleVersions";
 import {
+  isOnOrAfterLessonSystemStart,
+  normalizeCalendarDateIso,
+} from "@/lib/lessonSystemStart";
+import {
   buildYearScheduleRowsForMonth,
   formatDateSlash,
   sortAggregatedRoomRows,
@@ -455,7 +459,14 @@ async function fetchRoomScheduleAggregateUncached(
     const monthRows = monthsToLoad.flatMap((m) => buildYearScheduleRowsForMonth(records, state, year, m));
     const filtered = monthRows
       .filter((r) => r.lessonType !== "取消" && r.room.trim() === roomLabel)
-      .filter((r) => (!rangeActive ? true : r.date >= startIso && r.date <= endIso));
+      .filter((r) => {
+        const nd = normalizeCalendarDateIso(r.date);
+        if (!nd || !isOnOrAfterLessonSystemStart(nd, year)) return false;
+        if (!rangeActive) return Number(nd.slice(5, 7)) === month;
+        const ns = normalizeCalendarDateIso(startIso) ?? startIso;
+        const ne = normalizeCalendarDateIso(endIso) ?? endIso;
+        return nd >= ns && nd <= ne;
+      });
     const inactiveEffective = inactiveEffectiveById.get(st.id);
     const visibilityFiltered = inactiveEffective
       ? filtered.filter((r) => r.date < inactiveEffective)
@@ -522,7 +533,7 @@ export async function fetchRoomScheduleAggregate(
   const slugKey = slug.trim().toLowerCase();
   return unstable_cache(
     async () => fetchRoomScheduleAggregateUncached(slug, year, month, { startIso, endIso }),
-    ["room-schedule-aggregate-v1", slugKey, String(year), String(month), startIso, endIso],
+    ["room-schedule-aggregate-v2", slugKey, String(year), String(month), startIso, endIso],
     { revalidate: 45, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }

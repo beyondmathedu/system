@@ -30,6 +30,26 @@ const DEFAULT_2026_STATE: StudentLesson2026State = {
   extraEntries: [],
 };
 
+/** 由 `student_lessons_year_state` 列轉成前端 state（Realtime / REST 共用） */
+export function parseLessonYearStateDbRow(row: Record<string, unknown>): StudentLesson2026State {
+  return {
+    attendance:
+      row.attendance && typeof row.attendance === "object"
+        ? (row.attendance as Record<string, boolean>)
+        : {},
+    hiddenDates:
+      row.hidden_dates && typeof row.hidden_dates === "object"
+        ? (row.hidden_dates as Record<string, boolean>)
+        : {},
+    overrides:
+      row.overrides && typeof row.overrides === "object"
+        ? (row.overrides as Record<string, unknown>)
+        : {},
+    rescheduleEntries: Array.isArray(row.reschedule_entries) ? row.reschedule_entries : [],
+    extraEntries: Array.isArray(row.extra_entries) ? row.extra_entries : [],
+  };
+}
+
 export async function loadExamInfo(studentId: string): Promise<StudentExamInfo> {
   const { data, error } = await supabase
     .from("student_exam_dates")
@@ -246,23 +266,7 @@ export async function loadLessonYearState(studentId: string, year: number) {
     .maybeSingle();
 
   if (!data) return DEFAULT_2026_STATE;
-
-  return {
-    attendance:
-      data.attendance && typeof data.attendance === "object"
-        ? (data.attendance as Record<string, boolean>)
-        : {},
-    hiddenDates:
-      data.hidden_dates && typeof data.hidden_dates === "object"
-        ? (data.hidden_dates as Record<string, boolean>)
-        : {},
-    overrides:
-      data.overrides && typeof data.overrides === "object"
-        ? (data.overrides as Record<string, unknown>)
-        : {},
-    rescheduleEntries: Array.isArray(data.reschedule_entries) ? data.reschedule_entries : [],
-    extraEntries: Array.isArray(data.extra_entries) ? data.extra_entries : [],
-  };
+  return parseLessonYearStateDbRow(data as Record<string, unknown>);
 }
 
 export async function loadLessonYearStatesBatch(studentIds: string[], year: number) {
@@ -274,26 +278,7 @@ export async function loadLessonYearStatesBatch(studentIds: string[], year: numb
     .in("student_id", studentIds);
   const out: Record<string, StudentLesson2026State> = {};
   for (const row of data ?? []) {
-    out[String((row as any).student_id)] = {
-      attendance:
-        (row as any).attendance && typeof (row as any).attendance === "object"
-          ? ((row as any).attendance as Record<string, boolean>)
-          : {},
-      hiddenDates:
-        (row as any).hidden_dates && typeof (row as any).hidden_dates === "object"
-          ? ((row as any).hidden_dates as Record<string, boolean>)
-          : {},
-      overrides:
-        (row as any).overrides && typeof (row as any).overrides === "object"
-          ? ((row as any).overrides as Record<string, unknown>)
-          : {},
-      rescheduleEntries: Array.isArray((row as any).reschedule_entries)
-        ? ((row as any).reschedule_entries as unknown[])
-        : [],
-      extraEntries: Array.isArray((row as any).extra_entries)
-        ? ((row as any).extra_entries as unknown[])
-        : [],
-    };
+    out[String((row as any).student_id)] = parseLessonYearStateDbRow(row as Record<string, unknown>);
   }
   return out;
 }

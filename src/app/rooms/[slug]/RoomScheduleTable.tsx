@@ -12,13 +12,37 @@ import {
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
 import { loadTutorVisibility } from "@/lib/tutorVisibility";
+import { isSharedIpadTutorDisplayName } from "@/lib/tutorConstants";
 import { formatGradeDisplay } from "@/lib/grade";
+import { useRoomLessonStateRealtime } from "@/lib/useRoomLessonStateRealtime";
+import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+
+function RoomScheduleTableSkeleton() {
+  return (
+    <div className="animate-pulse" aria-hidden>
+      <div className="mb-3 flex gap-2">
+        <div className="h-8 w-40 rounded-md bg-slate-200" />
+        <div className="h-8 w-28 rounded-md bg-slate-200" />
+        <div className="h-8 w-32 rounded-md bg-slate-200" />
+        <div className="h-8 w-32 rounded-md bg-slate-200" />
+      </div>
+      <div className="h-[min(70vh,640px)] rounded-lg border border-slate-200 bg-slate-50" />
+    </div>
+  );
+}
 
 type Props = {
   rows: RoomScheduleRow[];
   year: number;
   canOpenStudentLink?: boolean;
-  readOnly?: boolean;
+  /** 鎖定出席 checkbox */
+  attendanceLocked?: boolean;
+  /** 鎖定導師下拉 */
+  tutorFieldLocked?: boolean;
+  /** 導師帳：仍可改 Lesson summary（當 tutorFieldLocked 為 true 時） */
+  allowSummaryEdit?: boolean;
+  /** 共用 iPad 帳：不顯示學號欄 */
+  hideStudentId?: boolean;
 };
 
 type SortDirection = "asc" | "desc";
@@ -38,12 +62,23 @@ export default function RoomScheduleTable({
   rows,
   year,
   canOpenStudentLink = true,
-  readOnly = false,
+  attendanceLocked = false,
+  tutorFieldLocked = false,
+  allowSummaryEdit = false,
+  hideStudentId = false,
 }: Props) {
+  const summaryLocked = tutorFieldLocked && !allowSummaryEdit;
   const STICKY_ID_WIDTH = 92;
   const STICKY_NAME_WIDTH = 190;
   const STICKY_GRADE_WIDTH = 90;
   const STICKY_ATTENDANCE_WIDTH = 110;
+  const stickyNameLeft = hideStudentId ? 0 : STICKY_ID_WIDTH;
+  const stickyGradeLeft = stickyNameLeft + STICKY_NAME_WIDTH;
+  const stickyAttendanceLeft = stickyGradeLeft + STICKY_GRADE_WIDTH;
+
+  function rowAriaStudentLabel(r: Pick<RoomScheduleRow, "studentId" | "studentName">) {
+    return hideStudentId ? r.studentName : normalizeStudentId(r.studentId);
+  }
 
   const [localRows, setLocalRows] = useState(rows);
   const [sortConfig, setSortConfig] = useState<RoomScheduleSortConfig>(null);
@@ -67,7 +102,24 @@ export default function RoomScheduleTable({
   const lessonSummarySaveTimersRef = useRef(new Map<string, number>());
   const lessonSummaryPendingRef = useRef(new Map<string, string>());
   const lessonSummaryInFlightRef = useRef(new Set<string>());
+  const savingRowKeyRef = useRef<string | null>(null);
+  const savingLessonSummaryRowKeyRef = useRef<string | null>(null);
   const examDateCache = useRef(new Map<string, string>());
+
+  savingRowKeyRef.current = savingRowKey;
+  savingLessonSummaryRowKeyRef.current = savingLessonSummaryRowKey;
+
+  useRoomLessonStateRealtime({
+    year,
+    rows,
+    stateCache,
+    initialNoteByRowKey,
+    latestNoteByRowKeyRef,
+    setLocalRows,
+    savingRowKeyRef,
+    savingLessonSummaryRowKeyRef,
+    lessonSummaryPendingRef,
+  });
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomScrollRef = useRef<HTMLDivElement | null>(null);
@@ -221,7 +273,7 @@ export default function RoomScheduleTable({
     for (const t of teacherOptions) set.add(t);
     return Array.from(set)
       .map((s) => s.trim())
-      .filter(Boolean)
+      .filter((s) => Boolean(s) && !isSharedIpadTutorDisplayName(s))
       .sort((a, b) => a.localeCompare(b, "zh-Hant"));
   }, [localRows, teacherOptions]);
 
@@ -660,6 +712,7 @@ export default function RoomScheduleTable({
   if (localRows.length === 0) return null;
 
   return (
+    <ClientOnlyAfterMount fallback={<RoomScheduleTableSkeleton />}>
     <div>
       {saveError ? (
         <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
@@ -765,16 +818,21 @@ export default function RoomScheduleTable({
             <table className="min-w-[1200px] w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold tracking-wider text-slate-600">
+              {hideStudentId ? null : (
+                <th
+                  className="sticky left-0 top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
+                  style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
+                >
+                  ID
+                </th>
+              )}
               <th
-                className="sticky left-0 top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
-                style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
-              >
-                ID
-              </th>
-              <th
-                className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
+                className={[
+                  "sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2",
+                  hideStudentId ? "left-0" : "",
+                ].join(" ")}
                 style={{
-                  left: STICKY_ID_WIDTH,
+                  left: stickyNameLeft,
                   width: STICKY_NAME_WIDTH,
                   minWidth: STICKY_NAME_WIDTH,
                   maxWidth: STICKY_NAME_WIDTH,
@@ -785,7 +843,7 @@ export default function RoomScheduleTable({
               <th
                 className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
                 style={{
-                  left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH,
+                  left: stickyGradeLeft,
                   width: STICKY_GRADE_WIDTH,
                   minWidth: STICKY_GRADE_WIDTH,
                   maxWidth: STICKY_GRADE_WIDTH,
@@ -796,7 +854,7 @@ export default function RoomScheduleTable({
               <th
                 className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2 text-center"
                 style={{
-                  left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH + STICKY_GRADE_WIDTH,
+                  left: stickyAttendanceLeft,
                   width: STICKY_ATTENDANCE_WIDTH,
                   minWidth: STICKY_ATTENDANCE_WIDTH,
                   maxWidth: STICKY_ATTENDANCE_WIDTH,
@@ -824,28 +882,33 @@ export default function RoomScheduleTable({
               <tbody className="divide-y divide-slate-100">
                 {sortedLocalRows.map((r, idx) => (
                   <tr key={`${r.rowKey}:${idx}`} className="group bg-white hover:bg-slate-50">
+                {hideStudentId ? null : (
+                  <td
+                    className="sticky left-0 z-40 whitespace-nowrap bg-white px-3 py-2 font-mono text-xs text-slate-800 group-hover:bg-slate-50"
+                    style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
+                  >
+                    {(() => {
+                      const studentIdDisplay = normalizeStudentId(r.studentId);
+                      return canOpenStudentLink ? (
+                        <Link
+                          href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons/${year}`}
+                          className="text-[#1d76c2] hover:underline"
+                        >
+                          {studentIdDisplay}
+                        </Link>
+                      ) : (
+                        studentIdDisplay
+                      );
+                    })()}
+                  </td>
+                )}
                 <td
-                  className="sticky left-0 z-40 whitespace-nowrap bg-white px-3 py-2 font-mono text-xs text-slate-800 group-hover:bg-slate-50"
-                  style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
-                >
-                  {(() => {
-                    const studentIdDisplay = normalizeStudentId(r.studentId);
-                    return canOpenStudentLink ? (
-                      <Link
-                        href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons/${year}`}
-                        className="text-[#1d76c2] hover:underline"
-                      >
-                        {studentIdDisplay}
-                      </Link>
-                    ) : (
-                      studentIdDisplay
-                    );
-                  })()}
-                </td>
-                <td
-                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-800 group-hover:bg-slate-50"
+                  className={[
+                    "sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-800 group-hover:bg-slate-50",
+                    hideStudentId ? "left-0" : "",
+                  ].join(" ")}
                   style={{
-                    left: STICKY_ID_WIDTH,
+                    left: stickyNameLeft,
                     width: STICKY_NAME_WIDTH,
                     minWidth: STICKY_NAME_WIDTH,
                     maxWidth: STICKY_NAME_WIDTH,
@@ -856,7 +919,7 @@ export default function RoomScheduleTable({
                 <td
                   className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-700 group-hover:bg-slate-50"
                   style={{
-                    left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH,
+                    left: stickyGradeLeft,
                     width: STICKY_GRADE_WIDTH,
                     minWidth: STICKY_GRADE_WIDTH,
                     maxWidth: STICKY_GRADE_WIDTH,
@@ -867,7 +930,7 @@ export default function RoomScheduleTable({
                 <td
                   className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-center text-slate-800 group-hover:bg-slate-50"
                   style={{
-                    left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH + STICKY_GRADE_WIDTH,
+                    left: stickyAttendanceLeft,
                     width: STICKY_ATTENDANCE_WIDTH,
                     minWidth: STICKY_ATTENDANCE_WIDTH,
                     maxWidth: STICKY_ATTENDANCE_WIDTH,
@@ -876,10 +939,12 @@ export default function RoomScheduleTable({
                   <input
                     type="checkbox"
                     checked={r.attended}
-                    disabled={readOnly || savingRowKey === r.rowKey || savingRowKey === slotKey(r)}
+                    disabled={
+                      attendanceLocked || savingRowKey === r.rowKey || savingRowKey === slotKey(r)
+                    }
                     onChange={(event) => void onToggle(r, event.target.checked)}
                     className="h-4 w-4 cursor-pointer accent-[#1d76c2]"
-                    aria-label={`Toggle attendance ${normalizeStudentId(r.studentId)} ${r.dateDisplay} ${r.time}`}
+                    aria-label={`Toggle attendance ${rowAriaStudentLabel(r)} ${r.dateDisplay} ${r.time}`}
                     suppressHydrationWarning
                   />
                 </td>
@@ -896,10 +961,12 @@ export default function RoomScheduleTable({
                       const mapped = activeTutorAliasToNickname.get(raw);
                       return normalizeTutorLabel(mapped ?? raw);
                     })()}
-                    disabled={readOnly || savingRowKey === r.rowKey || savingRowKey === slotKey(r)}
+                    disabled={
+                      tutorFieldLocked || savingRowKey === r.rowKey || savingRowKey === slotKey(r)
+                    }
                     onChange={(event) => void onChangeTutor(r, event.target.value)}
                     className="min-w-[120px] rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
-                    aria-label={`${normalizeStudentId(r.studentId)} tutor`}
+                    aria-label={`${rowAriaStudentLabel(r)} tutor`}
                     suppressHydrationWarning
                   >
                     <option value="TBD">TBD</option>
@@ -913,7 +980,7 @@ export default function RoomScheduleTable({
                 <td className="px-3 py-2">
                   <textarea
                     value={r.note || ""}
-                    disabled={readOnly || r.lessonType === "補堂"}
+                    disabled={summaryLocked || r.lessonType === "補堂"}
                     aria-busy={savingLessonSummaryRowKey === r.rowKey}
                     placeholder="Enter lesson summary"
                     onChange={(event) => {
@@ -930,7 +997,7 @@ export default function RoomScheduleTable({
                         : "border-slate-300 bg-white text-slate-700 focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]",
                       savingLessonSummaryRowKey === r.rowKey ? "opacity-90" : "",
                     ].join(" ")}
-                    aria-label={`${normalizeStudentId(r.studentId)} ${r.dateDisplay} lesson summary`}
+                    aria-label={`${rowAriaStudentLabel(r)} ${r.dateDisplay} lesson summary`}
                     suppressHydrationWarning
                     rows={3}
                   />
@@ -1021,6 +1088,7 @@ export default function RoomScheduleTable({
         ) : null}
       </div>
     </div>
+    </ClientOnlyAfterMount>
   );
 }
 

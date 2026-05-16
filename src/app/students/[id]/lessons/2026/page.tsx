@@ -273,7 +273,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         return;
       }
       if (role === "tutor") {
-        router.replace("/daily-time-table");
+        router.replace("/rooms");
         return;
       }
       if (mounted) setAccessReady(true);

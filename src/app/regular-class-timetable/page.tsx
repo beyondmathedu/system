@@ -6,6 +6,7 @@ import DayTimetableTable from "@/components/DayTimetableTable";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
+import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchDayTimetablePayload, parseDayParams } from "@/lib/dayTimetableGrid";
 import { normalizeStudentId } from "@/lib/studentId";
 
@@ -33,6 +34,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   if (viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");
   }
+  redirectTutorAwayFromAdminPages(viewer);
   const prev = shiftDay(year, month, day, -1);
   const next = shiftDay(year, month, day, 1);
   const base = "/regular-class-timetable";

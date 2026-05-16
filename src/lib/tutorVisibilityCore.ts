@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  isSharedIpadTutorDisplayName,
   TUTOR_STATUS_ACTIVE,
   TUTOR_STATUS_INACTIVE,
   TUTOR_STATUS_OCCASIONAL,
@@ -44,6 +45,7 @@ export async function fetchTutorVisibility(
     }
     const nickname = n || z || en;
     if (!nickname) continue;
+    if ([n, z, en, nickname].some((label) => isSharedIpadTutorDisplayName(label))) continue;
     activeEntries.push({ status: st, nickname });
     for (const alias of [n, z, en]) {
       const t = alias.trim();

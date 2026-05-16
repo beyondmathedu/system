@@ -15,6 +15,17 @@ import type {
 import { deleteTimetableDayRemark, upsertTimetableDayRemark } from "@/lib/studentLessonStorage";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { normalizeStudentId } from "@/lib/studentId";
+
+function feeToneForStudent(
+  feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>,
+  studentId: string,
+): DayTimetableFeePaymentTone {
+  return (
+    feePaymentToneByStudentId[studentId] ??
+    feePaymentToneByStudentId[normalizeStudentId(studentId)] ??
+    "ok"
+  );
+}
 import { formatGradeDisplay } from "@/lib/grade";
 import type { DayTimetableUiLocale } from "@/lib/dayTimetableUiStrings";
 import { dayTimetableTableStrings, formatFeeHeavyLine } from "@/lib/dayTimetableUiStrings";
@@ -56,11 +67,8 @@ function feeStripeStyle(
   if (!tone || tone === "ok") return undefined;
   const color =
     tone === "many_months_unpaid" ? style.feeArrearsStripeHex : style.feeUnpaidStripeHex;
-  return {
-    borderLeftWidth: 4,
-    borderLeftStyle: "solid",
-    borderLeftColor: color,
-  };
+  // inset box-shadow survives Daily page `!border-0` (showPeriodSeparatorOnly).
+  return { boxShadow: `inset 4px 0 0 0 ${color}` };
 }
 
 function cellSurface(
@@ -353,7 +361,7 @@ export default function DayTimetableTable({
                       {ROOM_GROUPS.map((room, roomIdx) => {
                         const item = cells[roomIdx][idx];
                         const feeTone = item
-                          ? feePaymentToneByStudentId[item.studentId] ?? "ok"
+                          ? feeToneForStudent(feePaymentToneByStudentId, item.studentId)
                           : undefined;
                         const nameSurf = cellSurface(item, "dark", feeTone, timetableStyle);
                         const gradeSurf = cellSurface(item, "dark", feeTone, timetableStyle);

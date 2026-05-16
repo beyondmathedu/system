@@ -189,7 +189,9 @@ create index if not exists idx_tutor_rates_effective_date on public.tutor_rates(
 create index if not exists idx_tutor_rates_tutor_effective_desc
   on public.tutor_rates(tutor_id, effective_date desc, id desc);
 
-create or replace view public.latest_tutor_rates as
+create or replace view public.latest_tutor_rates
+with (security_invoker = true)
+as
 select distinct on (tr.tutor_id)
   tr.tutor_id,
   tr.tutor_name,

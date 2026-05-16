@@ -52,8 +52,8 @@ function StyleEditorFormFallback({
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {colorRow(te.rescheduleBg, settings.rescheduleCellBgHex, "#ede9fe")}
         {colorRow(te.extraBg, settings.extraCellBgHex, "#fef3c7")}
-        {colorRow(te.feeUnpaid, settings.feeUnpaidStripeHex, "#f59e0b")}
-        {colorRow(te.feeArrears, settings.feeArrearsStripeHex, "#e11d48")}
+        {colorRow(te.feeUnpaid, settings.feeUnpaidStripeHex, "#e11d48")}
+        {colorRow(te.feeArrears, settings.feeArrearsStripeHex, "#000000")}
         <label className="block text-xs text-slate-700">
           <span className="font-semibold text-slate-800">{te.threshold}</span>
           <span className="ml-1 font-normal text-slate-500">{te.thresholdHint}</span>

@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+import { defaultRoomScheduleSearchFromFlag } from "@/lib/tutorRoomAccess";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
 function LoginFormFieldsFallback() {
@@ -24,11 +25,14 @@ function LoginFormFieldsFallback() {
 function LoginForm() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next");
+  const linkError = searchParams.get("error");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const linkErrorMessage = linkError ? "登入連結無效，請再試一次。" : "";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,7 +44,14 @@ function LoginForm() {
     });
     if (signInError) {
       setLoading(false);
-      setError(signInError.message || "登入失敗");
+      const msg = signInError.message || "登入失敗";
+      if (/invalid login credentials/i.test(msg)) {
+        setError(
+          "Email 或密碼不正確。若剛重設密碼，請用郵件裡設定的新密碼；或到 Supabase → Authentication → Users 確認此 Email 已建立並已 Auto Confirm。",
+        );
+      } else {
+        setError(msg);
+      }
       return;
     }
     const { data: sessionData, error: sessionError } = await supabaseBrowser.auth.getSession();
@@ -51,6 +62,32 @@ function LoginForm() {
     }
     let target = next && next.startsWith("/") ? next : "";
     if (target === "/") target = "";
+    if (!target) {
+      try {
+        const meRes = await fetch("/api/me", { credentials: "same-origin" });
+        if (meRes.ok) {
+          const me = (await meRes.json()) as {
+            role?: string;
+            allowedRoomSlugs?: string[];
+            isSharedIpadTutor?: boolean;
+          };
+          if (String(me.role ?? "").toLowerCase() === "tutor") {
+            if (me.isSharedIpadTutor) {
+              target = "/home";
+            } else {
+              const slugs = (me.allowedRoomSlugs ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+              if (slugs.length === 1) {
+                target = `/rooms/${encodeURIComponent(slugs[0]!)}?${defaultRoomScheduleSearchFromFlag(false)}`;
+              } else {
+                target = "/rooms";
+              }
+            }
+          }
+        }
+      } catch {
+        /* use default */
+      }
+    }
     if (!target) target = "/home";
     window.location.assign(target);
   }
@@ -111,6 +148,9 @@ function LoginForm() {
                 </button>
               </div>
             </div>
+            {linkErrorMessage && !error ? (
+              <p className="text-sm text-rose-600">{linkErrorMessage}</p>
+            ) : null}
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
             <button
               type="submit"
