@@ -356,18 +356,21 @@ export type StudentVisibilityMode = {
   effective_date: string;
 };
 
-export async function loadStudentMonthlyFeeRecords(params: {
+/** One round-trip for submit/history rows across inclusive month range. */
+export async function loadStudentMonthlyFeeRecordsInMonthRange(params: {
   studentIds: string[];
   year: number;
-  month: number;
-}) {
-  const { studentIds, year, month } = params;
-  if (!studentIds.length) return [];
+  monthFrom: number;
+  monthTo: number;
+}): Promise<StudentMonthlyFeeRecord[]> {
+  const { studentIds, year, monthFrom, monthTo } = params;
+  if (!studentIds.length || monthTo < monthFrom) return [];
   const extended = await supabase
     .from("student_monthly_fee_records")
     .select(FEE_RECORD_SELECT_WITH_SPLIT_REMARKS)
     .eq("year", year)
-    .eq("month", month)
+    .gte("month", monthFrom)
+    .lte("month", monthTo)
     .in("student_id", studentIds);
   const result =
     extended.error && isMissingFeeRecordColumnError(extended.error.message)
@@ -375,13 +378,23 @@ export async function loadStudentMonthlyFeeRecords(params: {
           .from("student_monthly_fee_records")
           .select(FEE_RECORD_SELECT_BASE)
           .eq("year", year)
-          .eq("month", month)
+          .gte("month", monthFrom)
+          .lte("month", monthTo)
           .in("student_id", studentIds)
       : extended;
   if (result.error) throw result.error;
   return (result.data ?? []).map((row) =>
     normalizeFeeRecordRow(row as Record<string, unknown>),
   ) as StudentMonthlyFeeRecord[];
+}
+
+export async function loadStudentMonthlyFeeRecords(params: {
+  studentIds: string[];
+  year: number;
+  month: number;
+}) {
+  const { studentIds, year, month } = params;
+  return loadStudentMonthlyFeeRecordsInMonthRange({ studentIds, year, monthFrom: month, monthTo: month });
 }
 
 function normalizeFeePricingGradeForDb(raw: string): string | null {

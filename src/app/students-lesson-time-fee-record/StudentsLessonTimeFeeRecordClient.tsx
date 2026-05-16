@@ -17,7 +17,7 @@ import { supabase } from "@/lib/supabase";
 import {
   loadLessonScheduleRecordsBatch,
   loadLessonYearStatesBatch,
-  loadStudentMonthlyFeeRecords,
+  loadStudentMonthlyFeeRecordsInMonthRange,
   upsertStudentMonthlyFeeRecord,
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
@@ -774,100 +774,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
     };
   }, [sheetMonth, sheetYear]);
 
-  useEffect(() => {
-    if (students.length === 0) return;
-    let mounted = true;
-    void (async () => {
-      const { data, error } = await supabase
-        .from("student_lessons_2026_metrics")
-        .select("student_id, remedial_count")
-        .in(
-          "student_id",
-          students.map((s) => s.id),
-        );
-      if (!mounted) return;
-      if (error) return;
-      const next: Record<string, number> = {};
-      for (const row of data ?? []) {
-        next[String((row as any).student_id)] = Number((row as any).remedial_count ?? 0) || 0;
-      }
-      setRemedialCountByStudentId(next);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [students]);
-
-  useEffect(() => {
-    if (students.length === 0) return;
-    let mounted = true;
-    void (async () => {
-      const rows = await loadStudentMonthlyFeeRecords({
-        studentIds: students.map((s) => s.id),
-        year: sheetYear,
-        month: Number(sheetMonth),
-      });
-      if (!mounted) return;
-      setRecordsByStudentId((prev) => {
-        const next = { ...prev };
-        for (const r of rows) {
-          const id = r.student_id;
-          if (!next[id]) next[id] = defaultRecordState();
-          next[id] = {
-            ...next[id],
-            submitted: Number(r.submitted_amount ?? 0) || 0,
-            lessonUnitPrice: Number(r.lesson_unit_price ?? 0) || 0,
-            feePricingGrade: (() => {
-              const raw = String((r as { fee_pricing_grade?: string | null }).fee_pricing_grade ?? "").trim();
-              const c = normalizeGradeCode(raw);
-              return /^F[1-6]$/.test(c) ? c : "";
-            })(),
-            remarks: String(r.remarks ?? ""),
-            makeupRemarks: String((r as { makeup_remarks?: string | null }).makeup_remarks ?? ""),
-            balanceDueRemarks: String((r as { balance_due_remarks?: string | null }).balance_due_remarks ?? ""),
-            sendFee: Boolean(r.send_fee),
-          };
-        }
-        return next;
-      });
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [students, sheetMonth, sheetYear]);
-
-  useEffect(() => {
-    if (students.length === 0) {
-      setSubmittedByStudentMonth({});
-      return;
-    }
-    let mounted = true;
-    void (async () => {
-      const currentMonth = Number(sheetMonth);
-      const feeStartMonth = feeSystemStartMonth1to12(sheetYear);
-      const { data } = await supabase
-        .from("student_monthly_fee_records")
-        .select("student_id, month, submitted_amount")
-        .eq("year", sheetYear)
-        .gte("month", feeStartMonth)
-        .lte("month", currentMonth)
-        .in("student_id", students.map((s) => s.id));
-      if (!mounted) return;
-      const next: Record<string, Partial<Record<number, number>>> = {};
-      for (const r of data ?? []) {
-        const sid = String((r as { student_id?: string }).student_id ?? "");
-        const mo = Number((r as { month?: number }).month) || 0;
-        if (!sid || !mo) continue;
-        if (!next[sid]) next[sid] = {};
-        next[sid][mo] = Number((r as { submitted_amount?: number | null }).submitted_amount ?? 0) || 0;
-      }
-      setSubmittedByStudentMonth(next);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [students, sheetMonth, sheetYear]);
-
   const submittedBeforeByStudentId = useMemo(() => {
     const currentMonth = Number(sheetMonth);
     const out: Record<string, number> = {};
@@ -882,83 +788,198 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return out;
   }, [students, sheetMonth, submittedByStudentMonth]);
 
+  /** Single network round-trip: metrics + fee history + lessons + opening (parallel). */
   useEffect(() => {
     if (students.length === 0) {
+      setRemedialCountByStudentId({});
+      setSubmittedByStudentMonth({});
       setHistoricalMonthFeeByStudentId({});
+      setOpeningBalanceByStudentId({});
+      setLessonRecordsByStudentId({});
+      setExtraEntriesByStudentId({});
+      setAttendanceByStudentId({});
+      setRescheduleEntriesByStudentId({});
+      setLessonYearStateByStudentId({});
       return;
     }
+
+    let mounted = true;
+    const ids = students.map((s) => s.id);
     const currentMonth = Number(sheetMonth);
     const feeStartMonth = feeSystemStartMonth1to12(sheetYear);
-    const endMonth = currentMonth - 1;
-    if (endMonth < feeStartMonth) {
-      setHistoricalMonthFeeByStudentId({});
-      return;
-    }
-    let mounted = true;
+    const endMonthForPricing = currentMonth - 1;
+
     void (async () => {
-      const { data } = await supabase
-        .from("student_monthly_fee_records")
-        .select("student_id, month, lesson_unit_price, fee_pricing_grade")
-        .eq("year", sheetYear)
-        .gte("month", feeStartMonth)
-        .lte("month", endMonth)
-        .in("student_id", students.map((s) => s.id));
+      const feeRangePromise = loadStudentMonthlyFeeRecordsInMonthRange({
+        studentIds: ids,
+        year: sheetYear,
+        monthFrom: feeStartMonth,
+        monthTo: currentMonth,
+      });
+
+      const openingPromise =
+        sheetYear === OPENING_BALANCE_AS_OF_YEAR
+          ? supabase
+              .from("student_fee_opening_balances")
+              .select("student_id, opening_balance")
+              .eq("as_of_year", OPENING_BALANCE_AS_OF_YEAR)
+              .eq("as_of_month", OPENING_BALANCE_AS_OF_MONTH)
+              .in("student_id", ids)
+          : Promise.resolve({ data: null as unknown, error: null as null });
+
+      const [
+        metricsResult,
+        feeRows,
+        [recordsMap, yearStatesMap],
+        openingResult,
+      ] = await Promise.all([
+        supabase.from("student_lessons_2026_metrics").select("student_id, remedial_count").in("student_id", ids),
+        feeRangePromise,
+        Promise.all([loadLessonScheduleRecordsBatch(ids), loadLessonYearStatesBatch(ids, sheetYear)]),
+        openingPromise,
+      ]);
+
       if (!mounted) return;
-      const next: Record<
+
+      if (!metricsResult.error) {
+        const next: Record<string, number> = {};
+        for (const row of metricsResult.data ?? []) {
+          next[String((row as { student_id?: string }).student_id)] =
+            Number((row as { remedial_count?: number | null }).remedial_count ?? 0) || 0;
+        }
+        setRemedialCountByStudentId(next);
+      }
+
+      const submittedNext: Record<string, Partial<Record<number, number>>> = {};
+      const historicalNext: Record<
         string,
         Partial<Record<number, { lessonUnitPrice: number; feePricingGrade: string }>>
       > = {};
-      for (const row of data ?? []) {
-        const sid = String((row as { student_id?: string }).student_id ?? "");
-        const mo = Number((row as { month?: number }).month) || 0;
-        if (!sid || !mo) continue;
-        if (!next[sid]) next[sid] = {};
-        const rawG = String((row as { fee_pricing_grade?: string | null }).fee_pricing_grade ?? "").trim();
-        const c = normalizeGradeCode(rawG);
-        next[sid][mo] = {
-          lessonUnitPrice: Number((row as { lesson_unit_price?: number | null }).lesson_unit_price ?? 0) || 0,
-          feePricingGrade: /^F[1-6]$/.test(c) ? c : "",
-        };
+
+      if (endMonthForPricing >= feeStartMonth) {
+        for (const row of feeRows) {
+          const mo = row.month;
+          if (mo < feeStartMonth || mo > endMonthForPricing) continue;
+          const sid = row.student_id;
+          if (!sid || !mo) continue;
+          if (!historicalNext[sid]) historicalNext[sid] = {};
+          const rawG = String(row.fee_pricing_grade ?? "").trim();
+          const c = normalizeGradeCode(rawG);
+          historicalNext[sid][mo] = {
+            lessonUnitPrice: Number(row.lesson_unit_price ?? 0) || 0,
+            feePricingGrade: /^F[1-6]$/.test(c) ? c : "",
+          };
+        }
       }
-      setHistoricalMonthFeeByStudentId(next);
+
+      for (const row of feeRows) {
+        const sid = row.student_id;
+        const mo = row.month;
+        if (!sid || !mo || mo < feeStartMonth || mo > currentMonth) continue;
+        if (!submittedNext[sid]) submittedNext[sid] = {};
+        submittedNext[sid][mo] = Number(row.submitted_amount ?? 0) || 0;
+      }
+
+      setSubmittedByStudentMonth(submittedNext);
+      setHistoricalMonthFeeByStudentId(endMonthForPricing >= feeStartMonth ? historicalNext : {});
+
+      setRecordsByStudentId((prev) => {
+        const next = { ...prev };
+        for (const r of feeRows) {
+          if (r.month !== currentMonth) continue;
+          const id = r.student_id;
+          if (!next[id]) next[id] = defaultRecordState();
+          next[id] = {
+            ...next[id],
+            submitted: Number(r.submitted_amount ?? 0) || 0,
+            lessonUnitPrice: Number(r.lesson_unit_price ?? 0) || 0,
+            feePricingGrade: (() => {
+              const raw = String(r.fee_pricing_grade ?? "").trim();
+              const c = normalizeGradeCode(raw);
+              return /^F[1-6]$/.test(c) ? c : "";
+            })(),
+            remarks: String(r.remarks ?? ""),
+            makeupRemarks: String(r.makeup_remarks ?? ""),
+            balanceDueRemarks: String(r.balance_due_remarks ?? ""),
+            sendFee: Boolean(r.send_fee),
+          };
+        }
+        return next;
+      });
+
+      if (sheetYear === OPENING_BALANCE_AS_OF_YEAR) {
+        const { data, error } = openingResult as {
+          data: unknown[] | null;
+          error: { message?: string } | null;
+        };
+        if (!error) {
+          const ob: Record<string, number> = {};
+          for (const row of data ?? []) {
+            const sid = String((row as { student_id?: string }).student_id ?? "");
+            if (!sid) continue;
+            ob[sid] = Number((row as { opening_balance?: number | null }).opening_balance ?? 0) || 0;
+          }
+          setOpeningBalanceByStudentId(ob);
+        }
+      } else {
+        setOpeningBalanceByStudentId({});
+      }
+
+      const nextRecords: Record<string, LessonRecord[]> = {};
+      const nextExtra: Record<string, { id: string; date: string }[]> = {};
+      const nextAttendance: Record<string, Record<string, boolean>> = {};
+      const nextReschedule: Record<string, { id: string; fromDate: string; toDate: string }[]> = {};
+      const nextYearState: Record<string, StudentLesson2026State> = {};
+      for (const st of students) {
+        const id = st.id;
+        let records: LessonRecord[] = [];
+        const rawCloudRecords = recordsMap[id];
+        if (Array.isArray(rawCloudRecords) && rawCloudRecords.length > 0) {
+          records = rawCloudRecords as LessonRecord[];
+        } else {
+          try {
+            const key = `lesson_schedule_records:${id}`;
+            const raw = window.localStorage.getItem(key);
+            if (raw) {
+              const parsed = JSON.parse(raw) as unknown;
+              if (Array.isArray(parsed)) records = parsed as LessonRecord[];
+            }
+          } catch {
+            // ignore
+          }
+        }
+        nextRecords[id] = records;
+
+        const yearState = yearStatesMap[id];
+        const extraEntriesRaw =
+          (yearState?.extraEntries as Array<{ id: string; date: string; time: string; room: string }>) ?? [];
+        nextExtra[id] = extraEntriesRaw.map((e) => ({ id: String(e.id ?? ""), date: String(e.date ?? "") }));
+
+        nextAttendance[id] =
+          yearState?.attendance && typeof yearState.attendance === "object"
+            ? (yearState.attendance as Record<string, boolean>)
+            : {};
+
+        const rescheduleRaw =
+          (yearState?.rescheduleEntries as Array<{ id: string; fromDate: string; toDate: string }>) ?? [];
+        nextReschedule[id] = rescheduleRaw.map((e) => ({
+          id: String(e.id ?? ""),
+          fromDate: String(e.fromDate ?? ""),
+          toDate: String(e.toDate ?? ""),
+        }));
+        nextYearState[id] = yearStatesMap[id] ?? emptyLessonYearState();
+      }
+      setLessonRecordsByStudentId(nextRecords);
+      setExtraEntriesByStudentId(nextExtra);
+      setAttendanceByStudentId(nextAttendance);
+      setRescheduleEntriesByStudentId(nextReschedule);
+      setLessonYearStateByStudentId(nextYearState);
     })();
+
     return () => {
       mounted = false;
     };
   }, [students, sheetMonth, sheetYear]);
-
-  useEffect(() => {
-    if (students.length === 0) {
-      setOpeningBalanceByStudentId({});
-      return;
-    }
-    // Only meaningful for the configured start year; other years default to 0.
-    if (sheetYear !== OPENING_BALANCE_AS_OF_YEAR) {
-      setOpeningBalanceByStudentId({});
-      return;
-    }
-    let mounted = true;
-    void (async () => {
-      const { data, error } = await supabase
-        .from("student_fee_opening_balances")
-        .select("student_id, opening_balance")
-        .eq("as_of_year", OPENING_BALANCE_AS_OF_YEAR)
-        .eq("as_of_month", OPENING_BALANCE_AS_OF_MONTH)
-        .in("student_id", students.map((s) => s.id));
-      if (!mounted) return;
-      if (error) return;
-      const next: Record<string, number> = {};
-      for (const row of data ?? []) {
-        const sid = String((row as any).student_id ?? "");
-        if (!sid) continue;
-        next[sid] = Number((row as any).opening_balance ?? 0) || 0;
-      }
-      setOpeningBalanceByStudentId(next);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [students, sheetYear]);
 
   function scheduleSaveOpeningBalance(studentId: string, nextValue: number) {
     const key = `${studentId}:${OPENING_BALANCE_AS_OF_YEAR}:${OPENING_BALANCE_AS_OF_MONTH}`;
@@ -1357,76 +1378,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
 
     return counts;
   }
-
-  useEffect(() => {
-    if (students.length === 0) return;
-    let mounted = true;
-    void (async () => {
-      const ids = students.map((s) => s.id);
-      const [recordsMap, yearStatesMap] = await Promise.all([
-        loadLessonScheduleRecordsBatch(ids),
-        loadLessonYearStatesBatch(ids, sheetYear),
-      ]);
-
-      if (!mounted) return;
-
-      const nextRecords: Record<string, LessonRecord[]> = {};
-      const nextExtra: Record<string, { id: string; date: string }[]> = {};
-      const nextAttendance: Record<string, Record<string, boolean>> = {};
-      const nextReschedule: Record<string, { id: string; fromDate: string; toDate: string }[]> = {};
-      const nextYearState: Record<string, StudentLesson2026State> = {};
-      for (const st of students) {
-        const id = st.id;
-        let records: LessonRecord[] = [];
-        const rawCloudRecords = recordsMap[id];
-        if (Array.isArray(rawCloudRecords) && rawCloudRecords.length > 0) {
-          records = rawCloudRecords as LessonRecord[];
-        } else {
-          // fallback: localStorage (when no cloud records exist)
-          try {
-            const key = `lesson_schedule_records:${id}`;
-            const raw = window.localStorage.getItem(key);
-            if (raw) {
-              const parsed = JSON.parse(raw) as unknown;
-              if (Array.isArray(parsed)) records = parsed as LessonRecord[];
-            }
-          } catch {
-            // ignore
-          }
-        }
-        nextRecords[id] = records;
-
-        const yearState = yearStatesMap[id];
-        const extraEntriesRaw =
-          (yearState?.extraEntries as Array<{ id: string; date: string; time: string; room: string }>) ??
-          [];
-        nextExtra[id] = extraEntriesRaw.map((e) => ({ id: String(e.id ?? ""), date: String(e.date ?? "") }));
-
-        nextAttendance[id] =
-          yearState?.attendance && typeof yearState.attendance === "object"
-            ? (yearState.attendance as Record<string, boolean>)
-            : {};
-
-        const rescheduleRaw =
-          (yearState?.rescheduleEntries as Array<{ id: string; fromDate: string; toDate: string }>) ?? [];
-        nextReschedule[id] = rescheduleRaw.map((e) => ({
-          id: String(e.id ?? ""),
-          fromDate: String(e.fromDate ?? ""),
-          toDate: String(e.toDate ?? ""),
-        }));
-        nextYearState[id] = yearStatesMap[id] ?? emptyLessonYearState();
-      }
-      setLessonRecordsByStudentId(nextRecords);
-      setExtraEntriesByStudentId(nextExtra);
-      setAttendanceByStudentId(nextAttendance);
-      setRescheduleEntriesByStudentId(nextReschedule);
-      setLessonYearStateByStudentId(nextYearState);
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [students, sheetYear]);
 
   const weekdayCountsInSelectedMonth = useMemo(() => {
     return countHkWeekdaysInMonth(sheetYear, Number(sheetMonth));
