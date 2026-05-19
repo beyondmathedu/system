@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+import ScheduleDuplicateRulesBanner from "@/components/ScheduleDuplicateRulesBanner";
+import { hasDuplicateScheduleSlotInVersion } from "@/lib/lessonScheduleVersions";
 import {
   loadLessonScheduleRecords,
   saveLessonScheduleRecords,
@@ -127,6 +129,7 @@ export default function LessonScheduleGrid({
   const [filterTime, setFilterTime] = useState("");
   const [filterRoom, setFilterRoom] = useState("");
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
+  const [saveSlotError, setSaveSlotError] = useState("");
 
   const timeOptions = useMemo(() => {
     if (weekday === "六") return SATURDAY_TIME_SUGGESTIONS;
@@ -252,6 +255,7 @@ export default function LessonScheduleGrid({
     const nextTime = effectiveTime;
     if (!nextTime) return;
     if (!effectiveDate.trim()) return;
+    setSaveSlotError("");
 
     if (editingRecordId) {
       const existing = records.find((rec) => rec.id === editingRecordId);
@@ -266,6 +270,16 @@ export default function LessonScheduleGrid({
         time: nextTime,
         room,
       };
+      if (
+        hasDuplicateScheduleSlotInVersion(
+          records.map(normalizeLessonRecord),
+          updated,
+          editingRecordId,
+        )
+      ) {
+        setSaveSlotError("此生效日已有相同星期、時間、房間的課表，請改時間或房間，或使用下方「合併重複」。");
+        return;
+      }
       const merged = records.map((rec) => (rec.id === editingRecordId ? updated : rec));
       persistRecords(merged);
       clearEditMode();
@@ -275,11 +289,30 @@ export default function LessonScheduleGrid({
     const nextTime2 = effectiveTime2;
     if (weeklyLessons === 2 && !nextTime2) return;
 
+    const ed = effectiveDate.trim();
+    const normalized = records.map(normalizeLessonRecord);
+    if (hasDuplicateScheduleSlotInVersion(normalized, { effectiveDate: ed, weekday, time: nextTime, room })) {
+      setSaveSlotError("此生效日已有相同星期、時間、房間的課表。請勿重複新增，或先合併下方重複項。");
+      return;
+    }
+    if (
+      weeklyLessons === 2 &&
+      hasDuplicateScheduleSlotInVersion(normalized, {
+        effectiveDate: ed,
+        weekday: weekday2,
+        time: nextTime2,
+        room: room2,
+      })
+    ) {
+      setSaveSlotError("第二堂與現有課表時段重複。");
+      return;
+    }
+
     const now = Date.now();
     const newRecords: ScheduleRecord[] = [
       {
         id: `${now}-1`,
-        effectiveDate: effectiveDate.trim(),
+        effectiveDate: ed,
         weekday,
         time: nextTime,
         room,
@@ -289,7 +322,7 @@ export default function LessonScheduleGrid({
     if (weeklyLessons === 2) {
       newRecords.push({
         id: `${now}-2`,
-        effectiveDate: effectiveDate.trim(),
+        effectiveDate: ed,
         weekday: weekday2,
         time: nextTime2,
         room: room2,
@@ -307,6 +340,17 @@ export default function LessonScheduleGrid({
         <strong className="font-semibold text-slate-800"> day, time, and room</strong>. When you add a later effective record, earlier records are
         <strong className="font-semibold text-slate-800"> kept</strong> (not overwritten). Use <strong className="font-semibold text-slate-800">Delete</strong> only when needed.
       </p>
+      <ScheduleDuplicateRulesBanner
+        records={records.map(normalizeLessonRecord)}
+        weekdayLabel={(wd) => WEEKDAY_LABEL[wd] ?? wd}
+        onMerged={(next) => {
+          persistRecords(next as ScheduleRecord[]);
+          setSaveSlotError("");
+        }}
+      />
+      {saveSlotError ? (
+        <p className="mb-3 text-xs font-medium text-red-600">{saveSlotError}</p>
+      ) : null}
       <ClientOnlyAfterMount fallback={<LessonScheduleGridFallback />}>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8">
         <label className="block">

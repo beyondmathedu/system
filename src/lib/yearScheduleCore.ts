@@ -7,6 +7,10 @@ import { readYmdParts } from "@/lib/intlFormatParts";
 import { gradeRank } from "@/lib/grade";
 import { isOnOrAfterLessonSystemStart, normalizeCalendarDateIso } from "@/lib/lessonSystemStart";
 import {
+  readLessonDayOverrideField,
+  tutorDisplayForLessonRow,
+} from "@/lib/lessonScheduleVersions";
+import {
   isPendingRescheduleEntry,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
@@ -261,20 +265,14 @@ function buildScheduleRows(
     } else if (r.rowKind === "reschedule") lessonType = "補堂";
     else if (r.fromExtra) lessonType = "加堂";
 
-    const tutorDisplay =
-      r.rowKind === "reschedule"
-        ? ""
-        : (state.overrides[r.date]?.tutor ?? r.baseRule?.tutor ?? "").toString().trim() || "待定";
-    const noteDisplay =
-      r.rowKind === "reschedule"
-        ? ""
-        : (
-            state.overrides[r.date]?.lessonSummary ??
-            r.baseRule?.lessonSummary ??
-            ""
-          )
-            .toString()
-            .trim();
+    const tutorDisplay = tutorDisplayForLessonRow({
+      overrides: state.overrides,
+      dateIso: r.date,
+      scheduleRuleTutor: r.baseRule?.tutor,
+      pendingLabel: "待定",
+    });
+    const noteDisplay = readLessonDayOverrideField(state.overrides, r.date, "lessonSummary")
+      || String(r.baseRule?.lessonSummary ?? "").trim();
 
     const sortTime =
       r.time && r.time !== "待定" ? sortTimeFromDisplay(r.time) : "99:99";

@@ -54,6 +54,9 @@ export const dayTimetableTableStrings = {
     remaining: "餘",
     swatchTitleResched: "補堂",
     swatchTitleExtra: "加堂",
+    repeatSlotHint:
+      "每個時段前會重複列出：B、M前、M後、Hope、Hope 2 各欄（姓名／年級／考試日期），方便對齊閱讀。",
+    roomsHiddenToday: "以下房間當日所有時段均無學生，已隱藏欄位：{rooms}。",
   },
   en: {
     examBlurbTitle: "Exam date",
@@ -93,6 +96,9 @@ export const dayTimetableTableStrings = {
     remaining: "Left",
     swatchTitleResched: "Reschedule",
     swatchTitleExtra: "Extra lesson",
+    repeatSlotHint:
+      "Each time slot repeats room headers: B, M前, M後, Hope, Hope 2 — Name, Grade, Exam date — so columns stay clear when scrolling.",
+    roomsHiddenToday: "Rooms with no students in any time slot today are hidden: {rooms}.",
   },
 } as const;
 

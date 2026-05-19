@@ -145,7 +145,7 @@ export default function RoomScheduleTable({
 
   function lessonTypeLabel(type: string) {
     if (type === "恆常") return "Regular";
-    if (type === "補堂") return "Makeup";
+    if (type === "補堂") return "Reschedule";
     if (type === "加堂") return "Extra";
     if (type === "取消") return "Cancelled";
     return type || "—";
@@ -766,7 +766,7 @@ export default function RoomScheduleTable({
                   {k === "regular"
                     ? "Regular"
                     : k === "makeup"
-                      ? "Makeup"
+                      ? "Reschedule"
                       : k === "extra"
                         ? "Extra"
                         : k.startsWith("other:")
@@ -980,7 +980,7 @@ export default function RoomScheduleTable({
                 <td className="px-3 py-2">
                   <textarea
                     value={r.note || ""}
-                    disabled={summaryLocked || r.lessonType === "補堂"}
+                    disabled={summaryLocked}
                     aria-busy={savingLessonSummaryRowKey === r.rowKey}
                     placeholder="Enter lesson summary"
                     onChange={(event) => {
@@ -991,10 +991,7 @@ export default function RoomScheduleTable({
                       scheduleLessonSummarySave(r, nextValue);
                     }}
                     className={[
-                      "w-full max-w-[200px] resize-none rounded border px-2 py-1 text-xs outline-none transition",
-                      r.lessonType === "補堂"
-                        ? "border-slate-200 bg-slate-50 text-slate-500"
-                        : "border-slate-300 bg-white text-slate-700 focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]",
+                      "w-full max-w-[200px] resize-none rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]",
                       savingLessonSummaryRowKey === r.rowKey ? "opacity-90" : "",
                     ].join(" ")}
                     aria-label={`${rowAriaStudentLabel(r)} ${r.dateDisplay} lesson summary`}

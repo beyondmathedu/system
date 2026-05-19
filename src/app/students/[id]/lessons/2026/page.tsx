@@ -4,11 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
+import ScheduleDuplicateRulesBanner from "@/components/ScheduleDuplicateRulesBanner";
 import { supabase } from "@/lib/supabase";
 import {
   loadExamInfo,
   loadLessonScheduleRecords,
   loadLessonYearState,
+  saveLessonScheduleRecords,
   saveLessonYearState,
 } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
@@ -32,9 +34,10 @@ import {
   parseRegularLessonRowId,
 } from "@/lib/lessonScheduleHidden";
 import {
-  getActiveScheduleRulesForDate,
+  getActiveDedupedScheduleRulesForDate,
   getActiveScheduleVersionDate,
   isRegularLessonAttended,
+  readLessonDayOverrideField,
   regularLessonAttendanceKey,
 } from "@/lib/lessonScheduleVersions";
 import {
@@ -475,8 +478,12 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       const cloud = await loadLessonScheduleRecords(studentId);
       if (!mounted) return;
       if (Array.isArray(cloud) && cloud.length > 0) {
-        setRecords(cloud as ScheduleRecord[]);
-        window.localStorage.setItem(key, JSON.stringify(cloud));
+        const normalized = (cloud as ScheduleRecord[]).map((r) => ({
+          ...r,
+          effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
+        }));
+        setRecords(normalized);
+        window.localStorage.setItem(key, JSON.stringify(normalized));
         return;
       }
       try {
@@ -626,7 +633,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       const hkNum = getHkWeekdayNumber(cur);
       const weekday = numberToWeekday(hkNum);
       const dateIso = toIsoDate(cur);
-      const activeRules = getActiveScheduleRulesForDate(sortedRules, dateIso, versionCache);
+      const activeRules = getActiveDedupedScheduleRulesForDate(sortedRules, dateIso, versionCache);
       for (const rec of activeRules) {
         if (rec.weekday !== weekday) continue;
 
@@ -702,6 +709,8 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
     let rows: ScheduleRow[] = [];
     const baseDates = new Set(baseScheduleRows.map((r) => r.date));
+    /** Same fromDate can have multiple base rows (duplicate weekday rules); emit each reschedule once. */
+    const emittedRescheduleRowIds = new Set<string>();
     for (const r of baseScheduleRows) {
       const e = rescheduleEntryByFromDate.get(r.date);
       if (!e) {
@@ -709,19 +718,22 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         continue;
       }
       if (isPendingRescheduleEntry(e)) {
-        const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.fromDate);
-        const fromMonth = parts ? Number(parts[2]) : r.month;
-        rows.push({
-          ...r,
-          month: fromMonth,
-          lessonType: TYPE_PENDING,
-          rowKind: "cancelled_original",
-          rowId: `pending-${e.id}`,
-          attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
-          lLabel: "/",
-          pendingMakeupLabel: formatPendingMakeupReminder(e.fromDate, hkTodayYmd),
-          rescheduleEntryId: e.id,
-        });
+        if (!emittedRescheduleRowIds.has(e.id)) {
+          emittedRescheduleRowIds.add(e.id);
+          const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.fromDate);
+          const fromMonth = parts ? Number(parts[2]) : r.month;
+          rows.push({
+            ...r,
+            month: fromMonth,
+            lessonType: TYPE_PENDING,
+            rowKind: "cancelled_original",
+            rowId: `pending-${e.id}`,
+            attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
+            lLabel: "/",
+            pendingMakeupLabel: formatPendingMakeupReminder(e.fromDate, hkTodayYmd),
+            rescheduleEntryId: e.id,
+          });
+        }
         continue;
       }
       if (!isOnOrAfterLessonSystemStart(e.toDate, targetYear)) {
@@ -729,31 +741,32 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         continue;
       }
 
-      const toWd = weekdayFromIsoDate(e.toDate);
-      const toParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.toDate);
-      const toMonth = toParts ? Number(toParts[2]) : 1;
+      if (!emittedRescheduleRowIds.has(e.id)) {
+        emittedRescheduleRowIds.add(e.id);
+        const toWd = weekdayFromIsoDate(e.toDate);
+        const toParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.toDate);
+        const toMonth = toParts ? Number(toParts[2]) : 1;
 
-      const rescheduleRow: ScheduleRow = {
-        month: toMonth,
-        lLabel: "L0",
-        date: e.toDate,
-        weekday: toWd,
-        baseTime: r.baseTime,
-        baseRoom: r.baseRoom,
-        rescheduleFromDate: e.fromDate,
-        time: e.time,
-        room: e.room,
-        tutor: "",
-        lessonSummary: "",
-        lessonType: TYPE_RESCHEDULE,
-        rowKind: "reschedule",
-        rowId: `reschedule-${e.id}`,
-        attendanceKey: `reschedule:${e.id}`,
-        displayOrder: 0,
-        rescheduleEntryId: e.id,
-      };
-
-      rows.push(rescheduleRow);
+        rows.push({
+          month: toMonth,
+          lLabel: "L0",
+          date: e.toDate,
+          weekday: toWd,
+          baseTime: r.baseTime,
+          baseRoom: r.baseRoom,
+          rescheduleFromDate: e.fromDate,
+          time: e.time,
+          room: e.room,
+          tutor: readLessonDayOverrideField(overrides, e.toDate, "tutor"),
+          lessonSummary: readLessonDayOverrideField(overrides, e.toDate, "lessonSummary"),
+          lessonType: TYPE_RESCHEDULE,
+          rowKind: "reschedule",
+          rowId: `reschedule-${e.id}`,
+          attendanceKey: `reschedule:${e.id}`,
+          displayOrder: 0,
+          rescheduleEntryId: e.id,
+        });
+      }
     }
 
     for (const e of rescheduleEntries) {
@@ -773,8 +786,8 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         rescheduleFromDate: e.fromDate,
         time: e.time,
         room: e.room,
-        tutor: "",
-        lessonSummary: "",
+        tutor: readLessonDayOverrideField(overrides, e.toDate, "tutor"),
+        lessonSummary: readLessonDayOverrideField(overrides, e.toDate, "lessonSummary"),
         lessonType: TYPE_RESCHEDULE,
         rowKind: "reschedule",
         rowId: `reschedule-${e.id}`,
@@ -798,8 +811,8 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         baseRoom: e.room,
         time: e.time,
         room: e.room,
-        tutor: "",
-        lessonSummary: "",
+        tutor: readLessonDayOverrideField(overrides, e.date, "tutor"),
+        lessonSummary: readLessonDayOverrideField(overrides, e.date, "lessonSummary"),
         lessonType: TYPE_EXTRA,
         rowKind: "normal",
         rowId: `extra-${e.id}`,
@@ -852,6 +865,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     rescheduleEntryByFromDate,
     rescheduleEntries,
     extraEntries,
+    overrides,
     hkTodayYmd,
   ]);
 
@@ -960,6 +974,13 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     setHiddenDates(next);
     window.localStorage.setItem(HIDDEN_DATES_STORAGE_KEY, JSON.stringify(next));
     persistYearState({ hiddenDates: next });
+  }
+
+  function persistScheduleRecords(next: ScheduleRecord[]) {
+    const key = `lesson_schedule_records:${studentId}`;
+    setRecords(next);
+    window.localStorage.setItem(key, JSON.stringify(next));
+    void saveLessonScheduleRecords(studentId, next);
   }
 
   const filteredScheduleRows = useMemo(() => {
@@ -1523,6 +1544,22 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
               {selectionError && (
                 <p className="mt-2 text-xs font-medium text-red-600">{selectionError}</p>
               )}
+              <ScheduleDuplicateRulesBanner
+                records={records.map((r) => ({
+                  ...r,
+                  effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
+                }))}
+                weekdayLabel={(wd) => WEEKDAY_LABEL[wd] ?? wd}
+                onMerged={(next) => {
+                  const removed = records.length - next.length;
+                  persistScheduleRecords(next as ScheduleRecord[]);
+                  setSelectionError(
+                    removed > 0
+                      ? `已合併重複課表（刪除 ${removed} 條），並已寫入雲端。`
+                      : "已合併重複課表並寫入雲端。",
+                  );
+                }}
+              />
               {hiddenScheduleKeys.length > 0 ||
               records.length === 0 ||
               mayScheduleStats.total === 0 ||
@@ -2530,13 +2567,15 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                           <td className="w-[20%] min-w-[220px] px-4 py-3 text-sm text-slate-700 align-top break-words whitespace-normal">
                             <textarea
                               rows={3}
-                              disabled
                               suppressHydrationWarning
                               value={
                                 lessonSummaryDraftByDateIso[r.date] ?? r.lessonSummary ?? ""
                               }
+                              onChange={(e) =>
+                                handleLessonSummaryDraftChange(r.date, e.target.value)
+                              }
                               aria-label={`${r.date} Lesson Summary`}
-                              className="w-full resize-y rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-500"
+                              className="w-full resize-y rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
                             />
                           </td>
                           <td className="w-24 whitespace-nowrap px-4 py-3 text-sm text-slate-700">

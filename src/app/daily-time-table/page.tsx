@@ -91,6 +91,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
                 payload={payload}
                 emptyMessage="No lessons on this day."
                 showPeriodSeparatorOnly
+                repeatRoomHeadersPerTimeSlot
                 uiLocale="en"
               />
               <div className="mt-6">

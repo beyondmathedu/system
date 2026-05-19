@@ -10,7 +10,7 @@ import { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
 export { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
 import { isLessonScheduleHidden } from "@/lib/lessonScheduleHidden";
 import {
-  getActiveScheduleRulesForDate,
+  getActiveDedupedScheduleRulesForDate,
   isRegularLessonAttended,
   regularLessonAttendanceKey,
 } from "@/lib/lessonScheduleVersions";
@@ -194,7 +194,7 @@ function buildRows(
     const hkNum = getHkWeekdayNumber(cur);
     const weekday = numberToWeekday(hkNum);
     const dateIso = toIsoDate(cur);
-    const activeRules = getActiveScheduleRulesForDate(sortedRules, dateIso, versionCache);
+    const activeRules = getActiveDedupedScheduleRulesForDate(sortedRules, dateIso, versionCache);
     for (const rule of activeRules) {
       if (rule.weekday !== weekday) continue;
       if (
@@ -224,6 +224,7 @@ function buildRows(
   }
 
   const rows: Row[] = [];
+  const emittedRescheduleIds = new Set<string>();
   for (const orig of baseRows) {
     const e = rescheduleByFromDate.get(orig.date);
     if (!e) {
@@ -245,14 +246,17 @@ function buildRows(
       rowId: `cancelled-${e.id}-${e.fromDate}`,
       attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
     });
-    rows.push({
-      date: e.toDate,
-      time: e.time,
-      room: e.room,
-      rowKind: "reschedule",
-      rowId: `reschedule-${e.id}`,
-      attendanceKey: `reschedule:${e.id}`,
-    });
+    if (!emittedRescheduleIds.has(e.id)) {
+      emittedRescheduleIds.add(e.id);
+      rows.push({
+        date: e.toDate,
+        time: e.time,
+        room: e.room,
+        rowKind: "reschedule",
+        rowId: `reschedule-${e.id}`,
+        attendanceKey: `reschedule:${e.id}`,
+      });
+    }
   }
 
   for (const e of state.rescheduleEntries) {

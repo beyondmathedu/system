@@ -1,12 +1,13 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ROOM_GROUPS,
   type DayTimetableCell,
   type DayTimetablePayload,
+  type RoomGroup,
 } from "@/lib/dayTimetableShared";
 import type {
   DayTimetableFeePaymentTone,
@@ -76,7 +77,9 @@ function cellSurface(
   textTone: "dark" | "muted",
   feeTone: DayTimetableFeePaymentTone | undefined,
   timetableStyle: DayTimetableStyleSettings,
+  opts?: { feeStripe?: boolean },
 ): { className: string; style?: CSSProperties; isDarkBg: boolean } {
+  const includeFeeStripe = opts?.feeStripe !== false;
   const td = textTone === "dark" ? TD_BASE : TD_BASE_WIDE;
   const lightText = textTone === "dark" ? "text-slate-800" : "text-slate-700";
   if (!item) {
@@ -85,7 +88,7 @@ function cellSurface(
       isDarkBg: false,
     };
   }
-  const stripe = feeStripeStyle(feeTone, timetableStyle);
+  const stripe = includeFeeStripe ? feeStripeStyle(feeTone, timetableStyle) : undefined;
   if (item.lessonType === PENDING_MAKEUP_TYPE_LABEL) {
     return {
       className: `${td} text-amber-950`,
@@ -142,17 +145,31 @@ type Props = {
   showRegularCapacitySummary?: boolean;
   /** 只用每個時段的一條分隔線；不畫每行格線（供 Daily 頁） */
   showPeriodSeparatorOnly?: boolean;
+  /** Daily：每個時段前重複 B／M前／… 房名與 Name／Grade／Exam 小標題 */
+  repeatRoomHeadersPerTimeSlot?: boolean;
   /** `en`：Regular timetable page */
   uiLocale?: DayTimetableUiLocale;
 };
 
 const COLS_PER_ROOM = 3;
 
+const TH_TIME =
+  "w-14 border border-slate-300 bg-slate-50 px-2 py-2 text-left text-base font-semibold text-slate-800";
+const TH_ROOM_ROW1 =
+  "border border-slate-300 bg-slate-50 px-2 py-2 text-center text-sm font-semibold text-slate-900";
+const TH_SUB =
+  "border border-slate-300 bg-slate-50 py-2 text-left text-sm font-semibold text-slate-900";
+const TD_TIME =
+  "border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800";
+const TD_TIME_CAP =
+  "border border-emerald-200/80 bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-900";
+
 export default function DayTimetableTable({
   payload,
   emptyMessage,
   showRegularCapacitySummary = false,
   showPeriodSeparatorOnly = false,
+  repeatRoomHeadersPerTimeSlot = false,
   uiLocale = "zh",
 }: Props) {
   const t = dayTimetableTableStrings[uiLocale];
@@ -165,6 +182,19 @@ export default function DayTimetableTable({
     feePaymentToneByStudentId,
     timetableStyle,
   } = payload;
+  const { roomsForTable, omittedRoomsToday } = useMemo(() => {
+    const withStudents = ROOM_GROUPS.filter((room) =>
+      rowFrames.some((frame) => (byTimeRoom[`${frame.time}::${room}`] ?? []).length > 0),
+    ) as RoomGroup[];
+    const roomsForTable: RoomGroup[] =
+      withStudents.length > 0 ? withStudents : [...ROOM_GROUPS];
+    const omittedRoomsToday: RoomGroup[] =
+      rowFrames.length > 0 && withStudents.length < ROOM_GROUPS.length
+        ? (ROOM_GROUPS.filter((r) => !withStudents.includes(r)) as RoomGroup[])
+        : [];
+    return { roomsForTable, omittedRoomsToday };
+  }, [rowFrames, byTimeRoom]);
+  const roomColSpan = roomsForTable.length * COLS_PER_ROOM + 1;
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
   const [hoverPanel, setHoverPanel] = useState<{
     studentId: string;
@@ -240,7 +270,7 @@ export default function DayTimetableTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white">
+    <div className="rounded-lg border border-slate-300 bg-white">
       <p className="border-b border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-600">
         <span className="font-semibold text-slate-700">{t.examBlurbTitle}</span>
         {t.examDateBlurb}
@@ -277,6 +307,14 @@ export default function DayTimetableTable({
           timetableStyle.feeHeavyUnpaidThreshold,
         )}
       </p>
+      {omittedRoomsToday.length > 0 && !repeatRoomHeadersPerTimeSlot ? (
+        <p className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          {t.roomsHiddenToday.replace(
+            "{rooms}",
+            omittedRoomsToday.join(uiLocale === "zh" ? "、" : ", "),
+          )}
+        </p>
+      ) : null}
       {showRegularCapacitySummary ? (
         <p className="border-b border-slate-200 bg-emerald-50/80 px-3 py-2 text-xs text-slate-700">
           <span className="font-semibold text-slate-800">{t.capacityLabel}</span>
@@ -287,54 +325,84 @@ export default function DayTimetableTable({
           {t.capacityBlurbAfterLink}
         </p>
       ) : null}
+      {repeatRoomHeadersPerTimeSlot ? (
+        <p className="border-b border-slate-200 bg-sky-50/80 px-3 py-2 text-xs text-slate-700">
+          <span className="font-semibold text-slate-800">{t.repeatSlotHint}</span>
+          {omittedRoomsToday.length > 0 ? (
+            <span className="mt-1 block font-normal text-slate-600">
+              {t.roomsHiddenToday.replace(
+                "{rooms}",
+                omittedRoomsToday.join(uiLocale === "zh" ? "、" : ", "),
+              )}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
+      <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-auto rounded-b-lg">
       <table className="min-w-[960px] w-full border-collapse text-sm">
-        <thead className="bg-slate-50">
-          <tr>
-            <th
-              rowSpan={2}
-              className="w-14 border border-slate-300 px-2 py-2 text-left text-base font-semibold text-slate-800"
-            >
-              {t.time}
-            </th>
-            {ROOM_GROUPS.map((room) => (
-              <th
-                key={`room-${room}`}
-                colSpan={COLS_PER_ROOM}
-                className="border border-slate-300 px-2 py-2 text-center text-sm font-semibold text-slate-900"
-              >
-                {room}
+        {repeatRoomHeadersPerTimeSlot ? (
+          <thead className="sr-only">
+            <tr>
+              <th scope="col">{t.time}</th>
+              {roomsForTable.flatMap((room) => [
+                <th key={`sr-name-${room}`} scope="col">
+                  {room} — {t.name}
+                </th>,
+                <th key={`sr-grade-${room}`} scope="col">
+                  {room} — {t.grade}
+                </th>,
+                <th key={`sr-exam-${room}`} scope="col">
+                  {room} — {t.examHeader}
+                </th>,
+              ])}
+            </tr>
+          </thead>
+        ) : (
+          <thead className="bg-slate-50">
+            <tr>
+              <th rowSpan={2} className={TH_TIME}>
+                {t.time}
               </th>
-            ))}
-          </tr>
-          <tr>
-            {ROOM_GROUPS.flatMap((room) => [
-              <th
-                key={`name-${room}`}
-                className="border border-slate-300 px-3 py-2 text-left text-sm font-semibold text-slate-900"
-              >
-                {t.name}
-              </th>,
-              <th
-                key={`grade-${room}`}
-                className="w-16 border border-slate-300 px-2 py-2 text-left text-sm font-semibold text-slate-900"
-              >
-                {t.grade}
-              </th>,
-              <th
-                key={`exam-${room}`}
-                title={t.examThTitle}
-                className="w-28 border border-slate-300 px-3 py-2 text-left text-sm font-semibold text-slate-900"
-              >
-                {t.examHeader}
-              </th>,
-            ])}
-          </tr>
-        </thead>
+              {roomsForTable.map((room) => (
+                <th
+                  key={`room-${room}`}
+                  colSpan={COLS_PER_ROOM}
+                  className={TH_ROOM_ROW1}
+                >
+                  {room}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              {roomsForTable.flatMap((room) => [
+                <th
+                  key={`name-${room}`}
+                  className={`${TH_SUB} px-3`}
+                >
+                  {t.name}
+                </th>,
+                <th
+                  key={`grade-${room}`}
+                  className={`${TH_SUB} w-16 px-2`}
+                >
+                  {t.grade}
+                </th>,
+                <th
+                  key={`exam-${room}`}
+                  title={t.examThTitle}
+                  className={`${TH_SUB} w-28 px-3`}
+                >
+                  {t.examHeader}
+                </th>,
+              ])}
+            </tr>
+          </thead>
+        )}
         <tbody>
           {rowFrames.length === 0 ? (
             <tr>
               <td
-                colSpan={ROOM_GROUPS.length * COLS_PER_ROOM + 1}
+                colSpan={roomColSpan}
                 className="border border-slate-300 px-4 py-6 text-center text-sm text-slate-500"
               >
                 {emptyMessage}
@@ -346,26 +414,66 @@ export default function DayTimetableTable({
                 {showPeriodSeparatorOnly && frameIdx > 0 ? (
                   <tr>
                     <td
-                      colSpan={ROOM_GROUPS.length * COLS_PER_ROOM + 1}
+                      colSpan={roomColSpan}
                       className="h-0 border-t-2 border-slate-400 p-0"
                     />
                   </tr>
                 ) : null}
+                {repeatRoomHeadersPerTimeSlot ? (
+                  <>
+                    <tr className="bg-slate-50">
+                      <th
+                        rowSpan={2}
+                        scope="row"
+                        className={`${TH_TIME} align-middle text-center text-sm`}
+                      >
+                        {frame.time}
+                      </th>
+                      {roomsForTable.map((room) => (
+                        <th
+                          key={`${frame.time}-slot-h1-${room}`}
+                          colSpan={COLS_PER_ROOM}
+                          scope="colgroup"
+                          className={TH_ROOM_ROW1}
+                        >
+                          {room}
+                        </th>
+                      ))}
+                    </tr>
+                    <tr className="bg-slate-50">
+                      {roomsForTable.flatMap((room) => [
+                        <th key={`${frame.time}-slot-h2-${room}-n`} className={`${TH_SUB} px-3`}>
+                          {t.name}
+                        </th>,
+                        <th key={`${frame.time}-slot-h2-${room}-g`} className={`${TH_SUB} w-16 px-2`}>
+                          {t.grade}
+                        </th>,
+                        <th
+                          key={`${frame.time}-slot-h2-${room}-e`}
+                          title={t.examThTitle}
+                          className={`${TH_SUB} w-28 px-3`}
+                        >
+                          {t.examHeader}
+                        </th>,
+                      ])}
+                    </tr>
+                  </>
+                ) : null}
                 {Array.from({ length: frame.maxRows }, (_, idx) => {
-                  const cells = ROOM_GROUPS.map((room) => byTimeRoom[`${frame.time}::${room}`] ?? []);
+                  const cells = roomsForTable.map((room) => byTimeRoom[`${frame.time}::${room}`] ?? []);
+                  const timeCell =
+                    repeatRoomHeadersPerTimeSlot ? "" : idx === 0 ? frame.time : "";
                   return (
                     <tr key={`${frame.time}-${idx}`}>
-                      <td className={`border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 ${noGridCls}`}>
-                        {idx === 0 ? frame.time : ""}
-                      </td>
-                      {ROOM_GROUPS.map((room, roomIdx) => {
+                      <td className={`${TD_TIME} ${noGridCls}`}>{timeCell}</td>
+                      {roomsForTable.map((room, roomIdx) => {
                         const item = cells[roomIdx][idx];
                         const feeTone = item
                           ? feeToneForStudent(feePaymentToneByStudentId, item.studentId)
                           : undefined;
-                        const nameSurf = cellSurface(item, "dark", feeTone, timetableStyle);
-                        const gradeSurf = cellSurface(item, "dark", feeTone, timetableStyle);
-                        const examSurf = cellSurface(item, "muted", feeTone, timetableStyle);
+                        const nameSurf = cellSurface(item, "dark", feeTone, timetableStyle, { feeStripe: true });
+                        const gradeSurf = cellSurface(item, "dark", feeTone, timetableStyle, { feeStripe: false });
+                        const examSurf = cellSurface(item, "muted", feeTone, timetableStyle, { feeStripe: false });
                         return (
                           <Fragment key={`${frame.time}-${idx}-${room}`}>
                             <td className={`${nameSurf.className} ${noGridCls} overflow-visible`} style={nameSurf.style}>
@@ -468,10 +576,10 @@ export default function DayTimetableTable({
                 })}
                 {showRegularCapacitySummary ? (
                   <tr key={`${frame.time}-cap`} className="bg-emerald-50/90">
-                    <td className="border border-emerald-200/80 px-2 py-1.5 text-xs font-medium text-emerald-900">
+                    <td className={`${TD_TIME_CAP} border-emerald-200/80`}>
                       {t.balanceRow}
                     </td>
-                    {ROOM_GROUPS.map((room) => {
+                    {roomsForTable.map((room) => {
                       const slotKey = `${frame.time}::${room}`;
                       const list = byTimeRoom[slotKey] ?? [];
                       const regularCount = list.filter((c) => c.lessonType === "恆常").length;
@@ -504,6 +612,7 @@ export default function DayTimetableTable({
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

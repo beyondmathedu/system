@@ -7,6 +7,10 @@ import {
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
 import {
+  readLessonDayOverrideField,
+  tutorDisplayForLessonRow,
+} from "@/lib/lessonScheduleVersions";
+import {
   LESSON_TYPE_DISPLAY_PRIORITY,
   type YearLessonRecord,
   type YearLessonState,
@@ -243,14 +247,15 @@ function buildRowsForTargetDate(
       } else if (r.rowKind === "reschedule") lessonType = "補堂";
       else if (r.fromExtra) lessonType = "加堂";
 
-      const tutorDisplay =
-        r.rowKind === "reschedule"
-          ? ""
-          : (state.overrides[r.date]?.tutor ?? r.baseRule?.tutor ?? "").toString().trim() || "待定";
+      const tutorDisplay = tutorDisplayForLessonRow({
+        overrides: state.overrides,
+        dateIso: r.date,
+        scheduleRuleTutor: r.baseRule?.tutor,
+        pendingLabel: "待定",
+      });
       const noteDisplay =
-        r.rowKind === "reschedule"
-          ? ""
-          : (state.overrides[r.date]?.lessonSummary ?? r.baseRule?.lessonSummary ?? "").toString().trim();
+        readLessonDayOverrideField(state.overrides, r.date, "lessonSummary") ||
+        String(r.baseRule?.lessonSummary ?? "").trim();
 
       return {
         date: r.date,

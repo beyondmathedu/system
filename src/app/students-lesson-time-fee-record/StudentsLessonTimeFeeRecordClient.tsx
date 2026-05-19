@@ -50,7 +50,7 @@ import {
   type Lesson2026Record,
   type Lesson2026State,
 } from "@/lib/lesson2026Summary";
-import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
+import { getActiveDedupedScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
 
 type StudentRow = {
   id: string;
@@ -1386,7 +1386,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
       return a.createdAt - b.createdAt;
     });
 
-    const activeRules = getActiveScheduleRulesForDate(normalized, dateIso);
+    const activeRules = getActiveDedupedScheduleRulesForDate(normalized, dateIso);
     const weekdays = activeRules.map((r) => r.weekday).filter(Boolean);
     weekdays.sort((a, b) => (WEEKDAY_ORDER[a] ?? 99) - (WEEKDAY_ORDER[b] ?? 99));
     return weekdays;

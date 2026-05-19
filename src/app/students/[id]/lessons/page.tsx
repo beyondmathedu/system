@@ -15,6 +15,7 @@ import {
 import { getLessonUntickedMetrics, type Lesson2026State } from "@/lib/lesson2026Summary";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import AppTopNav from "@/components/AppTopNav";
+import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import ExamDateField from "./ExamDateField";
 import type { LessonScheduleRecord } from "./LessonScheduleGrid";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
@@ -227,47 +228,57 @@ export default function StudentLessonsPage() {
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[auto_1fr] md:items-start">
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">Student Mode (Global Visibility)</p>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <select
-                      value={visibilityMode}
-                      onChange={(e) => setVisibilityMode(e.target.value === "inactive" ? "inactive" : "active")}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
-                    >
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
-                    <input
-                      type="date"
-                      value={visibilityEffectiveDate}
-                      onChange={(e) => setVisibilityEffectiveDate(e.target.value)}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
-                    />
-                    <button
-                      type="button"
-                      disabled={visibilitySaving || !visibilityEffectiveDate}
-                      onClick={() => {
-                        if (!studentId || !visibilityEffectiveDate) return;
-                        setVisibilitySaving(true);
-                        void (async () => {
-                          try {
-                            await saveStudentVisibilityMode({
-                              studentId,
-                              mode: visibilityMode,
-                              effectiveDate: visibilityEffectiveDate,
-                            });
-                          } finally {
-                            setVisibilitySaving(false);
-                          }
-                        })();
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                        <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
-                      </svg>
-                      <span suppressHydrationWarning>{visibilitySaving ? "Saving..." : "Save"}</span>
-                    </button>
-                  </div>
+                  <ClientOnlyAfterMount
+                    fallback={
+                      <div className="mt-1 flex flex-wrap items-center gap-2" aria-hidden>
+                        <div className="h-10 w-[7.5rem] animate-pulse rounded-md bg-slate-200" />
+                        <div className="h-10 w-40 animate-pulse rounded-md bg-slate-200" />
+                        <div className="h-10 w-24 animate-pulse rounded-md bg-slate-200" />
+                      </div>
+                    }
+                  >
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <select
+                        value={visibilityMode}
+                        onChange={(e) => setVisibilityMode(e.target.value === "inactive" ? "inactive" : "active")}
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
+                      >
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                      </select>
+                      <input
+                        type="date"
+                        value={visibilityEffectiveDate}
+                        onChange={(e) => setVisibilityEffectiveDate(e.target.value)}
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                      />
+                      <button
+                        type="button"
+                        disabled={visibilitySaving || !visibilityEffectiveDate}
+                        onClick={() => {
+                          if (!studentId || !visibilityEffectiveDate) return;
+                          setVisibilitySaving(true);
+                          void (async () => {
+                            try {
+                              await saveStudentVisibilityMode({
+                                studentId,
+                                mode: visibilityMode,
+                                effectiveDate: visibilityEffectiveDate,
+                              });
+                            } finally {
+                              setVisibilitySaving(false);
+                            }
+                          })();
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                          <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
+                        </svg>
+                        <span suppressHydrationWarning>{visibilitySaving ? "Saving..." : "Save"}</span>
+                      </button>
+                    </div>
+                  </ClientOnlyAfterMount>
                   <p className="mt-1 text-xs text-slate-500">
                     When mode is Inactive and effective date starts, this student will be hidden in `rooms`, `daily-time-table`, and `students-lesson-time-fee-record`.
                   </p>
