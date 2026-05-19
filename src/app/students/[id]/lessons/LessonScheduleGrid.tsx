@@ -273,7 +273,7 @@ export default function LessonScheduleGrid({
       if (
         hasDuplicateScheduleSlotInVersion(
           records.map(normalizeLessonRecord),
-          updated,
+          normalizeLessonRecord(updated),
           editingRecordId,
         )
       ) {
