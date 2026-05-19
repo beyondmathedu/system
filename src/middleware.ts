@@ -23,7 +23,15 @@ export async function middleware(request: NextRequest) {
 
   // Refresh session from cookies without a round-trip to Auth (getUser hits the server every time).
   // Server Components still call getUser() / profile where verification matters.
-  await supabase.auth.getSession();
+  const { error: sessionError } = await supabase.auth.getSession();
+  // Stale cookies (e.g. project URL/key changed, JWT secret rotated, or revoked session) → clear so user can log in again.
+  if (
+    sessionError &&
+    (sessionError.code === "refresh_token_not_found" ||
+      /invalid refresh token|refresh token not found/i.test(sessionError.message ?? ""))
+  ) {
+    await supabase.auth.signOut();
+  }
   return response;
 }
 
