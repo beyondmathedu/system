@@ -8,6 +8,7 @@ import {
 import { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
 
 export { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
+import { isLessonScheduleHidden } from "@/lib/lessonScheduleHidden";
 import {
   getActiveScheduleRulesForDate,
   isRegularLessonAttended,
@@ -193,11 +194,18 @@ function buildRows(
     const hkNum = getHkWeekdayNumber(cur);
     const weekday = numberToWeekday(hkNum);
     const dateIso = toIsoDate(cur);
-    if (state.hiddenDates[dateIso]) continue;
-
     const activeRules = getActiveScheduleRulesForDate(sortedRules, dateIso, versionCache);
     for (const rule of activeRules) {
       if (rule.weekday !== weekday) continue;
+      if (
+        isLessonScheduleHidden({
+          hiddenDates: state.hiddenDates,
+          dateIso,
+          scheduleRuleId: rule.id,
+        })
+      ) {
+        continue;
+      }
       const attendanceKey = regularLessonAttendanceKey(rule, dateIso);
       baseRows.push({
         date: dateIso,

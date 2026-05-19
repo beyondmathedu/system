@@ -15,6 +15,13 @@ import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { supabase } from "@/lib/supabase";
 import {
+  FEE_OPENING_BALANCE_AS_OF_MONTH,
+  FEE_OPENING_BALANCE_AS_OF_YEAR,
+  loadStudentFeeOpeningBalances,
+  upsertStudentFeeOpeningBalance,
+  writeFeeOpeningBalanceToLocal,
+} from "@/lib/studentFeeOpeningBalance";
+import {
   loadLessonScheduleRecordsBatch,
   loadLessonYearStatesBatch,
   loadStudentMonthlyFeeRecordsInMonthRange,
@@ -59,8 +66,8 @@ const START_YEAR = 2026;
 // Fee accounting: lock legacy history into an opening balance, then start auto-calculation from this month.
 const FEE_SYSTEM_START_YEAR = 2026;
 const FEE_SYSTEM_START_MONTH = 5; // 2026/05
-const OPENING_BALANCE_AS_OF_YEAR = 2026;
-const OPENING_BALANCE_AS_OF_MONTH = 4; // balance as of end of 2026/04
+const OPENING_BALANCE_AS_OF_YEAR = FEE_OPENING_BALANCE_AS_OF_YEAR;
+const OPENING_BALANCE_AS_OF_MONTH = FEE_OPENING_BALANCE_AS_OF_MONTH; // balance as of end of 2026/04
 const STICKY_ID_WIDTH = 88;
 /** Narrow sticky column; long names wrap to 2 lines (see StudentFeeRow). */
 const STICKY_NAME_WIDTH = 76;
@@ -694,6 +701,9 @@ export default function StudentsLessonTimeFeeRecordPage() {
     ...DEFAULT_FEE_TIER_SETTINGS,
   });
   const [feeTierSaveMsg, setFeeTierSaveMsg] = useState("");
+  const [openingBalanceSaveMsg, setOpeningBalanceSaveMsg] = useState("");
+  const [openingBalanceTableMissing, setOpeningBalanceTableMissing] = useState(false);
+  const pendingOpeningBalanceRef = useRef<Map<string, number>>(new Map());
   type FeeDetailDialogState =
     | { kind: "arrears"; studentId: string; title: string }
     | { kind: "makeup"; studentId: string };
@@ -819,13 +829,12 @@ export default function StudentsLessonTimeFeeRecordPage() {
 
       const openingPromise =
         sheetYear === OPENING_BALANCE_AS_OF_YEAR
-          ? supabase
-              .from("student_fee_opening_balances")
-              .select("student_id, opening_balance")
-              .eq("as_of_year", OPENING_BALANCE_AS_OF_YEAR)
-              .eq("as_of_month", OPENING_BALANCE_AS_OF_MONTH)
-              .in("student_id", ids)
-          : Promise.resolve({ data: null as unknown, error: null as null });
+          ? loadStudentFeeOpeningBalances(ids)
+          : Promise.resolve({
+              balances: {} as Record<string, number>,
+              error: undefined as string | undefined,
+              tableMissing: false,
+            });
 
       const [
         metricsResult,
@@ -908,21 +917,27 @@ export default function StudentsLessonTimeFeeRecordPage() {
       });
 
       if (sheetYear === OPENING_BALANCE_AS_OF_YEAR) {
-        const { data, error } = openingResult as {
-          data: unknown[] | null;
-          error: { message?: string } | null;
+        const { balances, error, tableMissing } = openingResult as {
+          balances: Record<string, number>;
+          error?: string;
+          tableMissing?: boolean;
         };
-        if (!error) {
-          const ob: Record<string, number> = {};
-          for (const row of data ?? []) {
-            const sid = String((row as { student_id?: string }).student_id ?? "");
-            if (!sid) continue;
-            ob[sid] = Number((row as { opening_balance?: number | null }).opening_balance ?? 0) || 0;
-          }
-          setOpeningBalanceByStudentId(ob);
+        setOpeningBalanceByStudentId(balances);
+        setOpeningBalanceTableMissing(Boolean(tableMissing));
+        if (error) {
+          setOpeningBalanceSaveMsg(
+            tableMissing
+              ? "期初結餘表未建立：請在 Supabase 執行 supabase/supabase_student_fee_opening_balances.sql（已暫存本機）"
+              : `期初結餘讀取失敗：${error}（已用本機備份）`,
+          );
+        } else {
+          setOpeningBalanceSaveMsg("");
+          setOpeningBalanceTableMissing(false);
         }
       } else {
         setOpeningBalanceByStudentId({});
+        setOpeningBalanceTableMissing(false);
+        setOpeningBalanceSaveMsg("");
       }
 
       const nextRecords: Record<string, LessonRecord[]> = {};
@@ -981,30 +996,58 @@ export default function StudentsLessonTimeFeeRecordPage() {
     };
   }, [students, sheetMonth, sheetYear]);
 
+  const flushPendingOpeningBalances = useCallback(() => {
+    for (const [studentId, value] of pendingOpeningBalanceRef.current) {
+      const key = `${studentId}:${OPENING_BALANCE_AS_OF_YEAR}:${OPENING_BALANCE_AS_OF_MONTH}`;
+      const existing = openingBalanceSaveTimersRef.get(key);
+      if (existing) window.clearTimeout(existing);
+      openingBalanceSaveTimersRef.delete(key);
+      void upsertStudentFeeOpeningBalance(studentId, value);
+    }
+    pendingOpeningBalanceRef.current.clear();
+  }, [openingBalanceSaveTimersRef]);
+
   function scheduleSaveOpeningBalance(studentId: string, nextValue: number) {
+    pendingOpeningBalanceRef.current.set(studentId, nextValue);
     const key = `${studentId}:${OPENING_BALANCE_AS_OF_YEAR}:${OPENING_BALANCE_AS_OF_MONTH}`;
     const existing = openingBalanceSaveTimersRef.get(key);
     if (existing) window.clearTimeout(existing);
     const t = window.setTimeout(() => {
       openingBalanceSaveTimersRef.delete(key);
-      void supabase.from("student_fee_opening_balances").upsert(
-        {
-          student_id: studentId,
-          as_of_year: OPENING_BALANCE_AS_OF_YEAR,
-          as_of_month: OPENING_BALANCE_AS_OF_MONTH,
-          opening_balance: Number(nextValue) || 0,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "student_id,as_of_year,as_of_month" },
-      );
+      pendingOpeningBalanceRef.current.delete(studentId);
+      void upsertStudentFeeOpeningBalance(studentId, nextValue).then((res) => {
+        if (res.ok) {
+          setOpeningBalanceTableMissing(false);
+          setOpeningBalanceSaveMsg("");
+          return;
+        }
+        setOpeningBalanceTableMissing(Boolean(res.tableMissing));
+        setOpeningBalanceSaveMsg(
+          res.tableMissing
+            ? "期初結餘未能寫入雲端：請在 Supabase 執行 supabase/supabase_student_fee_opening_balances.sql（已暫存本機）"
+            : `期初結餘儲存失敗：${res.error ?? "unknown"}（已暫存本機）`,
+        );
+      });
     }, 600);
     openingBalanceSaveTimersRef.set(key, t);
   }
 
   const onOpeningBalanceChange = useCallback((studentId: string, nextValue: number) => {
+    writeFeeOpeningBalanceToLocal(studentId, nextValue);
     setOpeningBalanceByStudentId((prev) => ({ ...prev, [studentId]: nextValue }));
     scheduleSaveOpeningBalance(studentId, nextValue);
   }, []);
+
+  useEffect(() => {
+    const onLeave = () => flushPendingOpeningBalances();
+    window.addEventListener("beforeunload", onLeave);
+    window.addEventListener("pagehide", onLeave);
+    return () => {
+      window.removeEventListener("beforeunload", onLeave);
+      window.removeEventListener("pagehide", onLeave);
+      flushPendingOpeningBalances();
+    };
+  }, [flushPendingOpeningBalances]);
 
   function scheduleSave(studentId: string, patch: Partial<RecordState>) {
     const key = `${studentId}:${sheetYear}:${sheetMonth}`;
@@ -1897,6 +1940,13 @@ export default function StudentsLessonTimeFeeRecordPage() {
                         <span className="font-semibold">留班（重讀同級）：</span>
                         若會跑 9/1 全表升班，可於 8/31 將學籍暫改為低一級（例 F.3→F.2），升班後確認檔案仍回到 F.3。
                       </span>
+                      {sheetYear === OPENING_BALANCE_AS_OF_YEAR &&
+                      (openingBalanceSaveMsg || openingBalanceTableMissing) ? (
+                        <span className="mt-1.5 block rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-snug text-red-950">
+                          {openingBalanceSaveMsg ||
+                            "期初結餘表未建立：請在 Supabase 執行 supabase/supabase_student_fee_opening_balances.sql"}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                   <button

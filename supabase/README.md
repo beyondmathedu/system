@@ -13,6 +13,7 @@
 | 5 | `supabase_classrooms_regular_period_max.sql` | 課室「恆常每時段上限」欄位（`/regular-class-timetable` 餘額） |
 | 6 | `supabase_timetable_day_remarks.sql` | 學生×日期 remarks（若仍使用相關功能） |
 | 7 | `supabase_student_monthly_fee_records.sql` | 學生每月手填欄位（學費記錄頁） |
+| 8 | `supabase_student_fee_opening_balances.sql` | 學費記錄頁「Opening balance（截至 2026/04 月底）」 |
 
 ## 僅在「舊庫仍是 teachers / teacher_rates」時
 
@@ -65,4 +66,5 @@ PostgreSQL 常用做法（本 repo 腳本已盡量跟住）：
 | `supabase_classrooms_regular_period_max.sql` | `classrooms.regular_period_max` |
 | `supabase_timetable_day_remarks.sql` | `student_timetable_day_remarks` |
 | `supabase_student_monthly_fee_records.sql` | `student_monthly_fee_records` |
+| `supabase_student_fee_opening_balances.sql` | `student_fee_opening_balances`（期初結餘） |
 | `supabase_migrate_teacher_to_tutor.sql` | 舊表名遷移至 tutor（僅舊庫需要） |

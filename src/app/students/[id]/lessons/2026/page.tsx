@@ -5,7 +5,12 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import { supabase } from "@/lib/supabase";
-import { loadExamInfo, loadLessonYearState, saveLessonYearState } from "@/lib/studentLessonStorage";
+import {
+  loadExamInfo,
+  loadLessonScheduleRecords,
+  loadLessonYearState,
+  saveLessonYearState,
+} from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
@@ -20,7 +25,15 @@ import {
   LESSON_SYSTEM_START_YEAR,
 } from "@/lib/lessonSystemStart";
 import {
+  formatHiddenScheduleKeyLabel,
+  hiddenScheduleRuleStorageKey,
+  isLessonScheduleHidden,
+  listHiddenScheduleKeys,
+  parseRegularLessonRowId,
+} from "@/lib/lessonScheduleHidden";
+import {
   getActiveScheduleRulesForDate,
+  getActiveScheduleVersionDate,
   isRegularLessonAttended,
   regularLessonAttendanceKey,
 } from "@/lib/lessonScheduleVersions";
@@ -456,20 +469,28 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
   useEffect(() => {
     if (!studentId) return;
-    try {
-      const key = `lesson_schedule_records:${studentId}`;
-      const raw = window.localStorage.getItem(key);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as ScheduleRecord[];
-      if (Array.isArray(parsed)) {
-        const timer = window.setTimeout(() => {
-          setRecords(parsed);
-        }, 0);
-        return () => window.clearTimeout(timer);
+    const key = `lesson_schedule_records:${studentId}`;
+    let mounted = true;
+    void (async () => {
+      const cloud = await loadLessonScheduleRecords(studentId);
+      if (!mounted) return;
+      if (Array.isArray(cloud) && cloud.length > 0) {
+        setRecords(cloud as ScheduleRecord[]);
+        window.localStorage.setItem(key, JSON.stringify(cloud));
+        return;
       }
-    } catch {
-      // ignore
-    }
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as ScheduleRecord[];
+        if (Array.isArray(parsed)) setRecords(parsed);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, [studentId]);
 
   useEffect(() => {
@@ -632,7 +653,14 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       }
     }
 
-    return rows.filter((r) => !hiddenDates[r.date]);
+    return rows.filter(
+      (r) =>
+        !isLessonScheduleHidden({
+          hiddenDates,
+          dateIso: r.date,
+          scheduleRuleId: parseRegularLessonRowId(r.rowId)?.ruleId,
+        }),
+    );
   }, [records, studentId, overrides, hiddenDates, targetYear]);
 
   const baseRowByDate = useMemo(() => {
@@ -926,6 +954,14 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     [scheduleRows],
   );
 
+  const hiddenScheduleKeys = useMemo(() => listHiddenScheduleKeys(hiddenDates), [hiddenDates]);
+
+  function persistHiddenDates(next: Record<string, boolean>) {
+    setHiddenDates(next);
+    window.localStorage.setItem(HIDDEN_DATES_STORAGE_KEY, JSON.stringify(next));
+    persistYearState({ hiddenDates: next });
+  }
+
   const filteredScheduleRows = useMemo(() => {
     const timeKeyword = filterTime.trim().toLowerCase();
     return sortedScheduleRows.filter((r) => {
@@ -948,6 +984,27 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     filterTutor,
     filterType,
   ]);
+
+  const mayScheduleStats = useMemo(() => {
+    const total = scheduleRows.filter((r) => r.month === 5).length;
+    const visible = filteredScheduleRows.filter((r) => r.month === 5).length;
+    return { total, visible };
+  }, [scheduleRows, filteredScheduleRows]);
+
+  const activeMayVersionDate = useMemo(() => {
+    if (records.length === 0) return null;
+    const normalized = records.map((r) => ({
+      effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
+    }));
+    return getActiveScheduleVersionDate(normalized, `${targetYear}-05-15`);
+  }, [records, targetYear]);
+
+  const activeMayRuleCount = useMemo(() => {
+    if (!activeMayVersionDate) return 0;
+    return records.filter(
+      (r) => (r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt)) === activeMayVersionDate,
+    ).length;
+  }, [records, activeMayVersionDate]);
 
   const allVisibleSelected =
     filteredScheduleRows.length > 0 &&
@@ -1356,10 +1413,44 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         return;
                       }
                       setSelectionError("");
-                      if (!window.confirm("Are you sure you want to delete selected dates?")) return;
                       const selectedRows = selectedRowIds
                         .map((id) => scheduleRowById.get(id))
                         .filter((r): r is ScheduleRow => Boolean(r));
+
+                      const regularDeletes = selectedRows.filter(
+                        (row) => row.rowKind === "normal" && !row.extraEntryId,
+                      );
+                      const willHideWholeDates = new Set<string>();
+                      const willHideRuleIds = new Set<string>();
+                      for (const row of regularDeletes) {
+                        const parsed = parseRegularLessonRowId(row.rowId);
+                        if (!parsed) {
+                          willHideWholeDates.add(row.date);
+                          continue;
+                        }
+                        const sameDateRegularCount = scheduleRows.filter(
+                          (r) =>
+                            r.date === parsed.dateIso &&
+                            r.rowKind === "normal" &&
+                            !r.extraEntryId &&
+                            parseRegularLessonRowId(r.rowId),
+                        ).length;
+                        if (sameDateRegularCount > 1) {
+                          willHideRuleIds.add(parsed.ruleId);
+                        } else {
+                          willHideWholeDates.add(parsed.dateIso);
+                        }
+                      }
+                      const confirmLines = [
+                        "Hide selected lesson row(s) from this list?",
+                        willHideWholeDates.size > 0
+                          ? `• Whole dates (all lessons that day): ${[...willHideWholeDates].join(", ")}`
+                          : "",
+                        willHideRuleIds.size > 0
+                          ? `• Duplicate schedule slot only (other weekdays unchanged): ${[...willHideRuleIds].join(", ")}`
+                          : "",
+                      ].filter(Boolean);
+                      if (!window.confirm(confirmLines.join("\n"))) return;
 
                       const rescheduleIdsToDelete = new Set<string>();
                       const extraIdsToDelete = new Set<string>();
@@ -1398,16 +1489,26 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
                       const nextHidden = { ...hiddenDates };
                       for (const row of selectedRows) {
-                        if (row.rowKind === "normal" && !row.extraEntryId) {
+                        if (row.rowKind !== "normal" || row.extraEntryId) continue;
+                        const parsed = parseRegularLessonRowId(row.rowId);
+                        if (!parsed) {
                           nextHidden[row.date] = true;
+                          continue;
+                        }
+                        const sameDateRegularCount = scheduleRows.filter(
+                          (r) =>
+                            r.date === parsed.dateIso &&
+                            r.rowKind === "normal" &&
+                            !r.extraEntryId &&
+                            parseRegularLessonRowId(r.rowId),
+                        ).length;
+                        if (sameDateRegularCount > 1) {
+                          nextHidden[hiddenScheduleRuleStorageKey(parsed.ruleId)] = true;
+                        } else {
+                          nextHidden[parsed.dateIso] = true;
                         }
                       }
-                      setHiddenDates(nextHidden);
-                      window.localStorage.setItem(
-                        HIDDEN_DATES_STORAGE_KEY,
-                        JSON.stringify(nextHidden),
-                      );
-                      persistYearState({ hiddenDates: nextHidden });
+                      persistHiddenDates(nextHidden);
                       setSelectedRowIds([]);
                     }}
                     className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
@@ -1422,6 +1523,73 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
               {selectionError && (
                 <p className="mt-2 text-xs font-medium text-red-600">{selectionError}</p>
               )}
+              {hiddenScheduleKeys.length > 0 ||
+              records.length === 0 ||
+              mayScheduleStats.total === 0 ||
+              (mayScheduleStats.total > 0 && mayScheduleStats.visible === 0) ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                  {hiddenScheduleKeys.length > 0 ? (
+                    <>
+                      <p className="font-semibold">
+                        已隱藏 {hiddenScheduleKeys.length} 項（Delete 寫入 hidden_dates，唔係刪課表設定）
+                      </p>
+                      <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto text-[11px]">
+                        {hiddenScheduleKeys.map((key) => (
+                          <li key={key} className="flex flex-wrap items-center justify-between gap-2">
+                            <span>{formatHiddenScheduleKeyLabel(key)}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = { ...hiddenDates };
+                                delete next[key];
+                                persistHiddenDates(next);
+                              }}
+                              className="shrink-0 rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold hover:bg-amber-100"
+                            >
+                              恢復
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!window.confirm("Restore all hidden lessons for this student/year?")) return;
+                          persistHiddenDates({});
+                        }}
+                        className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold hover:bg-amber-100"
+                      >
+                        全部恢復顯示
+                      </button>
+                    </>
+                  ) : (
+                    <p className="font-semibold">沒有 hidden_dates 隱藏紀錄</p>
+                  )}
+                  {records.length === 0 ? (
+                    <p className="mt-2 leading-snug">
+                      課表設定（student_lesson_records）目前為<strong>空</strong>，所以 5 月不會有任何 Regular
+                      行。請到上一頁「Lesson Schedule Settings」重新加入星期／時間／房間。
+                    </p>
+                  ) : mayScheduleStats.total === 0 ? (
+                    <p className="mt-2 leading-snug">
+                      有 {records.length} 條課表規則，但 5 月仍無課堂行。5 月使用版本 effective date：
+                      <strong> {activeMayVersionDate ?? "—"}</strong>（共 {activeMayRuleCount}{" "}
+                      條）。若你曾在課表設定刪走該版本嘅規則，要重新 Add Record。
+                    </p>
+                  ) : mayScheduleStats.visible === 0 ? (
+                    <p className="mt-2 leading-snug">
+                      5 月共有 {mayScheduleStats.total} 堂，但被上方篩選（Month / Room / Tutor 等）濾走。請將
+                      Month 改為 All 或 5。
+                    </p>
+                  ) : null}
+                  <Link
+                    href={`/students/${studentId}/lessons`}
+                    className="mt-2 inline-block font-semibold text-[#1d76c2] underline"
+                  >
+                    → 前往 Lesson Schedule Settings 檢查課表
+                  </Link>
+                </div>
+              ) : null}
             </div>
 
             {showEditPanel && (
