@@ -40,6 +40,17 @@ export function formatExamDateSlashed(iso: string) {
   return `${Number(m[2])}/${Number(m[3])}`;
 }
 
+/** Daily compact name (`中文 暱稱`) → two lines. */
+function splitTimetableDisplayName(name: string): { line1: string; line2?: string } {
+  const trimmed = name.trim();
+  const space = trimmed.indexOf(" ");
+  if (space <= 0) return { line1: trimmed };
+  const line1 = trimmed.slice(0, space);
+  const line2 = trimmed.slice(space + 1).trim();
+  if (!line2) return { line1 };
+  return { line1, line2 };
+}
+
 function mergeCellStyle(...parts: (CSSProperties | undefined)[]): CSSProperties | undefined {
   const o: CSSProperties = {};
   for (const p of parts) {
@@ -196,6 +207,17 @@ export default function DayTimetableTable({
   }, [rowFrames, byTimeRoom]);
   const roomColSpan = roomsForTable.length * COLS_PER_ROOM + 1;
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
+  const dailyCompactColumns = repeatRoomHeadersPerTimeSlot;
+  const thNameClass = dailyCompactColumns
+    ? `${TH_SUB} w-[5.75rem] max-w-[5.75rem] px-1 py-2 text-xs`
+    : `${TH_SUB} px-3`;
+  const thExamClass = dailyCompactColumns
+    ? `${TH_SUB} w-14 max-w-14 px-1 py-2 text-center text-xs`
+    : `${TH_SUB} w-20 px-2`;
+  const tdNameExtra = dailyCompactColumns
+    ? "w-[5.75rem] max-w-[5.75rem] min-h-9 !h-auto px-1 py-0.5 align-top"
+    : "";
+  const tdExamExtra = dailyCompactColumns ? "w-14 max-w-14 px-1 text-center text-xs tabular-nums" : "w-20";
   const [hoverPanel, setHoverPanel] = useState<{
     studentId: string;
     name: string;
@@ -375,10 +397,7 @@ export default function DayTimetableTable({
             </tr>
             <tr>
               {roomsForTable.flatMap((room) => [
-                <th
-                  key={`name-${room}`}
-                  className={`${TH_SUB} px-3`}
-                >
+                <th key={`name-${room}`} className={thNameClass}>
                   {t.name}
                 </th>,
                 <th
@@ -387,11 +406,7 @@ export default function DayTimetableTable({
                 >
                   {t.grade}
                 </th>,
-                <th
-                  key={`exam-${room}`}
-                  title={t.examThTitle}
-                  className={`${TH_SUB} w-28 px-3`}
-                >
+                <th key={`exam-${room}`} title={t.examThTitle} className={thExamClass}>
                   {t.examHeader}
                 </th>,
               ])}
@@ -442,7 +457,7 @@ export default function DayTimetableTable({
                     </tr>
                     <tr className="bg-slate-50">
                       {roomsForTable.flatMap((room) => [
-                        <th key={`${frame.time}-slot-h2-${room}-n`} className={`${TH_SUB} px-3`}>
+                        <th key={`${frame.time}-slot-h2-${room}-n`} className={thNameClass}>
                           {t.name}
                         </th>,
                         <th key={`${frame.time}-slot-h2-${room}-g`} className={`${TH_SUB} w-16 px-2`}>
@@ -451,7 +466,7 @@ export default function DayTimetableTable({
                         <th
                           key={`${frame.time}-slot-h2-${room}-e`}
                           title={t.examThTitle}
-                          className={`${TH_SUB} w-28 px-3`}
+                          className={thExamClass}
                         >
                           {t.examHeader}
                         </th>,
@@ -476,7 +491,10 @@ export default function DayTimetableTable({
                         const examSurf = cellSurface(item, "muted", feeTone, timetableStyle, { feeStripe: false });
                         return (
                           <Fragment key={`${frame.time}-${idx}-${room}`}>
-                            <td className={`${nameSurf.className} ${noGridCls} overflow-visible`} style={nameSurf.style}>
+                            <td
+                              className={`${nameSurf.className} ${tdNameExtra} ${noGridCls} overflow-visible`}
+                              style={nameSurf.style}
+                            >
                               {item ? (
                                 <div
                                   className="relative"
@@ -492,9 +510,25 @@ export default function DayTimetableTable({
                                 >
                                   <Link
                                     href={`/students/${encodeURIComponent(normalizeStudentId(item.studentId))}/lessons`}
-                                    className={`${nameSurf.isDarkBg ? "text-white" : "text-[#1d76c2]"} hover:underline`}
+                                    className={`${nameSurf.isDarkBg ? "text-white" : "text-[#1d76c2]"} hover:underline ${
+                                      dailyCompactColumns ? "block leading-tight" : ""
+                                    }`}
                                   >
-                                    {item.name}
+                                    {dailyCompactColumns ? (
+                                      (() => {
+                                        const { line1, line2 } = splitTimetableDisplayName(item.name);
+                                        return line2 ? (
+                                          <>
+                                            <span className="block text-[13px] leading-snug">{line1}</span>
+                                            <span className="block text-[11px] leading-snug">{line2}</span>
+                                          </>
+                                        ) : (
+                                          <span className="block text-[13px] leading-snug">{line1}</span>
+                                        );
+                                      })()
+                                    ) : (
+                                      item.name
+                                    )}
                                     {(remarksById[item.studentId] ?? "").trim() ? (
                                       <span
                                         className={`ml-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
@@ -565,7 +599,7 @@ export default function DayTimetableTable({
                             <td className={`${gradeSurf.className} w-16 ${noGridCls}`} style={gradeSurf.style}>
                               {formatGradeDisplay(item?.grade ?? "")}
                             </td>
-                            <td className={`${examSurf.className} w-28 ${noGridCls}`} style={examSurf.style}>
+                            <td className={`${examSurf.className} ${tdExamExtra} ${noGridCls}`} style={examSurf.style}>
                               {item ? formatExamDateSlashed(examById[item.studentId] ?? "") : ""}
                             </td>
                           </Fragment>
