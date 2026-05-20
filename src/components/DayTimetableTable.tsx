@@ -75,12 +75,15 @@ function isDarkHexBackground(hex: string | undefined | null): boolean {
 function feeStripeStyle(
   tone: DayTimetableFeePaymentTone | undefined,
   style: DayTimetableStyleSettings,
+  side: "left" | "right" = "left",
 ): CSSProperties | undefined {
   if (!tone || tone === "ok") return undefined;
   const color =
     tone === "many_months_unpaid" ? style.feeArrearsStripeHex : style.feeUnpaidStripeHex;
   // inset box-shadow survives Daily page `!border-0` (showPeriodSeparatorOnly).
-  return { boxShadow: `inset 4px 0 0 0 ${color}` };
+  return {
+    boxShadow: side === "right" ? `inset -4px 0 0 0 ${color}` : `inset 4px 0 0 0 ${color}`,
+  };
 }
 
 function cellSurface(
@@ -88,9 +91,10 @@ function cellSurface(
   textTone: "dark" | "muted",
   feeTone: DayTimetableFeePaymentTone | undefined,
   timetableStyle: DayTimetableStyleSettings,
-  opts?: { feeStripe?: boolean },
+  opts?: { feeStripe?: boolean; feeStripeSide?: "left" | "right" },
 ): { className: string; style?: CSSProperties; isDarkBg: boolean } {
   const includeFeeStripe = opts?.feeStripe !== false;
+  const feeStripeSide = opts?.feeStripeSide ?? "left";
   const td = textTone === "dark" ? TD_BASE : TD_BASE_WIDE;
   const lightText = textTone === "dark" ? "text-slate-800" : "text-slate-700";
   if (!item) {
@@ -99,7 +103,7 @@ function cellSurface(
       isDarkBg: false,
     };
   }
-  const stripe = includeFeeStripe ? feeStripeStyle(feeTone, timetableStyle) : undefined;
+  const stripe = includeFeeStripe ? feeStripeStyle(feeTone, timetableStyle, feeStripeSide) : undefined;
   if (item.lessonType === PENDING_MAKEUP_TYPE_LABEL) {
     return {
       className: `${td} text-amber-950`,
@@ -223,7 +227,10 @@ export default function DayTimetableTable({
     name: string;
     scheduleRemarks: string;
     roomIdx: number;
+    anchorRect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
   } | null>(null);
+  const hoverPanelRef = useRef<HTMLDivElement | null>(null);
+  const [hoverPanelSize, setHoverPanelSize] = useState<{ w: number; h: number }>({ w: 288, h: 240 });
   const [remarksById, setRemarksById] = useState<Record<string, string>>(payload.timetableRemarksById ?? {});
   const [savingById, setSavingById] = useState<Record<string, boolean>>({});
   const saveTimersRef = useRef<Map<string, number>>(new Map());
@@ -233,6 +240,20 @@ export default function DayTimetableTable({
     setRemarksById(payload.timetableRemarksById ?? {});
     setHoverPanel(null);
   }, [payload.timetableRemarksById, payload.dateIso]);
+
+  useEffect(() => {
+    if (!hoverPanel) return;
+    // After render, measure actual panel height to avoid jumping too far.
+    const id = window.setTimeout(() => {
+      const el = hoverPanelRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setHoverPanelSize({ w: r.width, h: r.height });
+      }
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [hoverPanel?.studentId, hoverPanel?.anchorRect.left, hoverPanel?.anchorRect.top]);
 
   const flushSave = useCallback(async (studentId: string, nextText: string) => {
     setSavingById((prev) => ({ ...prev, [studentId]: true }));
@@ -263,17 +284,18 @@ export default function DayTimetableTable({
     };
   }, []);
 
-  function openHover(
-    studentId: string,
-    name: string,
-    scheduleRemarks: string,
-    roomIdx: number,
-  ) {
+  function openHover(params: {
+    studentId: string;
+    name: string;
+    scheduleRemarks: string;
+    roomIdx: number;
+    anchorRect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
+  }) {
     if (hideHoverTimerRef.current) {
       window.clearTimeout(hideHoverTimerRef.current);
       hideHoverTimerRef.current = null;
     }
-    setHoverPanel({ studentId, name, scheduleRemarks, roomIdx });
+    setHoverPanel(params);
   }
 
   function closeHoverLater(studentId: string) {
@@ -486,9 +508,15 @@ export default function DayTimetableTable({
                         const feeTone = item
                           ? feeToneForStudent(feePaymentToneByStudentId, item.studentId)
                           : undefined;
-                        const nameSurf = cellSurface(item, "dark", feeTone, timetableStyle, { feeStripe: true });
+                        const nameSurf = cellSurface(item, "dark", feeTone, timetableStyle, {
+                          feeStripe: true,
+                          feeStripeSide: "left",
+                        });
                         const gradeSurf = cellSurface(item, "dark", feeTone, timetableStyle, { feeStripe: false });
-                        const examSurf = cellSurface(item, "muted", feeTone, timetableStyle, { feeStripe: false });
+                        const examSurf = cellSurface(item, "muted", feeTone, timetableStyle, {
+                          feeStripe: true,
+                          feeStripeSide: "right",
+                        });
                         return (
                           <Fragment key={`${frame.time}-${idx}-${room}`}>
                             <td
@@ -499,16 +527,37 @@ export default function DayTimetableTable({
                                 <div
                                   className="relative"
                                   onMouseEnter={() =>
-                                    openHover(
-                                      item.studentId,
-                                      item.name,
-                                      item.scheduleRemarks,
+                                    openHover({
+                                      studentId: item.studentId,
+                                      name: item.name,
+                                      scheduleRemarks: item.scheduleRemarks,
                                       roomIdx,
-                                    )
+                                      anchorRect: ((): {
+                                        left: number;
+                                        top: number;
+                                        right: number;
+                                        bottom: number;
+                                        width: number;
+                                        height: number;
+                                      } => {
+                                        const el = document.getElementById(`tt-hover-${frame.time}-${idx}-${room}-${item.studentId}`);
+                                        if (!el) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+                                        const r = el.getBoundingClientRect();
+                                        return {
+                                          left: r.left,
+                                          top: r.top,
+                                          right: r.right,
+                                          bottom: r.bottom,
+                                          width: r.width,
+                                          height: r.height,
+                                        };
+                                      })(),
+                                    })
                                   }
                                   onMouseLeave={() => closeHoverLater(item.studentId)}
                                 >
                                   <Link
+                                    id={`tt-hover-${frame.time}-${idx}-${room}-${item.studentId}`}
                                     href={`/students/${encodeURIComponent(normalizeStudentId(item.studentId))}/lessons`}
                                     className={`${nameSurf.isDarkBg ? "text-white" : "text-[#1d76c2]"} hover:underline ${
                                       dailyCompactColumns ? "block leading-tight" : ""
@@ -545,51 +594,7 @@ export default function DayTimetableTable({
                                     </p>
                                   ) : null}
                                   {hoverPanel?.studentId === item.studentId ? (
-                                    <div
-                                      role="dialog"
-                                      aria-label={t.remarks}
-                                      className={[
-                                        "absolute z-50 w-72 rounded-lg border border-slate-300 bg-white p-2 shadow-2xl ring-1 ring-slate-200",
-                                        roomIdx >= 2
-                                          ? "right-0 top-0 -translate-x-full -translate-y-0 pr-1"
-                                          : "left-0 top-full mt-1",
-                                      ].join(" ")}
-                                      onMouseEnter={keepHoverOpen}
-                                      onMouseLeave={() => closeHoverLater(item.studentId)}
-                                    >
-                                      <p className="text-xs font-semibold text-slate-800">{item.name}</p>
-                                      <p className="mb-1 mt-0.5 text-[11px] font-semibold tracking-wide text-slate-500">
-                                        {t.remarks}
-                                        <span className="ml-1 font-normal text-slate-400">
-                                          ({t.remarkHoverHint})
-                                        </span>
-                                      </p>
-                                      {item.scheduleRemarks.trim() ? (
-                                        <p className="mb-2 rounded-md bg-slate-50 px-2 py-1 text-[11px] leading-relaxed text-slate-600">
-                                          <span className="font-medium text-slate-700">
-                                            {t.lessonSummaryLabel}:{" "}
-                                          </span>
-                                          {item.scheduleRemarks.trim()}
-                                        </p>
-                                      ) : null}
-                                      <textarea
-                                        value={remarksById[item.studentId] ?? ""}
-                                        onChange={(e) => {
-                                          const v = e.target.value;
-                                          setRemarksById((prev) => ({
-                                            ...prev,
-                                            [item.studentId]: v,
-                                          }));
-                                          scheduleSave(item.studentId, v);
-                                        }}
-                                        placeholder={t.remarkPlaceholder}
-                                        rows={3}
-                                        className="w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-800 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
-                                      />
-                                      <p className="mt-1 text-[11px] text-slate-500">
-                                        {savingById[item.studentId] ? t.saving : t.autoSaved}
-                                      </p>
-                                    </div>
+                                    <div />
                                   ) : null}
                                 </div>
                               ) : (
@@ -647,6 +652,64 @@ export default function DayTimetableTable({
         </tbody>
       </table>
       </div>
+      {hoverPanel ? (
+        <div
+          role="dialog"
+          aria-label={t.remarks}
+          className="fixed z-[9999] w-72 rounded-lg border border-slate-300 bg-white p-2 shadow-2xl ring-1 ring-slate-200"
+          style={((): CSSProperties => {
+            const PANEL_W = hoverPanelSize.w || 288;
+            const PANEL_H = hoverPanelSize.h || 240;
+            const PAD = 8;
+            const GAP = 4;
+            const r = hoverPanel.anchorRect;
+            const vw = typeof window === "undefined" ? 1200 : window.innerWidth;
+            const vh = typeof window === "undefined" ? 800 : window.innerHeight;
+            const preferAbove = r.bottom + PANEL_H > vh - PAD;
+            let top = preferAbove ? r.top - PANEL_H - GAP : r.bottom + GAP;
+            if (top < PAD) top = PAD;
+            if (top > vh - PANEL_H - PAD) top = Math.max(PAD, vh - PANEL_H - PAD);
+            const preferRightAlign = hoverPanel.roomIdx >= 2;
+            // Keep panel close to the anchor; align to left edge by default.
+            let left = preferRightAlign ? r.right - PANEL_W : r.left;
+            if (left < PAD) left = PAD;
+            if (left > vw - PANEL_W - PAD) left = Math.max(PAD, vw - PANEL_W - PAD);
+            return { top, left };
+          })()}
+          ref={hoverPanelRef}
+          onMouseEnter={keepHoverOpen}
+          onMouseLeave={() => closeHoverLater(hoverPanel.studentId)}
+        >
+          <p className="text-xs font-semibold text-slate-800">{hoverPanel.name}</p>
+          <p className="mb-1 mt-0.5 text-[11px] font-semibold tracking-wide text-slate-500">
+            {t.remarks}
+            <span className="ml-1 font-normal text-slate-400">({t.remarkHoverHint})</span>
+          </p>
+          {hoverPanel.scheduleRemarks.trim() ? (
+            <p className="mb-2 rounded-md bg-slate-50 px-2 py-1 text-[11px] leading-relaxed text-slate-600">
+              <span className="font-medium text-slate-700">{t.lessonSummaryLabel}: </span>
+              {hoverPanel.scheduleRemarks.trim()}
+            </p>
+          ) : null}
+          <textarea
+            value={remarksById[hoverPanel.studentId] ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              setRemarksById((prev) => ({
+                ...prev,
+                [hoverPanel.studentId]: v,
+              }));
+              scheduleSave(hoverPanel.studentId, v);
+            }}
+            placeholder={t.remarkPlaceholder}
+            rows={3}
+            className="w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-800 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
+          />
+          <p className="mt-1 text-[11px] text-slate-500">
+            {savingById[hoverPanel.studentId] ? t.saving : t.autoSaved}
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

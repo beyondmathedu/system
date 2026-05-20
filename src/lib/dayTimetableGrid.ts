@@ -7,6 +7,7 @@ import {
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
 import {
+  getActiveScheduleRulesForDate,
   readLessonDayOverrideField,
   tutorDisplayForLessonRow,
 } from "@/lib/lessonScheduleVersions";
@@ -32,6 +33,15 @@ import {
   type RoomGroup,
 } from "@/lib/dayTimetableShared";
 import { normalizeStudentId } from "@/lib/studentId";
+import {
+  effectiveFlatLessonUnit,
+  gradeForFeePricing,
+  isLowerFeeTier,
+} from "@/lib/studentFeePricingGrade";
+import {
+  loadStudentFeeTierSettingsAdmin,
+  type StudentFeeTierSettings,
+} from "@/lib/studentFeeTierSettings";
 
 export {
   ROOM_GROUPS,
@@ -54,6 +64,98 @@ const EMPTY_YEAR_STATE: YearLessonState = {
   rescheduleEntries: [],
   extraEntries: [],
 };
+const FEE_SYSTEM_START_YEAR = 2026;
+const FEE_SYSTEM_START_MONTH = 5;
+const FEE_OPENING_BALANCE_AS_OF_YEAR = 2026;
+const FEE_OPENING_BALANCE_AS_OF_MONTH = 4;
+const HK_WEEKDAY_SHORT_TO_CN: Record<string, string> = {
+  Mon: "一",
+  Tue: "二",
+  Wed: "三",
+  Thu: "四",
+  Fri: "五",
+  Sat: "六",
+  Sun: "日",
+};
+const WEEKDAY_ORDER: Record<string, number> = {
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  日: 7,
+};
+
+function canonicalSaturdayTime(raw: string): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  const upper = s.toUpperCase();
+  if (upper.includes("AM") || upper.includes("PM")) {
+    // Normalize leading hour to 2 digits for consistent matching.
+    const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(s.trim());
+    if (!m) return s.trim();
+    const hh = String(Number(m[1])).padStart(2, "0");
+    return `${hh}:${m[2]} ${m[3].toUpperCase()}`;
+  }
+  // Accept "10:00" "11:30" "1:00" "2:30" as Saturday presets.
+  if (s === "10:00") return "10:00 AM";
+  if (s === "11:30") return "11:30 AM";
+  if (s === "1:00") return "01:00 PM";
+  if (s === "2:30") return "02:30 PM";
+  return s;
+}
+
+function overrideTutorForMaySaturday(opts: {
+  dateIso: string;
+  normalizedRoom: string;
+  time: string;
+  tutorDisplay: string;
+}): string {
+  const { dateIso, normalizedRoom, time, tutorDisplay } = opts;
+  // Only apply to May 2026 Saturdays.
+  if (!dateIso.startsWith("2026-05-")) return tutorDisplay;
+  if (weekdayCnFromIsoDate(dateIso) !== "六") return tutorDisplay;
+
+  const t = canonicalSaturdayTime(time);
+  if (!t) return tutorDisplay;
+  const room = String(normalizedRoom ?? "").trim();
+
+  const map: Record<string, string> = {
+    // 10:00
+    "10:00 AM::Hope": "Leo",
+    "10:00 AM::B": "Samuel",
+    "10:00 AM::M前": "Howard",
+    // 11:30
+    "11:30 AM::Hope": "Leo",
+    "11:30 AM::B": "Samuel",
+    "11:30 AM::M前": "Howard",
+    // 1:00
+    "01:00 PM::Hope": "Pammi",
+    "01:00 PM::B": "Samuel",
+    "01:00 PM::M前": "Frank",
+    "01:00 PM::M後": "Matthew",
+    // 2:30
+    "02:30 PM::Hope": "Pammi",
+    "02:30 PM::B": "Matthew",
+    "02:30 PM::M前": "Frank",
+  };
+  return map[`${t}::${room}`] ?? tutorDisplay;
+}
+
+function timeSortKey(raw: string): number {
+  const s = String(raw ?? "").trim();
+  if (!s || s === "—" || s === "待定") return Number.POSITIVE_INFINITY;
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(s.toUpperCase());
+  if (!m) return Number.POSITIVE_INFINITY - 1;
+  let hh = Number(m[1]);
+  const mm = Number(m[2]);
+  const ap = m[3].toUpperCase();
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return Number.POSITIVE_INFINITY - 1;
+  hh = hh % 12; // 12 AM/PM special-cased by adding below
+  if (ap === "PM") hh += 12;
+  return hh * 60 + mm;
+}
 
 type StudentRow = {
   id: string;
@@ -262,7 +364,13 @@ function buildRowsForTargetDate(
         time: r.time || "待定",
         room: r.room,
         lessonType,
-        tutorDisplay,
+        tutorDisplay: overrideTutorForMaySaturday({
+          dateIso: r.date,
+          // Use the same normalization as the timetable grid.
+          normalizedRoom: normalizeRoom(r.room),
+          time: r.time || "",
+          tutorDisplay,
+        }),
         noteDisplay,
         pendingMakeupLabel,
       };
@@ -333,31 +441,103 @@ function buildDayCandidateIndex(records: YearLessonRecord[], state: YearLessonSt
   return { weekdaySet, extraDateSet, rescheduleToDateSet, pendingFromDateSet };
 }
 
-/** 由當月往前共 `count` 個曆月（含當月），最舊在前 */
-function lookbackCalendarMonthsInclusive(endY: number, endM: number, count: number): { y: number; m: number }[] {
-  const rev: { y: number; m: number }[] = [];
-  let y = endY;
-  let m = endM;
-  for (let i = 0; i < count; i++) {
-    rev.push({ y, m });
-    m -= 1;
-    if (m < 1) {
-      m = 12;
-      y -= 1;
-    }
+function feeSystemStartMonth1to12(sheetYear: number): number {
+  return sheetYear === FEE_SYSTEM_START_YEAR ? FEE_SYSTEM_START_MONTH : 1;
+}
+
+function buildBaseLessonCountsByWeekdayForMonth(year: number, month1to12: number): Record<string, number> {
+  const out: Record<string, number> = {
+    一: 0,
+    二: 0,
+    三: 0,
+    四: 0,
+    五: 0,
+    六: 0,
+    日: 0,
+  };
+  const daysInMonth = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
+  const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Hong_Kong",
+    weekday: "short",
+  });
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12));
+    const short = weekdayFormatter.format(dt);
+    const cn = HK_WEEKDAY_SHORT_TO_CN[short];
+    if (cn) out[cn] += 1;
   }
-  return rev.reverse();
+  return out;
+}
+
+function sumSlotTuitionHkd(params: {
+  lessonCount: number;
+  flatUnit: number;
+  gradeFor: string;
+  feeTierSettings: StudentFeeTierSettings;
+}): number {
+  const { lessonCount, gradeFor, feeTierSettings } = params;
+  if (!Number.isFinite(lessonCount) || lessonCount <= 0) return 0;
+  const flatUnit = effectiveFlatLessonUnit(params.flatUnit);
+  if (flatUnit > 0) {
+    return lessonCount * flatUnit;
+  }
+  const br = Math.max(1, Math.floor(feeTierSettings.lesson_tier_break_after || 8));
+  const low = isLowerFeeTier(gradeFor);
+  const hi = low ? feeTierSettings.f_low_tier_1_8 : feeTierSettings.f_high_tier_1_8;
+  const lo = low ? feeTierSettings.f_low_tier_9_plus : feeTierSettings.f_high_tier_9_plus;
+  if (lessonCount <= br) return lessonCount * hi;
+  return br * hi + (lessonCount - br) * lo;
+}
+
+function getActiveWeekdaysForDate(records: YearLessonRecord[], dateIso: string): string[] {
+  const normalized = records.map((r) => ({
+    ...r,
+    effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
+    weekday: normalizeWeekday(r.weekday),
+  }));
+  const sorted = normalized.sort((a, b) => {
+    const ed = String(a.effectiveDate).localeCompare(String(b.effectiveDate));
+    if (ed !== 0) return ed;
+    return a.createdAt - b.createdAt;
+  });
+  const active = getActiveScheduleRulesForDate(sorted, dateIso);
+  const set = new Set<string>();
+  for (const r of active) {
+    const wd = normalizeWeekday(r.weekday);
+    if (wd) set.add(wd);
+  }
+  return [...set].sort((a, b) => (WEEKDAY_ORDER[a] ?? 99) - (WEEKDAY_ORDER[b] ?? 99));
 }
 
 function buildFeePaymentToneByStudentId(
   studentIds: string[],
-  feeRows: Array<{ student_id?: string; year?: number; month?: number; submitted_amount?: number | null }>,
+  studentsById: Map<string, StudentRow>,
+  normalizedRecordsById: Map<string, YearLessonRecord[]>,
+  stateById: Map<string, YearLessonState>,
+  feeRows: Array<{
+    student_id?: string;
+    year?: number;
+    month?: number;
+    submitted_amount?: number | null;
+    lesson_unit_price?: number | null;
+    fee_pricing_grade?: string | null;
+  }>,
+  openingBalanceByStudentId: Record<string, number>,
   refYear: number,
   refMonth: number,
-  lookbackMonths: number,
-  heavyUnpaidThreshold: number,
+  dateIso: string,
+  feeTierSettings: StudentFeeTierSettings,
 ): Record<string, DayTimetableFeePaymentTone> {
   const amountByKey = new Map<string, number>();
+  const pricingByKey = new Map<string, { lessonUnitPrice: number; feePricingGrade: string }>();
+  const baseByMonth = new Map<number, Record<string, number>>();
+  const getBaseCounts = (m: number) => {
+    const cached = baseByMonth.get(m);
+    if (cached) return cached;
+    const built = buildBaseLessonCountsByWeekdayForMonth(refYear, m);
+    baseByMonth.set(m, built);
+    return built;
+  };
   for (const r of feeRows) {
     const sid = normalizeStudentId(String((r as { student_id?: string }).student_id ?? ""));
     const y = Number((r as { year?: number }).year);
@@ -365,30 +545,99 @@ function buildFeePaymentToneByStudentId(
     if (!sid || !Number.isFinite(y) || !Number.isFinite(mo)) continue;
     const amt = Number((r as { submitted_amount?: number }).submitted_amount ?? 0) || 0;
     amountByKey.set(`${sid}-${y}-${mo}`, amt);
+    pricingByKey.set(`${sid}-${y}-${mo}`, {
+      lessonUnitPrice: Number((r as { lesson_unit_price?: number | null }).lesson_unit_price ?? 0) || 0,
+      feePricingGrade: String((r as { fee_pricing_grade?: string | null }).fee_pricing_grade ?? ""),
+    });
   }
-  function amountFor(sid: string, y: number, mo: number): number {
-    return amountByKey.get(`${normalizeStudentId(sid)}-${y}-${mo}`) ?? 0;
+  function amountFor(normalizedSid: string, y: number, mo: number): number {
+    return amountByKey.get(`${normalizedSid}-${y}-${mo}`) ?? 0;
   }
-  const window = lookbackCalendarMonthsInclusive(
-    refYear,
-    refMonth,
-    Math.min(24, Math.max(2, lookbackMonths)),
-  );
-  const threshold = Math.min(24, Math.max(1, heavyUnpaidThreshold));
+  function pricingFor(
+    normalizedSid: string,
+    y: number,
+    mo: number,
+  ): { lessonUnitPrice: number; feePricingGrade: string } {
+    return (
+      pricingByKey.get(`${normalizedSid}-${y}-${mo}`) ?? {
+        lessonUnitPrice: 0,
+        feePricingGrade: "",
+      }
+    );
+  }
   const out: Record<string, DayTimetableFeePaymentTone> = {};
   for (const sid of studentIds) {
     const key = normalizeStudentId(sid);
-    let unpaidInWindow = 0;
-    for (const { y, m } of window) {
-      if (amountFor(key, y, m) <= 0) unpaidInWindow += 1;
-    }
-    const currentUnpaid = amountFor(key, refYear, refMonth) <= 0;
+    const currentSubmitted = amountFor(key, refYear, refMonth);
+    const currentUnpaid = currentSubmitted <= 0;
+    // Fast path: if current month is paid, no stripe and no need to compute balance-due breakdown.
     if (!currentUnpaid) {
       out[key] = "ok";
       continue;
     }
-    // 參考曆月未繳才顯示色帶；≥threshold 個未繳月 → 黑帶，否則（只得 1 個月未繳）→ 紅帶
-    if (unpaidInWindow >= threshold) {
+    const st = studentsById.get(key);
+    if (!st) {
+      out[key] = "ok";
+      continue;
+    }
+    const records = normalizedRecordsById.get(key) ?? EMPTY_RECORDS;
+    const state = stateById.get(key) ?? EMPTY_YEAR_STATE;
+    const weekdays = getActiveWeekdaysForDate(records, dateIso);
+    const extraCountByMonth = new Map<number, number>();
+    for (const ex of state.extraEntries ?? []) {
+      const iso = String((ex as any)?.date ?? "").trim();
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+      if (!m) continue;
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      if (y !== refYear || mo < 1 || mo > 12) continue;
+      extraCountByMonth.set(mo, (extraCountByMonth.get(mo) ?? 0) + 1);
+    }
+    const feeStartMonth = feeSystemStartMonth1to12(refYear);
+
+    let priorExpected = 0;
+    let submittedBefore = 0;
+    for (let m = feeStartMonth; m < refMonth; m += 1) {
+      const base = getBaseCounts(m);
+      const lessonCount =
+        weekdays.reduce((sum, wd) => sum + (base[wd] ?? 0), 0) + (extraCountByMonth.get(m) ?? 0);
+      const pricing = pricingFor(key, refYear, m);
+      const gradeFor = gradeForFeePricing(String(st.grade ?? ""), refYear, m, pricing.feePricingGrade);
+      const expected = sumSlotTuitionHkd({
+        lessonCount,
+        flatUnit: pricing.lessonUnitPrice,
+        gradeFor,
+        feeTierSettings,
+      });
+      priorExpected += expected;
+      submittedBefore += amountFor(key, refYear, m);
+    }
+
+    const baseCurrent = getBaseCounts(refMonth);
+    const currentLessonCount =
+      weekdays.reduce((sum, wd) => sum + (baseCurrent[wd] ?? 0), 0) + (extraCountByMonth.get(refMonth) ?? 0);
+    const currentPricing = pricingFor(key, refYear, refMonth);
+    const currentGradeFor = gradeForFeePricing(
+      String(st.grade ?? ""),
+      refYear,
+      refMonth,
+      currentPricing.feePricingGrade,
+    );
+    const currentExpected = sumSlotTuitionHkd({
+      lessonCount: currentLessonCount,
+      flatUnit: currentPricing.lessonUnitPrice,
+      gradeFor: currentGradeFor,
+      feeTierSettings,
+    });
+    const opening = refYear === FEE_OPENING_BALANCE_AS_OF_YEAR ? Number(openingBalanceByStudentId[key] ?? 0) || 0 : 0;
+    const balanceBefore = opening + priorExpected - submittedBefore;
+    const totalDue = balanceBefore + currentExpected;
+    const balanceDue = totalDue - currentSubmitted;
+    if (balanceDue <= 0.005) {
+      out[key] = "ok";
+      continue;
+    }
+    if (currentExpected > 0 && balanceDue > currentExpected + 0.005) {
       out[key] = "many_months_unpaid";
     } else {
       out[key] = "unpaid_current";
@@ -523,30 +772,19 @@ async function fetchDayTimetablePayloadUncached(
   const { regularOnly } = options;
 
   const supabase = getSupabaseAdmin();
-  const [staticBundle, timetableStyle] = await Promise.all([
+  const [staticBundle, timetableStyle, feeTierSettings] = await Promise.all([
     loadDayTimetableStaticBundle(),
     loadDayTimetableStyleSettings(),
+    loadStudentFeeTierSettingsAdmin(supabase),
   ]);
-  const feeLookbackMinYear = lookbackCalendarMonthsInclusive(
-    year,
-    month,
-    timetableStyle.feeLookbackMonths,
-  )[0].y;
-
-  const [{ data: recRows }, { data: stateRows }, { data: remarkRows }, { data: feeRowsAll }] =
-    await Promise.all([
-      supabase.from("student_lesson_records").select("student_id, records"),
-      supabase
-        .from("student_lessons_year_state")
-        .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-        .eq("year", year),
-      supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
-      supabase
-        .from("student_monthly_fee_records")
-        .select("student_id, year, month, submitted_amount")
-        .gte("year", feeLookbackMinYear),
-    ]);
-  const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
+  const [{ data: recRows }, { data: stateRows }, { data: remarkRows }] = await Promise.all([
+    supabase.from("student_lesson_records").select("student_id, records"),
+    supabase
+      .from("student_lessons_year_state")
+      .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
+      .eq("year", year),
+    supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
+  ]);
 
   const { regularPeriodMaxByRoom, tutorColorByName, examById } = staticBundle;
   const manualInactiveEffectiveById = new Map(Object.entries(staticBundle.manualInactiveEffectiveById));
@@ -646,7 +884,12 @@ async function fetchDayTimetablePayloadUncached(
     });
   }
 
-  const times = Array.from(timeSet).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  const times = Array.from(timeSet).sort((a, b) => {
+    const ka = timeSortKey(a);
+    const kb = timeSortKey(b);
+    if (ka !== kb) return ka - kb;
+    return a.localeCompare(b, "en", { numeric: true });
+  });
   const rowFrames = times.map((time) => {
     let maxRows = 1;
     for (const room of ROOM_GROUPS) {
@@ -662,20 +905,57 @@ async function fetchDayTimetablePayloadUncached(
       studentIdsOnTimetable.add(c.studentId);
     }
   }
+  const timetableStudentIds = Array.from(studentIdsOnTimetable);
+
+  const feeStartMonth = feeSystemStartMonth1to12(year);
+  const [{ data: feeRowsAll }, { data: openingRows }] = await Promise.all([
+    timetableStudentIds.length > 0
+      ? supabase
+          .from("student_monthly_fee_records")
+          .select("student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade")
+          .eq("year", year)
+          .gte("month", feeStartMonth)
+          .lte("month", month)
+          .in("student_id", timetableStudentIds)
+      : Promise.resolve({ data: [] }),
+    year === FEE_OPENING_BALANCE_AS_OF_YEAR && timetableStudentIds.length > 0
+      ? supabase
+          .from("student_fee_opening_balances")
+          .select("student_id, opening_balance")
+          .eq("as_of_year", FEE_OPENING_BALANCE_AS_OF_YEAR)
+          .eq("as_of_month", FEE_OPENING_BALANCE_AS_OF_MONTH)
+          .in("student_id", timetableStudentIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
+  const openingBalanceByStudentId: Record<string, number> = {};
+  for (const row of (openingRows ?? []) as Array<{ student_id?: string; opening_balance?: number | null }>) {
+    const sid = normalizeStudentId(String(row.student_id ?? ""));
+    if (!sid) continue;
+    openingBalanceByStudentId[sid] = Number(row.opening_balance ?? 0) || 0;
+  }
+  const studentsById = new Map(studentList.map((s) => [normalizeStudentId(s.id), s]));
   const feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone> =
-    studentIdsOnTimetable.size > 0
+    timetableStudentIds.length > 0
       ? buildFeePaymentToneByStudentId(
-          Array.from(studentIdsOnTimetable),
-          (feeRowsAll ?? []) as Array<{
+          timetableStudentIds,
+          studentsById,
+          normalizedRecordsById,
+          stateById,
+          ((feeRowsAll ?? []) as Array<{
             student_id?: string;
             year?: number;
             month?: number;
             submitted_amount?: number | null;
-          }>,
+            lesson_unit_price?: number | null;
+            fee_pricing_grade?: string | null;
+          }>) ?? [],
+          openingBalanceByStudentId,
           year,
           month,
-          timetableStyle.feeLookbackMonths,
-          timetableStyle.feeHeavyUnpaidThreshold,
+          dateIso,
+          feeTierSettings,
         )
       : {};
 

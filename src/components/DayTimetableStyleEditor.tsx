@@ -49,18 +49,11 @@ function StyleEditorFormFallback({
 
   return (
     <>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {colorRow(te.rescheduleBg, settings.rescheduleCellBgHex, "#ede9fe")}
         {colorRow(te.extraBg, settings.extraCellBgHex, "#fef3c7")}
         {colorRow(te.feeUnpaid, settings.feeUnpaidStripeHex, "#e11d48")}
         {colorRow(te.feeArrears, settings.feeArrearsStripeHex, "#000000")}
-        <label className="block text-xs text-slate-700">
-          <span className="font-semibold text-slate-800">{te.threshold}</span>
-          <span className="ml-1 font-normal text-slate-500">{te.thresholdHint}</span>
-          <div className="mt-1 font-mono text-sm tabular-nums text-slate-600">
-            {settings.feeHeavyUnpaidThreshold}
-          </div>
-        </label>
       </div>
       <div className="mt-3">
         <span className="inline-block rounded-lg bg-[#1d76c2]/60 px-4 py-2 text-sm font-semibold text-white">
@@ -136,7 +129,7 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
       </div>
       <p className="mt-1 text-xs text-slate-600">{te.intro}</p>
       <ClientOnlyAfterMount fallback={<StyleEditorFormFallback settings={initial} te={te} />}>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {field(
           te.rescheduleBg,
           "",
@@ -238,23 +231,6 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
               spellCheck={false}
             />
           </div>,
-        )}
-        {field(
-          te.threshold,
-          te.thresholdHint,
-          <input
-            type="number"
-            min={1}
-            max={24}
-            value={settings.feeHeavyUnpaidThreshold}
-            onChange={(e) =>
-              setSettings((p) => ({
-                ...p,
-                feeHeavyUnpaidThreshold: Number(e.target.value) || p.feeHeavyUnpaidThreshold,
-              }))
-            }
-            className="w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
-          />,
         )}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">

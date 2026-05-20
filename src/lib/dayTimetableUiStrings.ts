@@ -5,6 +5,7 @@ function fillFeeHeavy(
   lookback: number,
   threshold: number,
 ): string {
+  if (!template.includes("{lookback}") && !template.includes("{threshold}")) return template;
   return template.replace(/\{lookback\}/g, String(lookback)).replace(/\{threshold\}/g, String(threshold));
 }
 
@@ -26,10 +27,10 @@ export const dayTimetableTableStrings = {
     coloursIntroBeforeSwatches: "：恆常格＝該堂導師於 Tutor 頁顏色；",
     coloursBetweenSwatches: "補堂／調堂、",
     coloursAfterExtraSwatch: "加堂。",
-    feeIntro: "學費（submitted_amount；僅當頁面所選曆月未繳才顯示色帶）：",
-    feeBetweenStripes: "該月未繳且回看期內只得 1 個月未繳 → 左色帶 ",
+    feeIntro: "學費（僅當頁面所選曆月未繳才顯示色帶）：",
+    feeBetweenStripes: "該月未繳且 Balance Due 不超過 1 個月應繳 → 左色帶 ",
     feeHeavyTail:
-      "該月未繳且近 {lookback} 個月內至少 {threshold} 個月未繳（優先於紅帶）。已繳該月則無色帶。顏色與門檻見「課表顏色與學費標示」。",
+      "該月未繳且 Balance Due 超過 1 個月應繳（優先於紅帶）。已繳該月或 Balance Due ≤ 0 則無色帶。顏色可在「課表顏色與學費標示」調整。",
     capacityLabel: "餘額列",
     capacityBlurbBeforeLink: "：各房各時段下方綠底列為「恆常人數／上限／餘額」；上限可在 ",
     capacityBlurbAfterLink: " 編輯（未設定則用預設：B、M前 5；M後、Hope 6；Hope 2 為 5）。",
@@ -66,10 +67,10 @@ export const dayTimetableTableStrings = {
     coloursIntroBeforeSwatches: ": Regular cells use the tutor colour from the Tutor page; ",
     coloursBetweenSwatches: "reschedule / ",
     coloursAfterExtraSwatch: " extra lesson. ",
-    feeIntro: "Fee (submitted_amount; stripe only if the page’s calendar month is unpaid): ",
-    feeBetweenStripes: " that month unpaid and only 1 unpaid month in lookback — left stripe ",
+    feeIntro: "Fee (stripe only if the page’s calendar month is unpaid): ",
+    feeBetweenStripes: " that month unpaid and Balance Due is within one-month tuition — left stripe ",
     feeHeavyTail:
-      " that month unpaid and ≥{threshold} unpaid month(s) in the last {lookback} months (overrides red). Paid that month — no stripe. Edit in “Timetable colours & fee highlights”.",
+      " that month unpaid and Balance Due exceeds one-month tuition (overrides red). Paid that month or Balance Due ≤ 0 — no stripe. Edit colours in “Timetable colours & fee highlights”.",
     capacityLabel: "Capacity row",
     capacityBlurbBeforeLink:
       ": green row under each slot shows regular / max / remaining; set max on ",
@@ -131,8 +132,8 @@ export const dayTimetableStyleEditorStrings = {
       "Changes apply within about a minute (cache). Reschedule/extra use background hex; fee uses left stripe hex.",
     rescheduleBg: "Reschedule lesson background",
     extraBg: "Extra lesson background",
-    feeUnpaid: "This month unpaid, only 1 unpaid month in lookback — left stripe",
-    feeArrears: "This month unpaid, ≥2 unpaid months in lookback — left stripe",
+    feeUnpaid: "Unpaid this month, up to 1 month due",
+    feeArrears: "Unpaid this month, over 1 month due",
     lookback: "Fee lookback months (incl. current)",
     lookbackHint: "2–24",
     threshold: "Heavy unpaid threshold",

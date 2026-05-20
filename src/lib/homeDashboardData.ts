@@ -10,6 +10,9 @@ import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 import type { HomeReminderRow } from "@/app/home/HomeReminderPanel";
+import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
+import { loadStudentFeeTierSettingsAdmin, type StudentFeeTierSettings } from "@/lib/studentFeeTierSettings";
+import { effectiveFlatLessonUnit, gradeForFeePricing, isLowerFeeTier } from "@/lib/studentFeePricingGrade";
 
 export type HomeWeekBirthdayItem = {
   id: string;
@@ -52,6 +55,154 @@ function hkTodayParts() {
   return { ymdToday, mdToday, year, month };
 }
 
+type YearLessonRecord = {
+  effectiveDate?: string;
+  weekday: string;
+  time: string;
+  room: string;
+  tutor?: string;
+  lessonSummary?: string;
+  createdAt: number;
+  id?: string;
+};
+
+const HK_WEEKDAY_SHORT_TO_CN: Record<string, string> = {
+  Mon: "一",
+  Tue: "二",
+  Wed: "三",
+  Thu: "四",
+  Fri: "五",
+  Sat: "六",
+  Sun: "日",
+};
+
+const WEEKDAY_ORDER: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7 };
+
+function toHkIsoDateFromMs(ms: number) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(ms));
+  let y = "2026";
+  let m = "01";
+  let d = "01";
+  for (const p of parts) {
+    if (p.type === "year") y = p.value;
+    if (p.type === "month") m = p.value;
+    if (p.type === "day") d = p.value;
+  }
+  return `${y}-${m}-${d}`;
+}
+
+function normalizeWeekday(raw: unknown) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (["一", "二", "三", "四", "五", "六", "日"].includes(s)) return s;
+  if (s.startsWith("星期")) {
+    const c = s.slice(2, 3);
+    if (["一", "二", "三", "四", "五", "六", "日"].includes(c)) return c;
+  }
+  const lower = s.toLowerCase();
+  if (lower === "mon" || lower === "monday") return "一";
+  if (lower === "tue" || lower === "tuesday") return "二";
+  if (lower === "wed" || lower === "wednesday") return "三";
+  if (lower === "thu" || lower === "thursday") return "四";
+  if (lower === "fri" || lower === "friday") return "五";
+  if (lower === "sat" || lower === "saturday") return "六";
+  if (lower === "sun" || lower === "sunday") return "日";
+  return s;
+}
+
+function normalizeLessonRecords(raw: unknown): YearLessonRecord[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const o = item as Record<string, unknown>;
+      const weekday = normalizeWeekday(o.weekday ?? o.week_day ?? o.weekDay);
+      const room = String(o.room ?? o.classroom ?? o.room_name ?? "").trim();
+      const time = String(o.time ?? o.lesson_time ?? "").trim();
+      const effectiveDate =
+        typeof o.effectiveDate === "string"
+          ? o.effectiveDate
+          : typeof o.effective_date === "string"
+            ? o.effective_date
+            : undefined;
+      const createdAtRaw = o.createdAt ?? o.created_at ?? 0;
+      return {
+        id: typeof o.id === "string" ? o.id : undefined,
+        effectiveDate,
+        weekday,
+        time,
+        room,
+        tutor: typeof o.tutor === "string" ? o.tutor : undefined,
+        lessonSummary: typeof o.lessonSummary === "string" ? o.lessonSummary : undefined,
+        createdAt: Number(createdAtRaw) || 0,
+      } as YearLessonRecord;
+    })
+    .filter((r) => r.weekday && r.room);
+}
+
+function buildBaseLessonCountsByWeekdayForMonth(year: number, month1to12: number): Record<string, number> {
+  const out: Record<string, number> = { 一: 0, 二: 0, 三: 0, 四: 0, 五: 0, 六: 0, 日: 0 };
+  const daysInMonth = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
+  const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Hong_Kong",
+    weekday: "short",
+  });
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12));
+    const short = weekdayFormatter.format(dt);
+    const cn = HK_WEEKDAY_SHORT_TO_CN[short];
+    if (cn) out[cn] += 1;
+  }
+  return out;
+}
+
+function sumMonthTuitionByCount(params: {
+  lessonCount: number;
+  flatUnit: number;
+  gradeFor: string;
+  feeTierSettings: StudentFeeTierSettings;
+}): number {
+  const { lessonCount, gradeFor, feeTierSettings } = params;
+  if (!Number.isFinite(lessonCount) || lessonCount <= 0) return 0;
+  const flatUnit = effectiveFlatLessonUnit(params.flatUnit);
+  if (flatUnit > 0) return lessonCount * flatUnit;
+  const br = Math.max(1, Math.floor(feeTierSettings.lesson_tier_break_after || 8));
+  const low = isLowerFeeTier(gradeFor);
+  const hi = low ? feeTierSettings.f_low_tier_1_8 : feeTierSettings.f_high_tier_1_8;
+  const lo = low ? feeTierSettings.f_low_tier_9_plus : feeTierSettings.f_high_tier_9_plus;
+  if (lessonCount <= br) return lessonCount * hi;
+  return br * hi + (lessonCount - br) * lo;
+}
+
+function getActiveWeekdaysForDate(records: YearLessonRecord[], dateIso: string): string[] {
+  const normalized = records.map((r) => ({
+    ...r,
+    effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
+    weekday: normalizeWeekday(r.weekday),
+  }));
+  const sorted = normalized.sort((a, b) => {
+    const ed = String(a.effectiveDate).localeCompare(String(b.effectiveDate));
+    if (ed !== 0) return ed;
+    return a.createdAt - b.createdAt;
+  });
+  const active = getActiveScheduleRulesForDate(sorted, dateIso);
+  const set = new Set<string>();
+  for (const r of active) {
+    const wd = normalizeWeekday(r.weekday);
+    if (wd) set.add(wd);
+  }
+  return [...set].sort((a, b) => (WEEKDAY_ORDER[a] ?? 99) - (WEEKDAY_ORDER[b] ?? 99));
+}
+
+function formatHkMoneyAmount(n: number): string {
+  const x = Math.round((Number(n) || 0) * 100) / 100;
+  return x.toLocaleString("en-HK", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
 async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   const { ymdToday, mdToday, year, month } = hkTodayParts();
   const supabase = getSupabaseAdmin();
@@ -61,20 +212,15 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     { data: tutorRows },
     { data: visibilityRows },
     { data: feeRowsAll },
-    { data: yearStateRowsAll },
   ] = await Promise.all([
     supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
     supabase.from("tutors").select("id, name_zh, name_en, birth_date, status"),
     supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
     supabase
       .from("student_monthly_fee_records")
-      .select("student_id, submitted_amount")
+      .select("student_id, submitted_amount, lesson_unit_price, fee_pricing_grade")
       .eq("year", year)
       .eq("month", month),
-    supabase
-      .from("student_lessons_year_state")
-      .select("student_id, attendance, reschedule_entries")
-      .eq("year", year),
   ]);
 
   const manualInactiveEffectiveById = new Map<string, string>();
@@ -116,26 +262,97 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   const activeStudentMetaById = new Map(activeStudentMeta.map((s) => [s.id, s]));
 
   const activeStudentIdSet = new Set(activeStudentMeta.map((s) => s.id));
+  const activeStudentIds = activeStudentMeta.map((s) => s.id);
 
   const paidAmountByStudentId = new Map<string, number>();
+  const pricingByStudentId = new Map<string, { lessonUnitPrice: number; feePricingGrade: string }>();
   for (const row of feeRowsAll ?? []) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (!activeStudentIdSet.has(sid)) continue;
-    paidAmountByStudentId.set(sid, Number((row as { submitted_amount?: number }).submitted_amount ?? 0) || 0);
+    paidAmountByStudentId.set(
+      sid,
+      Number((row as { submitted_amount?: number }).submitted_amount ?? 0) || 0,
+    );
+    pricingByStudentId.set(sid, {
+      lessonUnitPrice: Number((row as { lesson_unit_price?: number | null }).lesson_unit_price ?? 0) || 0,
+      feePricingGrade: String((row as { fee_pricing_grade?: string | null }).fee_pricing_grade ?? ""),
+    });
   }
 
+  const [feeTierSettings, { data: recRows }, { data: yearStateRowsRaw }] = await Promise.all([
+    loadStudentFeeTierSettingsAdmin(supabase),
+    activeStudentIds.length
+      ? supabase.from("student_lesson_records").select("student_id, records").in("student_id", activeStudentIds)
+      : Promise.resolve({ data: [] as unknown[] }),
+    activeStudentIds.length
+      ? supabase
+          .from("student_lessons_year_state")
+          .select("student_id, attendance, reschedule_entries, extra_entries")
+          .eq("year", year)
+          .in("student_id", activeStudentIds)
+      : Promise.resolve({ data: [] as unknown[] }),
+  ]);
+
+  const recordsById = new Map<string, YearLessonRecord[]>();
+  for (const row of recRows ?? []) {
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    if (!sid) continue;
+    recordsById.set(sid, normalizeLessonRecords((row as { records?: unknown }).records));
+  }
+
+  const extraCountByStudentId = new Map<string, number>();
+  for (const row of yearStateRowsRaw ?? []) {
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    if (!sid) continue;
+    const extras = Array.isArray((row as { extra_entries?: unknown }).extra_entries)
+      ? ((row as { extra_entries: unknown[] }).extra_entries as Array<{ date?: string }>)
+      : [];
+    let c = 0;
+    for (const ex of extras) {
+      const iso = String(ex?.date ?? "").trim();
+      if (!iso) continue;
+      if (iso.startsWith(`${year}-${String(month).padStart(2, "0")}`)) c += 1;
+    }
+    extraCountByStudentId.set(sid, c);
+  }
+
+  const baseCounts = buildBaseLessonCountsByWeekdayForMonth(year, month);
+
   const unpaidRows: HomeReminderRow[] = activeStudentMeta
-    .filter((student) => (paidAmountByStudentId.get(student.id) ?? 0) <= 0)
+    .map((student) => {
+      const paid = paidAmountByStudentId.get(student.id) ?? 0;
+      const records = recordsById.get(student.id) ?? [];
+      const weekdays = getActiveWeekdaysForDate(records, ymdToday);
+      const extraCount = extraCountByStudentId.get(student.id) ?? 0;
+      const lessonCount = weekdays.reduce((sum, wd) => sum + (baseCounts[wd] ?? 0), 0) + extraCount;
+      const pricing = pricingByStudentId.get(student.id) ?? { lessonUnitPrice: 0, feePricingGrade: "" };
+      const gradeFor = gradeForFeePricing("", year, month, pricing.feePricingGrade);
+      const expected = sumMonthTuitionByCount({
+        lessonCount,
+        flatUnit: pricing.lessonUnitPrice,
+        gradeFor,
+        feeTierSettings,
+      });
+      const due = Math.max(0, expected - paid);
+      return { student, paid, expected, due };
+    })
+    .filter(({ due }) => due > 0.005)
     .map((student) => ({
-      studentId: student.id,
-      displayName: student.displayName,
-      detail: `${month} 月學費紀錄 Tuition Paid ≤ $0（未交或 Zoho 未同步到）`,
+      studentId: student.student.id,
+      displayName: student.student.displayName,
+      detail: `${month} 月：應繳 $${formatHkMoneyAmount(student.expected)}，已繳 $${formatHkMoneyAmount(
+        student.paid,
+      )}，尚欠 $${formatHkMoneyAmount(student.due)}`,
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
 
-  const yearStateRows = (yearStateRowsAll ?? []).filter((row) =>
-    activeStudentIdSet.has(String((row as { student_id?: string }).student_id ?? "")),
-  );
+  const { data: yearStateRows } = activeStudentIds.length
+    ? await supabase
+        .from("student_lessons_year_state")
+        .select("student_id, attendance, reschedule_entries")
+        .eq("year", year)
+        .in("student_id", activeStudentIds)
+    : { data: [] as unknown[] };
 
   const reschedulePendingByStudent = new Map<string, { displayName: string; details: string[] }>();
   for (const row of yearStateRows) {
@@ -300,7 +517,8 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
 const fetchHomeDashboardCached = unstable_cache(
   fetchHomeDashboardUncached,
   ["home-dashboard-v1"],
-  { revalidate: 90, tags: [SCHEDULE_CACHE_TAG_HOME] },
+  // Home dashboard is read-mostly; rely on manual cache-bust tags after edits/sync.
+  { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_HOME] },
 );
 
 export async function fetchHomeDashboardData(): Promise<HomeDashboardData> {

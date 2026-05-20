@@ -380,7 +380,8 @@ const loadStudentsScheduleBundleCached = unstable_cache(
     return { bundle: serializeScheduleBundle(result.bundle), error: null };
   },
   ["students-schedule-bundle-v1"],
-  { revalidate: 45, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+  // Heavy bundle (students + records + states). Keep longer TTL; tags will bust after edits.
+  { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
 );
 
 async function loadStudentsScheduleBundle(year: number): Promise<{
@@ -534,7 +535,8 @@ export async function fetchRoomScheduleAggregate(
   return unstable_cache(
     async () => fetchRoomScheduleAggregateUncached(slug, year, month, { startIso, endIso }),
     ["room-schedule-aggregate-v2", slugKey, String(year), String(month), startIso, endIso],
-    { revalidate: 45, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+    // Heavy full-room expand; longer TTL + tag busting keeps UI snappy.
+    { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }
 
@@ -654,6 +656,6 @@ export async function fetchTutorMonthLessonRows(
   return unstable_cache(
     async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
     ["tutor-month-lessons-v1", nameKey, String(year), String(month)],
-    { revalidate: 45, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+    { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }
