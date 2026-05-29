@@ -1639,7 +1639,11 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <div className="flex items-center gap-3">
               <Link
-                href={`/students/${studentId}/lessons`}
+                href={
+                  isReadOnlyViewer && forceReadOnlyFromNext
+                    ? String(searchParams.get("next") || "/rooms")
+                    : `/students/${studentId}/lessons`
+                }
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
                 aria-label="Back to student lessons"
               >

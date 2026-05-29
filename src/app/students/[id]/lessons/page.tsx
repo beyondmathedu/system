@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
 import { supabase } from "@/lib/supabase";
 import {
   loadLesson2026State,
@@ -79,6 +80,22 @@ export default function StudentLessonsPage() {
     if (maxYear < startYear) return [startYear];
     return Array.from({ length: maxYear - startYear + 1 }, (_, i) => startYear + i);
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      const email = String(auth.user?.email ?? "").trim().toLowerCase();
+      if (!mounted) return;
+      if (email && email === TUTOR_SHARED_IPAD_EMAIL.trim().toLowerCase()) {
+        // Shared iPad tutor should not access the schedule settings hub.
+        router.replace("/home");
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
 
   useEffect(() => {
     if (!rawId) return;
