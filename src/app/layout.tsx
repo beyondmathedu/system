@@ -19,9 +19,9 @@ export const metadata: Metadata = {
   },
   description: "Beyond Math Education Centre 管理系統",
   icons: {
-    icon: [{ url: "/icon.png?v=20260408", type: "image/png" }],
-    shortcut: ["/icon.png?v=20260408"],
-    apple: [{ url: "/icon.png?v=20260408" }],
+    icon: [{ url: "/icon.png?v=20260529", type: "image/png" }],
+    shortcut: ["/icon.png?v=20260529"],
+    apple: [{ url: "/icon.png?v=20260529" }],
   },
 };
 
