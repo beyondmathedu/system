@@ -8,7 +8,6 @@ import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
 import { PENDING_MAKEUP_BUTTON_LABEL_ZH, PENDING_MAKEUP_WITHIN_DAYS } from "@/lib/pendingMakeup";
 import HomeReminderPanel from "./HomeReminderPanel";
 import UpcomingBirthdayReminder from "./UpcomingBirthdayReminder";
-import StressReliefGamesDynamic from "./StressReliefGamesDynamic";
 import SharedIpadHomePortal from "./SharedIpadHomePortal";
 
 const CANTONESE_POSITIVE_LINES = [
@@ -331,8 +330,6 @@ export default async function HomeLandingPage() {
             />
           </div>
         </div>
-
-        <StressReliefGamesDynamic />
       </div>
     </div>
   );
