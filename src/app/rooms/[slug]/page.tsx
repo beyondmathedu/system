@@ -283,9 +283,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                 rows={rows}
                 year={year}
                 canOpenStudentLink={isSharedIpadTutor || isAdminViewer}
-                studentLessonsHrefMode={
-                  isAdminViewer || isSharedIpadTutor ? "hub" : "yearFromRoom"
-                }
+                studentLessonsHrefMode={isAdminViewer ? "hub" : "yearFromRoom"}
                 hideStudentId={isSharedIpadTutor}
                 attendanceLocked={isRoomStaffView && !isSharedIpadTutor}
                 tutorFieldLocked={isRoomStaffView}
