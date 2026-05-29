@@ -89,6 +89,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
 
   const { year, month } = parseYearMonth(sp);
   const isSharedIpadTutor = viewer.isSharedIpadTutor;
+  const isAdminViewer = viewer.role === "admin";
   const isTutorView = viewer.role === "tutor";
   const isRoomStaffView = isTutorView || isSharedIpadTutor;
   const canUsePeriodNav = !isTutorView || isSharedIpadTutor;
@@ -281,7 +282,8 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
               <RoomScheduleTable
                 rows={rows}
                 year={year}
-                canOpenStudentLink={!isRoomStaffView}
+                canOpenStudentLink={isSharedIpadTutor || isAdminViewer}
+                studentLessonsHrefMode={isAdminViewer ? "hub" : "yearFromRoom"}
                 hideStudentId={isSharedIpadTutor}
                 attendanceLocked={isRoomStaffView && !isSharedIpadTutor}
                 tutorFieldLocked={isRoomStaffView}

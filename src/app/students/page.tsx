@@ -228,6 +228,7 @@ export default function StudentsPage() {
   const [bulkImportError, setBulkImportError] = useState("");
   const [bulkImportNotice, setBulkImportNotice] = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
+  const [savingForm, setSavingForm] = useState(false);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomScrollRef = useRef<HTMLDivElement | null>(null);
@@ -324,23 +325,39 @@ export default function StudentsPage() {
   async function loadStudents() {
     setIsLoading(true);
     setDataError("");
-    const [{ data, error }, { data: visibilityRows, error: visibilityError }] = await Promise.all([
-      supabase
+    const pageSize = 1000;
+    const allRows: StudentRow[] = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
         .from("students")
         .select(
           "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language",
         )
-        .order("id", { ascending: true }),
-      supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
-    ]);
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) {
+        setDataError("Failed to load student records. Please check your Supabase configuration and tables.");
+        setIsLoading(false);
+        return;
+      }
+      const chunk = (data ?? []) as StudentRow[];
+      allRows.push(...chunk);
+      if (chunk.length < pageSize) break;
+      from += pageSize;
+    }
 
-    if (error || visibilityError) {
+    const { data: visibilityRows, error: visibilityError } = await supabase
+      .from("student_visibility_modes")
+      .select("student_id, mode, effective_date");
+
+    if (visibilityError) {
       setDataError("Failed to load student records. Please check your Supabase configuration and tables.");
       setIsLoading(false);
       return;
     }
 
-    const mapped = (data as StudentRow[]).map(mapRowToStudent);
+    const mapped = allRows.map(mapRowToStudent);
     setStudents(mapped);
     setSelectedIds((prev) => {
       const mappedIdSet = new Set(mapped.map((student) => student.id));
@@ -520,38 +537,53 @@ export default function StudentsPage() {
   const saveStudentAsync = async () => {
     setFormError("");
     setFormNotice("");
+    setSavingForm(true);
 
-    if (editingId) {
-      const { error } = await supabase
-        .from("students")
-        .update(mapFormToRow(form))
-        .eq("id", editingId);
+    try {
+      if (editingId) {
+        const { error } = await supabase
+          .from("students")
+          .update(mapFormToRow(form))
+          .eq("id", editingId);
 
-      if (error) {
-        setFormError(`Failed to save changes: ${error.message}`);
+        if (error) {
+          setFormError(`Failed to save changes: ${error.message}`);
+          return;
+        }
+
+        await loadStudents();
+        setEditingId(null);
+        setForm(emptyForm);
+        setSelectedIds([]);
+        setFormNotice("Student record updated successfully.");
         return;
       }
 
-      await loadStudents();
-      setEditingId(null);
-      setForm(emptyForm);
-      setSelectedIds([]);
-      setFormNotice("Student record updated successfully.");
-      return;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const candidateId = await fetchNextStudentIdFromDb();
+        const { error } = await supabase
+          .from("students")
+          .insert([{ id: candidateId, ...mapFormToRow(form) }]);
+
+        if (!error) {
+          await loadStudents();
+          setForm(emptyForm);
+          setFormNotice(`Student record added successfully (ID ${candidateId}).`);
+          return;
+        }
+
+        if (!isDuplicateStudentIdError(error)) {
+          setFormError(`Failed to add student: ${error.message}`);
+          return;
+        }
+      }
+
+      setFormError(
+        "Failed to add student: could not allocate a new student ID (duplicate). Please refresh the page and try again.",
+      );
+    } finally {
+      setSavingForm(false);
     }
-
-    const { error } = await supabase
-      .from("students")
-      .insert([{ id: nextStudentId, ...mapFormToRow(form) }]);
-
-    if (error) {
-      setFormError(`Failed to add student: ${error.message}`);
-      return;
-    }
-
-    await loadStudents();
-    setForm(emptyForm);
-    setFormNotice("Student record added successfully.");
   };
 
   const importBulkStudents = async () => {
@@ -777,7 +809,8 @@ export default function StudentsPage() {
                   <button
                     type="button"
                     onClick={saveStudent}
-                    className="inline-flex items-center gap-2 rounded-lg px-6 py-2.5 text-base font-semibold text-white transition hover:opacity-90"
+                    disabled={savingForm}
+                    className="inline-flex items-center gap-2 rounded-lg px-6 py-2.5 text-base font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                     style={{ backgroundImage: PRIMARY_GRADIENT }}
                   >
                     <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
@@ -1326,17 +1359,54 @@ function SortableHeader({ label, columnKey, sortConfig, setSortConfig, thClassNa
   );
 }
 
-function getNextStudentId(students: Student[]) {
-  const maxNumber = students.reduce((max, student) => {
-    const normalized = normalizeStudentId(student.id);
-    const match = /^(\d{1,5})$/i.exec(normalized.trim());
-    if (!match) {
-      return max;
-    }
-    return Math.max(max, Number(match[1]));
+function maxNumericStudentId(students: Student[]): number {
+  return students.reduce((max, student) => {
+    const n = parseNumericStudentIdNumber(student.id);
+    return n == null ? max : Math.max(max, n);
   }, 0);
+}
 
-  return String(maxNumber + 1).padStart(5, "0");
+function parseNumericStudentIdNumber(rawId: string): number | null {
+  const normalized = normalizeStudentId(String(rawId ?? "").trim());
+  const match = /^(\d{1,5})$/i.exec(normalized);
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatStudentIdFromNumber(n: number): string {
+  return String(Math.max(1, Math.round(n))).padStart(5, "0");
+}
+
+function getNextStudentId(students: Student[]) {
+  return formatStudentIdFromNumber(maxNumericStudentId(students) + 1);
+}
+
+function isDuplicateStudentIdError(error: { code?: string; message?: string }): boolean {
+  const code = String(error.code ?? "");
+  const message = String(error.message ?? "").toLowerCase();
+  return code === "23505" || message.includes("duplicate key") || message.includes("students_pkey");
+}
+
+async function fetchNextStudentIdFromDb(): Promise<string> {
+  const pageSize = 1000;
+  let from = 0;
+  let maxNumber = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("students")
+      .select("id")
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const chunk = (data ?? []) as { id: string }[];
+    for (const row of chunk) {
+      const n = parseNumericStudentIdNumber(row.id);
+      if (n != null) maxNumber = Math.max(maxNumber, n);
+    }
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+  return formatStudentIdFromNumber(maxNumber + 1);
 }
 
 function mapRowToStudent(row: StudentRow): Student {

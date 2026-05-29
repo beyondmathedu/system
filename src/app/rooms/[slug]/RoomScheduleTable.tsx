@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import { normalizeStudentId } from "@/lib/studentId";
 import {
@@ -43,6 +44,8 @@ type Props = {
   allowSummaryEdit?: boolean;
   /** 共用 iPad 帳：不顯示學號欄 */
   hideStudentId?: boolean;
+  /** admin：/students/{id}/lessons；共用 iPad：/lessons/{year}?next=房間 */
+  studentLessonsHrefMode?: "hub" | "yearFromRoom";
 };
 
 type SortDirection = "asc" | "desc";
@@ -66,8 +69,27 @@ export default function RoomScheduleTable({
   tutorFieldLocked = false,
   allowSummaryEdit = false,
   hideStudentId = false,
+  studentLessonsHrefMode = "yearFromRoom",
 }: Props) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const summaryLocked = tutorFieldLocked && !allowSummaryEdit;
+  const returnTo = useMemo(() => {
+    const q = searchParams?.toString() ?? "";
+    return q ? `${pathname}?${q}` : pathname;
+  }, [pathname, searchParams]);
+
+  const studentLessonsHref = useCallback(
+    (studentId: string) => {
+      const id = encodeURIComponent(normalizeStudentId(studentId));
+      if (studentLessonsHrefMode === "hub") {
+        return `/students/${id}/lessons`;
+      }
+      return `/students/${id}/lessons/${year}?next=${encodeURIComponent(returnTo)}`;
+    },
+    [studentLessonsHrefMode, year, returnTo],
+  );
+
   const STICKY_ID_WIDTH = 92;
   const STICKY_NAME_WIDTH = 190;
   const STICKY_GRADE_WIDTH = 90;
@@ -891,7 +913,7 @@ export default function RoomScheduleTable({
                       const studentIdDisplay = normalizeStudentId(r.studentId);
                       return canOpenStudentLink ? (
                         <Link
-                          href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons/${year}`}
+                          href={studentLessonsHref(r.studentId)}
                           className="text-[#1d76c2] hover:underline"
                         >
                           {studentIdDisplay}
@@ -914,7 +936,18 @@ export default function RoomScheduleTable({
                     maxWidth: STICKY_NAME_WIDTH,
                   }}
                 >
-                  <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{r.studentName}</span>
+                  {(() => {
+                    return canOpenStudentLink ? (
+                      <Link
+                        href={studentLessonsHref(r.studentId)}
+                        className="block overflow-hidden text-ellipsis whitespace-nowrap text-[#1d76c2] hover:underline"
+                      >
+                        {r.studentName}
+                      </Link>
+                    ) : (
+                      <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{r.studentName}</span>
+                    );
+                  })()}
                 </td>
                 <td
                   className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-700 group-hover:bg-slate-50"

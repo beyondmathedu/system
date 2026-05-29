@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { StudentLessonsYearPage } from "../2026/page";
+import { StudentLessonsYearPage } from "../StudentLessonsYearPage";
 
 export default function StudentLessonsDynamicYearPage() {
   const params = useParams<{ year: string }>();
