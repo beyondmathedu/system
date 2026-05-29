@@ -344,6 +344,13 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         router.replace(`/students/${encodeURIComponent(ownStudentId)}/lessons/2026`);
         return;
       }
+      if (isSharedByEmail || forceReadOnlyFromNext) {
+        if (mounted) {
+          setIsReadOnlyViewer(true);
+          setAccessReady(true);
+        }
+        return;
+      }
       if (role === "tutor") {
         router.replace("/rooms");
         return;
@@ -351,13 +358,6 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       if (role === "admin") {
         if (mounted) {
           setIsReadOnlyViewer(false);
-          setAccessReady(true);
-        }
-        return;
-      }
-      if (isSharedByEmail || forceReadOnlyFromNext) {
-        if (mounted) {
-          setIsReadOnlyViewer(true);
           setAccessReady(true);
         }
         return;
