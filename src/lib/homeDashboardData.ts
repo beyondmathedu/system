@@ -293,6 +293,16 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       : Promise.resolve({ data: [] as unknown[] }),
   ]);
 
+  type YearStateRow = {
+    student_id?: string;
+    attendance?: Record<string, boolean>;
+    reschedule_entries?: unknown;
+    extra_entries?: unknown;
+  };
+  const yearStateRows: YearStateRow[] = Array.isArray(yearStateRowsRaw)
+    ? (yearStateRowsRaw as YearStateRow[])
+    : [];
+
   const recordsById = new Map<string, YearLessonRecord[]>();
   for (const row of recRows ?? []) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
@@ -301,11 +311,11 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   }
 
   const extraCountByStudentId = new Map<string, number>();
-  for (const row of yearStateRowsRaw ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
+  for (const row of yearStateRows) {
+    const sid = String(row.student_id ?? "");
     if (!sid) continue;
-    const extras = Array.isArray((row as { extra_entries?: unknown }).extra_entries)
-      ? ((row as { extra_entries: unknown[] }).extra_entries as Array<{ date?: string }>)
+    const extras = Array.isArray(row.extra_entries)
+      ? (row.extra_entries as Array<{ date?: string }>)
       : [];
     let c = 0;
     for (const ex of extras) {
@@ -346,26 +356,15 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
 
-  const { data: yearStateRows } = activeStudentIds.length
-    ? await supabase
-        .from("student_lessons_year_state")
-        .select("student_id, attendance, reschedule_entries")
-        .eq("year", year)
-        .in("student_id", activeStudentIds)
-    : { data: [] as unknown[] };
-
   const reschedulePendingByStudent = new Map<string, { displayName: string; details: string[] }>();
   for (const row of yearStateRows) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
+    const sid = String(row.student_id ?? "");
     if (!sid) continue;
     const meta = activeStudentMetaById.get(sid);
     if (!meta) continue;
-    const attendance = ((row as { attendance?: Record<string, boolean> }).attendance ?? {}) as Record<
-      string,
-      boolean
-    >;
-    const entries = Array.isArray((row as { reschedule_entries?: unknown }).reschedule_entries)
-      ? (row as { reschedule_entries: unknown[] }).reschedule_entries
+    const attendance = (row.attendance ?? {}) as Record<string, boolean>;
+    const entries = Array.isArray(row.reschedule_entries)
+      ? (row.reschedule_entries as unknown[])
       : [];
     for (const e of entries) {
       if (isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;
@@ -393,12 +392,12 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
 
   const pendingLeaveRows: HomeReminderRow[] = [];
   for (const row of yearStateRows) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
+    const sid = String(row.student_id ?? "");
     if (!sid) continue;
     const meta = activeStudentMetaById.get(sid);
     if (!meta) continue;
-    const entries = Array.isArray((row as { reschedule_entries?: unknown }).reschedule_entries)
-      ? (row as { reschedule_entries: unknown[] }).reschedule_entries
+    const entries = Array.isArray(row.reschedule_entries)
+      ? (row.reschedule_entries as unknown[])
       : [];
     for (const e of entries) {
       if (!isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;

@@ -7,6 +7,7 @@ import {
   isMissingFeeRecordColumnError,
   normalizeFeeRecordRow,
 } from "@/lib/studentMonthlyFeeRecordsCompat";
+import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { supabase } from "@/lib/supabase";
 
 export type StudentLesson2026State = {
@@ -193,12 +194,14 @@ export async function loadLessonScheduleRecords(studentId: string) {
 
 export async function loadLessonScheduleRecordsBatch(studentIds: string[]) {
   if (!studentIds.length) return {} as Record<string, unknown[]>;
-  const { data } = await supabase
-    .from("student_lesson_records")
-    .select("student_id, records")
-    .in("student_id", studentIds);
+  const { data, error } = await fetchRowsInChunks({
+    ids: studentIds,
+    query: (chunk) =>
+      supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
+  });
+  if (error) throw new Error(error);
   const out: Record<string, unknown[]> = {};
-  for (const row of data ?? []) {
+  for (const row of data) {
     out[String((row as any).student_id)] = Array.isArray((row as any).records)
       ? ((row as any).records as unknown[])
       : [];
@@ -271,13 +274,18 @@ export async function loadLessonYearState(studentId: string, year: number) {
 
 export async function loadLessonYearStatesBatch(studentIds: string[], year: number) {
   if (!studentIds.length) return {} as Record<string, StudentLesson2026State>;
-  const { data } = await supabase
-    .from("student_lessons_year_state")
-    .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-    .eq("year", year)
-    .in("student_id", studentIds);
+  const { data, error } = await fetchRowsInChunks({
+    ids: studentIds,
+    query: (chunk) =>
+      supabase
+        .from("student_lessons_year_state")
+        .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
+        .eq("year", year)
+        .in("student_id", chunk),
+  });
+  if (error) throw new Error(error);
   const out: Record<string, StudentLesson2026State> = {};
-  for (const row of data ?? []) {
+  for (const row of data) {
     out[String((row as any).student_id)] = parseLessonYearStateDbRow(row as Record<string, unknown>);
   }
   return out;
@@ -350,27 +358,38 @@ export async function loadStudentMonthlyFeeRecordsInMonthRange(params: {
 }): Promise<StudentMonthlyFeeRecord[]> {
   const { studentIds, year, monthFrom, monthTo } = params;
   if (!studentIds.length || monthTo < monthFrom) return [];
-  const extended = await supabase
-    .from("student_monthly_fee_records")
-    .select(FEE_RECORD_SELECT_WITH_SPLIT_REMARKS)
-    .eq("year", year)
-    .gte("month", monthFrom)
-    .lte("month", monthTo)
-    .in("student_id", studentIds);
-  const result =
-    extended.error && isMissingFeeRecordColumnError(extended.error.message)
-      ? await supabase
+
+  async function loadWithSelect(select: string) {
+    const { data, error } = await fetchRowsInChunks<Record<string, unknown>>({
+      ids: studentIds,
+      query: async (chunk) => {
+        const result = await supabase
           .from("student_monthly_fee_records")
-          .select(FEE_RECORD_SELECT_BASE)
+          .select(select)
           .eq("year", year)
           .gte("month", monthFrom)
           .lte("month", monthTo)
-          .in("student_id", studentIds)
-      : extended;
-  if (result.error) throw result.error;
-  return (result.data ?? []).map((row) =>
-    normalizeFeeRecordRow(row as Record<string, unknown>),
-  ) as StudentMonthlyFeeRecord[];
+          .in("student_id", chunk);
+        return {
+          data: (result.data ?? []) as unknown as Record<string, unknown>[],
+          error: result.error,
+        };
+      },
+    });
+    if (error) throw new Error(error);
+    return data;
+  }
+
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await loadWithSelect(FEE_RECORD_SELECT_WITH_SPLIT_REMARKS);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!isMissingFeeRecordColumnError(msg)) throw e;
+    rows = await loadWithSelect(FEE_RECORD_SELECT_BASE);
+  }
+
+  return rows.map((row) => normalizeFeeRecordRow(row)) as StudentMonthlyFeeRecord[];
 }
 
 export async function loadStudentMonthlyFeeRecords(params: {

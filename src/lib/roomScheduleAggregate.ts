@@ -3,7 +3,9 @@ import { unstable_cache } from "next/cache";
 import { SCHEDULE_CACHE_TAG_AGGREGATES } from "@/lib/scheduleCacheTags";
 import { fetchClassroomScheduleLabel } from "@/lib/classroomsRegistry";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
+import { filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { isInactiveTutorName } from "@/lib/tutorVisibility";
 import { fetchInactiveTutorNames } from "@/lib/tutorVisibilityCore";
@@ -228,27 +230,36 @@ async function loadStatesForYear(
 
   const loadLegacy =
     year === 2026
-      ? supabase
-          .from("student_lessons_2026_state")
-          .select(stateSelect)
-          .in("student_id", studentIds)
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>> });
+      ? fetchRowsInChunks({
+          ids: studentIds,
+          query: (chunk) =>
+            supabase.from("student_lessons_2026_state").select(stateSelect).in("student_id", chunk),
+        })
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null });
 
   const [legacyResult, yearResult] = await Promise.all([
     loadLegacy,
-    supabase
-      .from("student_lessons_year_state")
-      .select(stateSelect)
-      .eq("year", year)
-      .in("student_id", studentIds),
+    fetchRowsInChunks({
+      ids: studentIds,
+      query: (chunk) =>
+        supabase
+          .from("student_lessons_year_state")
+          .select(stateSelect)
+          .eq("year", year)
+          .in("student_id", chunk),
+    }),
   ]);
 
+  if (legacyResult.error || yearResult.error) {
+    return map;
+  }
+
   type StateRow = Parameters<typeof dbRowToState>[0];
-  for (const row of (legacyResult.data ?? []) as StateRow[]) {
+  for (const row of legacyResult.data as StateRow[]) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (sid) map.set(sid, dbRowToState(row));
   }
-  for (const row of (yearResult.data ?? []) as StateRow[]) {
+  for (const row of yearResult.data as StateRow[]) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (sid) map.set(sid, dbRowToState(row));
   }
@@ -324,18 +335,14 @@ async function loadStudentsScheduleBundleUncached(year: number): Promise<{
     };
   }
 
-  const ids = students.map((s) => s.id);
-  const [{ data: visibilityRows }, { data: recRows, error: recErr }, stateMap] = await Promise.all([
-    supabase.from("student_visibility_modes").select("student_id, mode, effective_date").in("student_id", ids),
-    supabase.from("student_lesson_records").select("student_id, records").in("student_id", ids),
-    loadStatesForYear(ids, year, supabase),
-  ]);
-
-  if (recErr) {
-    return { bundle: null, error: recErr.message };
-  }
-
   const manualInactiveEffectiveById = new Map<string, string>();
+  const allIds = students.map((s) => String(s.id ?? "")).filter(Boolean);
+  const { data: visibilityRows } = await fetchRowsInChunks({
+    ids: allIds,
+    query: (chunk) =>
+      supabase.from("student_visibility_modes").select("student_id, mode, effective_date").in("student_id", chunk),
+  });
+
   for (const row of visibilityRows ?? []) {
     const mode = String((row as { mode?: string }).mode ?? "active").toLowerCase();
     if (mode !== "inactive") continue;
@@ -343,8 +350,31 @@ async function loadStudentsScheduleBundleUncached(year: number): Promise<{
     const eff = String((row as { effective_date?: string }).effective_date ?? "");
     if (sid && eff) manualInactiveEffectiveById.set(sid, eff);
   }
+
+  const activeStudents = filterStudentsWithAnyActivityInYear(
+    students as ScheduleStudentRow[],
+    manualInactiveEffectiveById,
+    year,
+  );
+  const ids = studentIdsOf(activeStudents);
+
+  const [{ data: recRows, error: recErr }, stateMap] = await Promise.all([
+    ids.length
+      ? fetchRowsInChunks({
+          ids,
+          query: (chunk) =>
+            supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
+        })
+      : Promise.resolve({ data: [], error: null }),
+    loadStatesForYear(ids, year, supabase),
+  ]);
+
+  if (recErr) {
+    return { bundle: null, error: recErr };
+  }
+
   const inactiveEffectiveById = new Map<string, string>();
-  for (const s of students as ScheduleStudentRow[]) {
+  for (const s of activeStudents) {
     const sid = String(s.id ?? "");
     if (!sid) continue;
     const eff = resolveStudentInactiveEffectiveDate({
@@ -362,7 +392,7 @@ async function loadStudentsScheduleBundleUncached(year: number): Promise<{
 
   return {
     bundle: {
-      students: students as ScheduleStudentRow[],
+      students: activeStudents,
       recMap,
       stateMap,
       inactiveEffectiveById,
@@ -379,7 +409,7 @@ const loadStudentsScheduleBundleCached = unstable_cache(
     }
     return { bundle: serializeScheduleBundle(result.bundle), error: null };
   },
-  ["students-schedule-bundle-v1"],
+  ["students-schedule-bundle-v2"],
   // Heavy bundle (students + records + states). Keep longer TTL; tags will bust after edits.
   { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
 );

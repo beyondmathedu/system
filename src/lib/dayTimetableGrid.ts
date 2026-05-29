@@ -18,7 +18,8 @@ import {
 } from "@/lib/yearScheduleCore";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import { filterActiveStudentsOnDate, studentIdsOf } from "@/lib/activeStudentIds";
+import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorConstants";
 import type { DayTimetableFeePaymentTone } from "@/lib/dayTimetableStyleSettings";
 import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings.server";
@@ -777,19 +778,46 @@ async function fetchDayTimetablePayloadUncached(
     loadDayTimetableStyleSettings(),
     loadStudentFeeTierSettingsAdmin(supabase),
   ]);
-  const [{ data: recRows }, { data: stateRows }, { data: remarkRows }] = await Promise.all([
-    supabase.from("student_lesson_records").select("student_id, records"),
-    supabase
-      .from("student_lessons_year_state")
-      .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-      .eq("year", year),
-    supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
-  ]);
-
   const { regularPeriodMaxByRoom, tutorColorByName, examById } = staticBundle;
   const manualInactiveEffectiveById = new Map(Object.entries(staticBundle.manualInactiveEffectiveById));
 
-  const studentList = staticBundle.studentList;
+  const studentList = filterActiveStudentsOnDate(
+    staticBundle.studentList,
+    manualInactiveEffectiveById,
+    year,
+    dateIso,
+  );
+  const activeStudentIds = studentIdsOf(studentList);
+
+  const [
+    { data: recRows, error: recErr },
+    { data: stateRows, error: stateErr },
+    { data: remarkRows },
+  ] = await Promise.all([
+    activeStudentIds.length
+      ? fetchRowsInChunks({
+          ids: activeStudentIds,
+          query: (chunk) =>
+            supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
+        })
+      : Promise.resolve({ data: [], error: null }),
+    activeStudentIds.length
+      ? fetchRowsInChunks({
+          ids: activeStudentIds,
+          query: (chunk) =>
+            supabase
+              .from("student_lessons_year_state")
+              .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
+              .eq("year", year)
+              .in("student_id", chunk),
+        })
+      : Promise.resolve({ data: [], error: null }),
+    supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
+  ]);
+
+  if (recErr || stateErr) {
+    throw new Error(recErr || stateErr || "Failed to load timetable schedule data");
+  }
   const recordsById = new Map<string, unknown>();
   for (const row of recRows ?? []) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
@@ -814,13 +842,6 @@ async function fetchDayTimetablePayloadUncached(
   const timeSet = new Set<string>();
 
   for (const st of studentList) {
-    const inactiveEffective = resolveStudentInactiveEffectiveDate({
-      grade: st.grade,
-      manualInactiveEffective: manualInactiveEffectiveById.get(st.id),
-      year,
-    });
-    if (inactiveEffective && inactiveEffective <= dateIso) continue;
-
     const records = normalizedRecordsById.get(st.id) ?? EMPTY_RECORDS;
     const state = stateById.get(st.id) ?? EMPTY_YEAR_STATE;
     const index = buildDayCandidateIndex(records, state);
@@ -990,7 +1011,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v6"],
+  ["day-timetable-payload-v7"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

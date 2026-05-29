@@ -509,16 +509,25 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
   useEffect(() => {
     if (!studentId) return;
+    const scheduleKey = `lesson_schedule_records:${studentId}`;
     let mounted = true;
     setStudentLoaded(false);
     setStudentNotFound(false);
     void (async () => {
-      const { data } = await supabase
-        .from("students")
-        .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
-        .eq("id", studentId)
-        .maybeSingle();
+      const [studentRes, examInfo, cloudRecords] = await Promise.all([
+        supabase
+          .from("students")
+          .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
+          .eq("id", studentId)
+          .maybeSingle(),
+        loadExamInfo(studentId),
+        loadLessonScheduleRecords(studentId),
+      ]);
       if (!mounted) return;
+
+      setExamInfo(examInfo);
+
+      const { data } = studentRes;
       if (!data) {
         setStudentSummary({
           id: studentId,
@@ -543,43 +552,18 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         textbookPublisher: data.textbook_publisher ?? "",
       });
       setStudentLoaded(true);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [studentId]);
 
-  useEffect(() => {
-    if (!studentId) return;
-    let mounted = true;
-    void (async () => {
-      const info = await loadExamInfo(studentId);
-      if (!mounted) return;
-      setExamInfo(info);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [studentId]);
-
-  useEffect(() => {
-    if (!studentId) return;
-    const key = `lesson_schedule_records:${studentId}`;
-    let mounted = true;
-    void (async () => {
-      const cloud = await loadLessonScheduleRecords(studentId);
-      if (!mounted) return;
-      if (Array.isArray(cloud) && cloud.length > 0) {
-        const normalized = (cloud as ScheduleRecord[]).map((r) => ({
+      if (Array.isArray(cloudRecords) && cloudRecords.length > 0) {
+        const normalized = (cloudRecords as ScheduleRecord[]).map((r) => ({
           ...r,
           effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
         }));
         setRecords(normalized);
-        window.localStorage.setItem(key, JSON.stringify(normalized));
+        window.localStorage.setItem(scheduleKey, JSON.stringify(normalized));
         return;
       }
       try {
-        const raw = window.localStorage.getItem(key);
+        const raw = window.localStorage.getItem(scheduleKey);
         if (!raw) return;
         const parsed = JSON.parse(raw) as ScheduleRecord[];
         if (Array.isArray(parsed)) setRecords(parsed);

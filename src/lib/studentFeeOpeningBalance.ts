@@ -1,3 +1,4 @@
+import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { supabase } from "@/lib/supabase";
 
 export const FEE_OPENING_BALANCE_AS_OF_YEAR = 2026;
@@ -53,20 +54,24 @@ export async function loadStudentFeeOpeningBalances(studentIds: string[]): Promi
 }> {
   if (studentIds.length === 0) return { balances: {} };
 
-  const { data, error } = await supabase
-    .from("student_fee_opening_balances")
-    .select("student_id, opening_balance")
-    .eq("as_of_year", FEE_OPENING_BALANCE_AS_OF_YEAR)
-    .eq("as_of_month", FEE_OPENING_BALANCE_AS_OF_MONTH)
-    .in("student_id", studentIds);
+  const { data, error } = await fetchRowsInChunks({
+    ids: studentIds,
+    query: (chunk) =>
+      supabase
+        .from("student_fee_opening_balances")
+        .select("student_id, opening_balance")
+        .eq("as_of_year", FEE_OPENING_BALANCE_AS_OF_YEAR)
+        .eq("as_of_month", FEE_OPENING_BALANCE_AS_OF_MONTH)
+        .in("student_id", chunk),
+  });
 
   const local = readFeeOpeningBalancesFromLocal();
 
   if (error) {
     return {
       balances: local,
-      error: error.message,
-      tableMissing: isMissingTableError(error.message),
+      error,
+      tableMissing: isMissingTableError(error),
     };
   }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { supabase } from "@/lib/supabase";
 import AppTopNav from "@/components/AppTopNav";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
@@ -347,9 +348,17 @@ export default function StudentsPage() {
       from += pageSize;
     }
 
-    const { data: visibilityRows, error: visibilityError } = await supabase
-      .from("student_visibility_modes")
-      .select("student_id, mode, effective_date");
+    const studentIds = allRows.map((r) => r.id).filter(Boolean);
+    const { data: visibilityRows, error: visibilityError } = studentIds.length
+      ? await fetchRowsInChunks({
+          ids: studentIds,
+          query: (chunk) =>
+            supabase
+              .from("student_visibility_modes")
+              .select("student_id, mode, effective_date")
+              .in("student_id", chunk),
+        })
+      : { data: [], error: null };
 
     if (visibilityError) {
       setDataError("Failed to load student records. Please check your Supabase configuration and tables.");

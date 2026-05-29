@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { supabase } from "@/lib/supabase";
 import {
   FEE_OPENING_BALANCE_AS_OF_MONTH,
@@ -738,10 +739,23 @@ export default function StudentsLessonTimeFeeRecordPage() {
   useEffect(() => {
     let mounted = true;
     void (async () => {
-      const [{ data }, { data: visibilityRows }] = await Promise.all([
-        supabase.from("students").select("id, name_zh, name_en, nickname_en, grade, student_phone").order("id"),
-        supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
-      ]);
+      const { data } = await supabase
+        .from("students")
+        .select("id, name_zh, name_en, nickname_en, grade, student_phone")
+        .order("id");
+      const studentIdsForVisibility = (data ?? []).map((r) => String(r.id ?? "")).filter(Boolean);
+      let visibilityRows: Array<{ student_id?: string; mode?: string; effective_date?: string }> = [];
+      if (studentIdsForVisibility.length) {
+        const vis = await fetchRowsInChunks({
+          ids: studentIdsForVisibility,
+          query: (chunk) =>
+            supabase
+              .from("student_visibility_modes")
+              .select("student_id, mode, effective_date")
+              .in("student_id", chunk),
+        });
+        visibilityRows = vis.data;
+      }
       if (!mounted) return;
       const cutoff = monthEndIso(sheetYear, Number(sheetMonth));
       const manualInactiveEffectiveById = new Map<string, string>();
@@ -842,7 +856,14 @@ export default function StudentsLessonTimeFeeRecordPage() {
         [recordsMap, yearStatesMap],
         openingResult,
       ] = await Promise.all([
-        supabase.from("student_lessons_2026_metrics").select("student_id, remedial_count").in("student_id", ids),
+        fetchRowsInChunks({
+          ids,
+          query: (chunk) =>
+            supabase
+              .from("student_lessons_2026_metrics")
+              .select("student_id, remedial_count")
+              .in("student_id", chunk),
+        }).then((r) => ({ data: r.data, error: r.error ? { message: r.error } : null })),
         feeRangePromise,
         Promise.all([loadLessonScheduleRecordsBatch(ids), loadLessonYearStatesBatch(ids, sheetYear)]),
         openingPromise,
