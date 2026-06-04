@@ -225,7 +225,7 @@ function lookupGradeByThresholds(
   yearGradeThresholds: Record<number, number[]>,
 ): string {
   if (!year) return "-";
-  const thresholds = yearGradeThresholds[year] ?? DEFAULT_YEAR_GRADE_THRESHOLDS[year];
+  const thresholds = yearGradeThresholds[year];
   if (!thresholds) return "-";
   let idx = 0;
   for (let i = 0; i < thresholds.length; i += 1) {
@@ -239,6 +239,158 @@ function parsePercentFromCutoffCell(value: string): number | null {
   if (!m) return null;
   const n = Number.parseFloat(m[1]);
   return Number.isFinite(n) ? n : null;
+}
+
+function loadCutOffOverride(): ProgressSheet | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CUT_OFF_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const headers = Array.isArray((parsed as ProgressSheet).headers)
+      ? (parsed as ProgressSheet).headers.map((h) => String(h ?? ""))
+      : null;
+    const rows = Array.isArray((parsed as ProgressSheet).rows)
+      ? (parsed as ProgressSheet).rows.map((row) =>
+          Array.isArray(row) ? row.map((cell) => String(cell ?? "")) : [],
+        )
+      : null;
+    if (!headers?.length || !rows) return null;
+    return { name: CUT_OFF_SHEET, headers, rows };
+  } catch {
+    return null;
+  }
+}
+
+function saveCutOffOverride(sheet: ProgressSheet) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(CUT_OFF_STORAGE_KEY, JSON.stringify(sheet));
+}
+
+function trimCutOffSheet(sheet: ProgressSheet): ProgressSheet {
+  const rowByLevel = new Map<string, string[]>();
+  const extraLevelRows: string[][] = [];
+  for (const row of sheet.rows) {
+    const level = String(row[0] ?? "").trim();
+    if (!level) continue;
+    if (CUT_OFF_FIXED_LEVELS.includes(level as (typeof CUT_OFF_FIXED_LEVELS)[number])) {
+      rowByLevel.set(level, row);
+    } else {
+      extraLevelRows.push(row);
+    }
+  }
+  const rows = [
+    ...CUT_OFF_FIXED_LEVELS.map((level) => {
+      const existing = rowByLevel.get(level);
+      if (existing) {
+        while (existing.length < sheet.headers.length) existing.push("");
+        return existing;
+      }
+      return Array.from({ length: sheet.headers.length }, (_, index) => (index === 0 ? level : ""));
+    }),
+    ...extraLevelRows.map((row) => {
+      const next = [...row];
+      while (next.length < sheet.headers.length) next.push("");
+      return next;
+    }),
+  ];
+  return { ...sheet, rows };
+}
+
+type CutOffDisplayModel = {
+  levelHeaders: string[];
+  yearRows: string[][];
+};
+
+function buildCutOffDisplayModel(sheet: ProgressSheet): CutOffDisplayModel {
+  const levelHeaders = [sheet.headers[0] || "Level 等級", ...sheet.rows.map((row) => String(row[0] ?? "").trim())];
+  const yearRows: string[][] = [];
+  for (let yearCol = 1; yearCol < sheet.headers.length; yearCol += 1) {
+    yearRows.push([sheet.headers[yearCol] ?? "", ...sheet.rows.map((row) => row[yearCol] ?? "")]);
+  }
+  return { levelHeaders, yearRows };
+}
+
+function applyCutOffDisplayCellUpdate(
+  sheet: ProgressSheet,
+  displayRowIndex: number,
+  displayColIndex: number,
+  value: string,
+): ProgressSheet {
+  const yearCol = displayRowIndex + 1;
+  if (displayColIndex === 0) {
+    const headers = sheet.headers.map((cell, index) => (index === yearCol ? value : cell));
+    return { ...sheet, headers };
+  }
+  const levelRowIndex = displayColIndex - 1;
+  const rows = sheet.rows.map((row, rowIndex) => {
+    if (rowIndex !== levelRowIndex) return row;
+    const next = [...row];
+    while (next.length <= yearCol) next.push("");
+    next[yearCol] = value;
+    return next;
+  });
+  return { ...sheet, rows };
+}
+
+function extractCutOffYears(sheet: ProgressSheet): number[] {
+  const years: number[] = [];
+  for (let col = 1; col < sheet.headers.length; col += 1) {
+    const yearMatch = String(sheet.headers[col] ?? "").trim().match(/^(\d{4})/);
+    if (!yearMatch) continue;
+    const year = Number.parseInt(yearMatch[1], 10);
+    if (Number.isFinite(year)) years.push(year);
+  }
+  return years;
+}
+
+function findHeaderColumnIndex(headers: string[], names: string[]): number {
+  const wanted = new Set(names.map((name) => normalizeHeaderName(name)));
+  return headers.findIndex((header) => wanted.has(normalizeHeaderName(header)));
+}
+
+function buildBlankF6ByYearsRow(headers: string[], dseColIndex: number, year: number): string[] {
+  const row = Array.from({ length: headers.length }, () => "");
+  row[dseColIndex] = String(year);
+  const paper1Col = findHeaderColumnIndex(headers, ["paper 1"]);
+  const percentCol = findHeaderColumnIndex(headers, ["%"]);
+  const gradeCol = headers.findIndex((header) => normalizeHeaderName(header).startsWith("grade"));
+  if (paper1Col >= 0) row[paper1Col] = "0";
+  if (percentCol >= 0) row[percentCol] = "0";
+  if (gradeCol >= 0) row[gradeCol] = "-";
+  return row;
+}
+
+function syncF6ByYearsWithCutOff(f6Sheet: ProgressSheet, cutOffSheet: ProgressSheet): ProgressSheet {
+  const dseColIndex = findHeaderColumnIndex(f6Sheet.headers, ["dse"]);
+  if (dseColIndex < 0) return f6Sheet;
+
+  const cutOffYears = extractCutOffYears(cutOffSheet);
+  const rowByYear = new Map<number, string[]>();
+  const trailingRows: string[][] = [];
+
+  for (const row of f6Sheet.rows) {
+    const year = parseYear(String(row[dseColIndex] ?? ""));
+    if (year !== null) {
+      rowByYear.set(year, [...row]);
+      continue;
+    }
+    if (isLegendDataRow(row)) {
+      trailingRows.push([...row]);
+    }
+  }
+
+  const syncedYearRows = cutOffYears.map((year, index) => {
+    const existing = rowByYear.get(year) ?? buildBlankF6ByYearsRow(f6Sheet.headers, dseColIndex, year);
+    const next = [...existing];
+    while (next.length < f6Sheet.headers.length) next.push("");
+    next[dseColIndex] = String(year);
+    next[0] = index === 0 ? "F.6" : "";
+    return next;
+  });
+
+  return { ...f6Sheet, rows: [...syncedYearRows, ...trailingRows] };
 }
 
 function parseCutOffThresholds(rows: string[][]): Record<number, number[]> {
@@ -331,10 +483,64 @@ function getProgressLevelCellClass(levelValue: string): string {
   return "text-slate-700";
 }
 
-function getPercentFeedbackClass(percent: number): string {
-  if (percent >= 74) return "border-emerald-300 bg-emerald-50 text-emerald-800";
-  if (percent >= 50) return "border-amber-300 bg-amber-50 text-amber-800";
-  return "border-rose-300 bg-rose-50 text-rose-800";
+const LEGEND_ORDER = ["remedial", "good", "mastered"] as const;
+
+type LegendEntry = {
+  label: string;
+  description: string;
+  key: (typeof LEGEND_ORDER)[number];
+};
+
+function extractLegendEntries(rows: string[][]): LegendEntry[] {
+  const entries: LegendEntry[] = [];
+  for (const row of rows) {
+    const key = getProgressLevelKey(row[0] || "");
+    if (!key) continue;
+    entries.push({
+      label: (row[0] || "").trim(),
+      description: (row[1] || "").trim(),
+      key,
+    });
+  }
+  return entries.sort((a, b) => LEGEND_ORDER.indexOf(a.key) - LEGEND_ORDER.indexOf(b.key));
+}
+
+function isLegendDataRow(row: string[]): boolean {
+  return getProgressLevelKey(row[0] || "") !== null;
+}
+
+function getPercentInputClass(): string {
+  return "border-slate-300 bg-slate-100 text-slate-700";
+}
+
+function getPercentFeedbackClass(_percent?: number): string {
+  return getPercentInputClass();
+}
+
+const CUT_OFF_SHEET = "Cut Off";
+const CUT_OFF_STORAGE_KEY = "beyondmath-student-progress-cutoff";
+const CUT_OFF_FIXED_LEVELS = ["5**", "5*", "5", "4", "3", "2"] as const;
+const CUT_OFF_YEAR_CELL_PAD = "px-2 py-2";
+const CUT_OFF_YEAR_INPUT_CLASS =
+  "min-w-[114px] max-w-[114px] rounded-md border border-slate-300 bg-white px-[0.45rem] py-1 text-sm text-slate-800";
+const CUT_OFF_YEAR_HEADER_INPUT_CLASS =
+  "min-w-[114px] max-w-[114px] rounded-md border border-slate-300 bg-white px-[0.45rem] py-1 text-sm font-semibold text-slate-800";
+const CUT_OFF_TABLE_BODY_SCROLL_CLASS =
+  "min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable_both-edges] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400";
+
+const F6_BY_YEARS_SHEET = "F6 By Years";
+const F6_YEARS_FROZEN_COL0_CLASS = "min-w-[4.5rem] max-w-[4.5rem]";
+
+function isF6ByYearsSheet(sheetName: string): boolean {
+  return sheetName === F6_BY_YEARS_SHEET;
+}
+
+function isF6ByYearsFrozenCol0(sheetName: string, colIndex: number): boolean {
+  return isF6ByYearsSheet(sheetName) && colIndex === 0;
+}
+
+function isF6ByYearsFrozenDse(sheetName: string, headerName: string): boolean {
+  return isF6ByYearsSheet(sheetName) && headerName === "dse";
 }
 
 export default function StudentProgressByIdPage() {
@@ -360,8 +566,60 @@ export default function StudentProgressByIdPage() {
   const [progressError, setProgressError] = useState("");
   const [progressSelections, setProgressSelections] = useState<ProgressSelectionMap>({});
   const [yearGradeThresholds, setYearGradeThresholds] = useState<Record<number, number[]>>(DEFAULT_YEAR_GRADE_THRESHOLDS);
+  const [cutOffSheet, setCutOffSheet] = useState<ProgressSheet | null>(null);
+  const [activeSheetName, setActiveSheetName] = useState("");
   const gradeLevel = parseGradeLevel(studentSummary.grade);
   const currentGradeSheetNames = new Set(gradeLevel ? getCurrentGradeSheetNames(gradeLevel) : []);
+  const activeProgressSheet =
+    progressSheets.find((sheet) => sheet.name === activeSheetName) ?? progressSheets[0] ?? null;
+  const activeDisplaySheet =
+    activeProgressSheet?.name === CUT_OFF_SHEET && cutOffSheet ? cutOffSheet : activeProgressSheet;
+  const activeLegendEntries = activeDisplaySheet ? extractLegendEntries(activeDisplaySheet.rows) : [];
+
+  const commitCutOffSheet = (next: ProgressSheet) => {
+    const trimmed = trimCutOffSheet(next);
+    setCutOffSheet(trimmed);
+    setProgressSheets((prev) =>
+      prev.map((sheet) => {
+        if (sheet.name === CUT_OFF_SHEET) return trimmed;
+        if (sheet.name === F6_BY_YEARS_SHEET) return syncF6ByYearsWithCutOff(sheet, trimmed);
+        return sheet;
+      }),
+    );
+    saveCutOffOverride(trimmed);
+    const thresholds = parseCutOffThresholds([trimmed.headers, ...trimmed.rows]);
+    setYearGradeThresholds({ ...DEFAULT_YEAR_GRADE_THRESHOLDS, ...thresholds });
+  };
+
+  const updateCutOffDisplayCell = (displayRowIndex: number, displayColIndex: number, value: string) => {
+    if (!cutOffSheet) return;
+    commitCutOffSheet(applyCutOffDisplayCellUpdate(cutOffSheet, displayRowIndex, displayColIndex, value));
+  };
+
+  const addCutOffRow = () => {
+    if (!cutOffSheet) return;
+    const newYear = `${new Date().getFullYear()}/0(%)`;
+    const headers = [cutOffSheet.headers[0] ?? "Level 等級", newYear, ...cutOffSheet.headers.slice(1)];
+    const rows = cutOffSheet.rows.map((row) => [row[0] ?? "", "", ...row.slice(1)]);
+    commitCutOffSheet({ ...cutOffSheet, headers, rows });
+  };
+
+  useEffect(() => {
+    if (!progressSheets.length) {
+      setActiveSheetName("");
+      return;
+    }
+    if (activeSheetName && progressSheets.some((sheet) => sheet.name === activeSheetName)) return;
+    if (gradeLevel) {
+      const preferred = getCurrentGradeSheetNames(gradeLevel);
+      const match = preferred.find((name) => progressSheets.some((sheet) => sheet.name === name));
+      if (match) {
+        setActiveSheetName(match);
+        return;
+      }
+    }
+    setActiveSheetName(progressSheets[0].name);
+  }, [progressSheets, gradeLevel, activeSheetName]);
 
   useEffect(() => {
     if (!studentId) return;
@@ -447,6 +705,7 @@ export default function StudentProgressByIdPage() {
     const level = gradeLevel;
     if (!level) {
       setProgressSheets([]);
+      setCutOffSheet(null);
       setProgressError("");
       setProgressLoading(false);
       return;
@@ -466,22 +725,35 @@ export default function StudentProgressByIdPage() {
         const wantedSheets = getCumulativeSheetNames(level);
         const parsed: ProgressSheet[] = [];
 
-        const cutOffSheet = workbook.Sheets["Cut Off"];
-        if (cutOffSheet) {
+        const savedCutOff = loadCutOffOverride();
+        const cutOffWorkbookSheet = workbook.Sheets[CUT_OFF_SHEET];
+        let loadedCutOffSheet: ProgressSheet | null = savedCutOff;
+        if (!loadedCutOffSheet && cutOffWorkbookSheet) {
           const cutOffRows = XLSX.utils
-            .sheet_to_json<(string | number | boolean | null)[]>(cutOffSheet, {
+            .sheet_to_json<(string | number | boolean | null)[]>(cutOffWorkbookSheet, {
               header: 1,
               defval: "",
               blankrows: false,
             })
-            .map((row) => row.map((v) => cellToText(v)));
-          const parsedThresholds = parseCutOffThresholds(cutOffRows);
-          if (Object.keys(parsedThresholds).length) {
-            setYearGradeThresholds(parsedThresholds);
-          } else {
-            setYearGradeThresholds(DEFAULT_YEAR_GRADE_THRESHOLDS);
+            .map((row) => row.map((v) => cellToText(v)))
+            .filter((row) => row.some((cell) => cell !== ""));
+          if (cutOffRows.length) {
+            loadedCutOffSheet = trimCutOffSheet({
+              name: CUT_OFF_SHEET,
+              headers: cutOffRows[0] ?? [],
+              rows: cutOffRows.slice(1),
+            });
           }
+        }
+        if (loadedCutOffSheet) {
+          setCutOffSheet(loadedCutOffSheet);
+          const parsedThresholds = parseCutOffThresholds([
+            loadedCutOffSheet.headers,
+            ...loadedCutOffSheet.rows,
+          ]);
+          setYearGradeThresholds({ ...DEFAULT_YEAR_GRADE_THRESHOLDS, ...parsedThresholds });
         } else {
+          setCutOffSheet(null);
           setYearGradeThresholds(DEFAULT_YEAR_GRADE_THRESHOLDS);
         }
 
@@ -499,7 +771,14 @@ export default function StudentProgressByIdPage() {
           if (!cleanedRows.length) continue;
 
           const headers = cleanedRows[0];
-          const rows = cleanedRows.slice(1);
+          let rows = cleanedRows.slice(1);
+          if (sheetName === CUT_OFF_SHEET && loadedCutOffSheet) {
+            parsed.push(loadedCutOffSheet);
+            continue;
+          }
+          if (sheetName === F6_BY_YEARS_SHEET && loadedCutOffSheet) {
+            rows = syncF6ByYearsWithCutOff({ name: sheetName, headers, rows }, loadedCutOffSheet).rows;
+          }
           parsed.push({ name: sheetName, headers, rows });
         }
 
@@ -507,7 +786,8 @@ export default function StudentProgressByIdPage() {
       } catch {
         if (!cancelled) {
           setProgressSheets([]);
-          setProgressError("无法读取 Student Progress Excel。");
+          setCutOffSheet(null);
+          setProgressError("無法讀取 Student Progress Excel。");
           setYearGradeThresholds(DEFAULT_YEAR_GRADE_THRESHOLDS);
         }
       } finally {
@@ -525,8 +805,11 @@ export default function StudentProgressByIdPage() {
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
         <AppTopNav highlight="students" />
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div
+            className="sticky top-[52px] z-50 rounded-t-2xl px-6 py-5 text-white shadow-[0_4px_12px_rgba(15,23,42,0.12)] sm:top-[56px]"
+            style={{ backgroundImage: PRIMARY_GRADIENT }}
+          >
             <div className="flex items-center gap-3">
               <Link
                 href={`/students/${encodeURIComponent(studentId)}/lessons`}
@@ -613,7 +896,7 @@ export default function StudentProgressByIdPage() {
 
             {progressLoading ? (
               <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                Loading workbook...
+                正在載入工作簿…
               </div>
             ) : null}
 
@@ -625,32 +908,93 @@ export default function StudentProgressByIdPage() {
 
             {!progressLoading && !progressError && !progressSheets.length ? (
               <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                当前学生年级未能匹配到可显示的进度内容。
+                當前學生年級未能匹配到可顯示的進度內容。
               </div>
             ) : null}
 
-            <div className="mt-4 space-y-3">
-              {progressSheets.map((sheet) => (
-                <details
-                  key={sheet.name}
-                  className="overflow-hidden rounded-xl border border-slate-200 bg-white"
-                  open={currentGradeSheetNames.has(sheet.name)}
+            {activeProgressSheet ? (
+              <div className="mt-4 flex flex-col rounded-xl border border-slate-200 bg-white">
+                <div
+                  className={`max-h-[70vh] min-h-0 rounded-t-xl ${
+                    activeProgressSheet.name === CUT_OFF_SHEET
+                      ? "flex flex-col overflow-hidden"
+                      : "overflow-auto [scrollbar-gutter:stable_both-edges] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
+                  }`}
                 >
-                  <summary className="cursor-pointer bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900">
-                    {sheet.name}
-                  </summary>
-                  <div
-                    className="max-h-[70vh] overflow-auto border-t border-slate-200
-                      [scrollbar-gutter:stable_both-edges]
-                      [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3
-                      [&::-webkit-scrollbar-track]:bg-slate-100
-                      [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300
-                      hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
-                  >
-                    {(() => {
-                      const columns = buildSheetColumns(sheet.headers);
-                      return (
-                    <table className="min-w-full text-sm">
+                  {(() => {
+                    const sheet = activeProgressSheet;
+                    const isCutOffSheet = sheet.name === CUT_OFF_SHEET;
+                    const activeSheet = isCutOffSheet && cutOffSheet ? cutOffSheet : sheet;
+                    const columns = buildSheetColumns(activeSheet.headers);
+                    const cutOffDisplay = isCutOffSheet ? buildCutOffDisplayModel(activeSheet) : null;
+                    return (
+                      <>
+                        {isCutOffSheet && cutOffDisplay ? (
+                          <div className="flex min-h-0 flex-1 flex-col">
+                            <div className={CUT_OFF_TABLE_BODY_SCROLL_CLASS}>
+                              <table className="min-w-full border-separate border-spacing-0 text-sm">
+                                <thead>
+                                  <tr>
+                                    {cutOffDisplay.levelHeaders.map((label, colIndex) => (
+                                      <th
+                                        key={`${sheet.name}-cutoff-head-${colIndex}`}
+                                        className={`sticky top-0 whitespace-nowrap bg-slate-100 text-left font-semibold text-slate-700 shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)] ${
+                                          colIndex === 0
+                                            ? `sticky left-0 top-0 z-40 ${CUT_OFF_YEAR_CELL_PAD} shadow-[inset_-1px_0_0_rgba(226,232,240,1),inset_0_-1px_0_0_rgba(226,232,240,1)]`
+                                            : `sticky top-0 z-30 ${colIndex === 1 ? CUT_OFF_YEAR_CELL_PAD : "px-3 py-2"}`
+                                        }`}
+                                      >
+                                        <span>{label || " "}</span>
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {cutOffDisplay.yearRows.map((displayRow, displayRowIndex) => (
+                                    <tr
+                                      key={`${sheet.name}-cutoff-year-${displayRowIndex}`}
+                                      className="border-t border-slate-100"
+                                    >
+                                      {displayRow.map((cell, displayColIndex) => (
+                                        <td
+                                          key={`${sheet.name}-cutoff-year-${displayRowIndex}-col-${displayColIndex}`}
+                                          className={
+                                            displayColIndex === 0
+                                              ? `sticky left-0 z-20 bg-white ${CUT_OFF_YEAR_CELL_PAD} shadow-[inset_-1px_0_0_rgba(241,245,249,1)]`
+                                              : CUT_OFF_YEAR_CELL_PAD
+                                          }
+                                        >
+                                          <input
+                                            type="text"
+                                            value={cell}
+                                            onChange={(e) =>
+                                              updateCutOffDisplayCell(displayRowIndex, displayColIndex, e.target.value)
+                                            }
+                                            className={
+                                              displayColIndex === 0
+                                                ? CUT_OFF_YEAR_HEADER_INPUT_CLASS
+                                                : CUT_OFF_YEAR_INPUT_CLASS
+                                            }
+                                          />
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="flex shrink-0 flex-wrap gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={addCutOffRow}
+                                className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
+                              >
+                                + Add Row
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                        <table className="min-w-full text-sm">
                       <thead className="sticky top-0 z-20 bg-slate-100">
                         <tr>
                           {columns.map((col) => {
@@ -664,13 +1008,22 @@ export default function StudentProgressByIdPage() {
                                 </th>
                               );
                             }
+                            const headerNameHead = normalizeHeaderName(col.header || "");
+                            const frozenCol0Head = isF6ByYearsFrozenCol0(sheet.name, col.colIndex);
+                            const frozenDseHead = isF6ByYearsFrozenDse(sheet.name, headerNameHead);
                             return (
                               <th
                                 key={`${sheet.name}-head-${col.colIndex}`}
-                                className="whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-700 shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]"
+                                className={`whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-700 shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)] ${
+                                  frozenCol0Head
+                                    ? `sticky left-0 z-30 ${F6_YEARS_FROZEN_COL0_CLASS} bg-slate-100 shadow-[inset_-1px_0_0_rgba(226,232,240,1),inset_0_-1px_0_0_rgba(226,232,240,1)]`
+                                    : frozenDseHead
+                                      ? "sticky left-[4.5rem] z-30 min-w-[5.5rem] bg-slate-100 shadow-[inset_-1px_0_0_rgba(226,232,240,1),inset_0_-1px_0_0_rgba(226,232,240,1)]"
+                                      : ""
+                                }`}
                               >
                                 {(() => {
-                                  if (normalizeHeaderName(col.header || "") === "marks") {
+                                  if (headerNameHead === "marks") {
                                     return "Marks";
                                   }
                                   return col.header || " ";
@@ -681,23 +1034,15 @@ export default function StudentProgressByIdPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {sheet.rows.map((row, rowIndex) => {
+                        {activeSheet.rows.map((row, rowIndex) => {
+                          if (isLegendDataRow(row)) return null;
                           const rowLevelValue = row[0] || "";
-                          const isLegendRow = getProgressLevelKey(rowLevelValue) !== null;
                           return (
                             <tr
                               key={`${sheet.name}-row-${rowIndex}`}
                               className={`border-t border-slate-100 ${getProgressLevelRowClass(rowLevelValue)}`}
                             >
-                              {isLegendRow ? (
-                                <td colSpan={columns.length} className={`px-3 py-3 ${getProgressLevelCellClass(rowLevelValue)}`}>
-                                  <div className="flex flex-wrap items-center gap-x-10 gap-y-1">
-                                    <span className="text-base font-bold">{row[0] || " "}</span>
-                                    <span className="text-base">{row[1] || " "}</span>
-                                  </div>
-                                </td>
-                              ) : (
-                                columns.map((col) => {
+                              {columns.map((col) => {
                                   if (col.kind === "textbookCombined") {
                                     const en = row[col.colIndexEn] || "";
                                     const zh = row[col.colIndexZh] || "";
@@ -717,12 +1062,24 @@ export default function StudentProgressByIdPage() {
                                   const headerName = normalizeHeaderName(col.header || "");
                                   const isRemarks = headerName === "remarks";
                                   const colIndex = col.colIndex;
+                                  const frozenCol0 = isF6ByYearsFrozenCol0(sheet.name, colIndex);
+                                  const frozenDse = isF6ByYearsFrozenDse(sheet.name, headerName);
                                   return (
                                     <td
                                       key={`${sheet.name}-row-${rowIndex}-col-${colIndex}`}
                                       className={`${isRemarks ? "whitespace-normal" : "whitespace-nowrap"} px-3 py-2 ${getProgressLevelCellClass(
                                         rowLevelValue,
-                                      )}`}
+                                      )} ${
+                                        frozenCol0
+                                          ? `sticky left-0 z-10 ${F6_YEARS_FROZEN_COL0_CLASS} shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${getProgressLevelStickyBgClass(
+                                              rowLevelValue,
+                                            )}`
+                                          : frozenDse
+                                            ? `sticky left-[4.5rem] z-10 min-w-[5.5rem] shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${getProgressLevelStickyBgClass(
+                                                rowLevelValue,
+                                              )}`
+                                            : ""
+                                      }`}
                                     >
                                       {(() => {
                                         const selectionKey = buildSelectionCellKey(sheet.name, rowIndex, colIndex);
@@ -740,9 +1097,7 @@ export default function StudentProgressByIdPage() {
                                               type="text"
                                               value={display}
                                               readOnly
-                                              className={`w-[120px] min-w-[90px] rounded-md border px-2 py-1 text-sm font-semibold ${getPercentFeedbackClass(
-                                                percentage,
-                                              )}`}
+                                              className={`w-[120px] min-w-[90px] rounded-md border px-2 py-1 text-sm font-semibold ${getPercentInputClass()}`}
                                             />
                                           );
                                         }
@@ -879,8 +1234,8 @@ export default function StudentProgressByIdPage() {
                                                   return { ...prev, [selectionKey]: nextValue };
                                                 });
                                               }}
-                                              rows={3}
-                                              className="min-h-[2.5rem] w-[320px] min-w-[240px] resize-y rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+                                              rows={2}
+                                              className="min-h-[2rem] w-[200px] min-w-[160px] resize-y rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
                                             />
                                           );
                                         }
@@ -912,19 +1267,58 @@ export default function StudentProgressByIdPage() {
                                       })()}
                                     </td>
                                   );
-                                })
-                              )}
+                                })}
                             </tr>
                           );
                         })}
                       </tbody>
                     </table>
-                      );
-                    })()}
+                        )}
+                    </>
+                    );
+                  })()}
+                </div>
+
+                {activeLegendEntries.length > 0 ? (
+                  <div className="shrink-0 overflow-x-auto border-t border-slate-200 bg-slate-50 px-4 py-2.5">
+                    <div className="whitespace-nowrap text-sm">
+                      {activeLegendEntries.map((entry, entryIndex) => (
+                        <span key={entry.key} className={getProgressLevelCellClass(entry.label)}>
+                          {entryIndex > 0 ? <span className="mx-5 font-normal text-slate-300">|</span> : null}
+                          <span className="font-bold">{entry.label}</span>
+                          {entry.description ? (
+                            <span className="ml-2 font-normal text-slate-700">{entry.description}</span>
+                          ) : null}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </details>
-              ))}
-            </div>
+                ) : null}
+
+                <div className="sticky bottom-0 z-40 flex shrink-0 overflow-x-auto rounded-b-xl border-t border-slate-300 bg-[#eef2f6] shadow-[0_-4px_12px_rgba(15,23,42,0.08)]">
+                  {progressSheets.map((tabSheet) => {
+                    const isActive = tabSheet.name === activeSheetName;
+                    const isCurrentGrade = currentGradeSheetNames.has(tabSheet.name);
+                    return (
+                      <button
+                        key={tabSheet.name}
+                        type="button"
+                        onClick={() => setActiveSheetName(tabSheet.name)}
+                        className={`shrink-0 border-r border-slate-300 px-4 py-2 text-sm font-semibold transition ${
+                          isActive
+                            ? "bg-emerald-600 text-white"
+                            : isCurrentGrade
+                              ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                              : "bg-[#eef2f6] text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        {tabSheet.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
