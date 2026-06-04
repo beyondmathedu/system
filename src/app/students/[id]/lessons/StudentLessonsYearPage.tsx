@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
@@ -181,7 +181,25 @@ type ScheduleSortKey =
   | "lessonType";
 type ScheduleSortConfig = { key: ScheduleSortKey; direction: SortDirection } | null;
 
-type BulkEditMode = "single" | "multi";
+type BulkEditMode = "single" | "each";
+
+type BulkEditLessonDraft = {
+  rowId: string;
+  date: string;
+  timePreset: string;
+  timeCustom: string;
+  room: string;
+  original: BulkEditOriginalSnapshot;
+};
+
+type BulkEditOriginalSnapshot = {
+  date?: string;
+  weekday: string;
+  displayTime: string;
+  displayRoom: string;
+  baseTime: string;
+  baseRoom: string;
+};
 
 type BulkEditFormState = {
   date: string;
@@ -193,6 +211,7 @@ type BulkEditFormState = {
   sourceRuleId: string;
   selectedDateIsos: string[];
   sourceSlotLabel: string;
+  original: BulkEditOriginalSnapshot;
 };
 
 const WEEKDAY_OPTIONS = ["一", "二", "三", "四", "五", "六", "日"] as const;
@@ -255,12 +274,251 @@ function weekdayFromIsoDate(iso: string) {
   return numberToWeekday(hkNum);
 }
 
-function regularRowSlotKey(row: ScheduleRow): string {
-  return `${row.weekday}|${row.baseTime}|${row.baseRoom}`;
-}
-
 function resolveBulkEditTime(form: Pick<BulkEditFormState, "timePreset" | "timeCustom">): string {
   return form.timeCustom.trim() || form.timePreset.trim();
+}
+
+const BULK_EDIT_MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+function formatLessonDateLabel(iso: string, weekday: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso || "—";
+  const wd = WEEKDAY_LABEL[weekday] ?? weekday;
+  const month = BULK_EDIT_MONTH_SHORT[Number(m[2]) - 1] ?? m[2];
+  return `${wd}, ${Number(m[3])} ${month} ${m[1]}`;
+}
+
+/** Reschedule 列：只有欄位真係變咗先顯示舊→新，否則只顯示現值。 */
+function RescheduleChangeCell({
+  before,
+  after,
+  format = (v: string) => v,
+}: {
+  before: string;
+  after: string;
+  format?: (v: string) => string;
+}) {
+  const b = format((before ?? "").trim());
+  const a = format((after ?? "").trim());
+  const display = a || b || "—";
+  if (!b || b === a) {
+    return <span>{display}</span>;
+  }
+  return (
+    <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500 line-through decoration-slate-400">
+        {b}
+      </span>
+      <span className="text-slate-400" aria-hidden>
+        →
+      </span>
+      <span className="rounded bg-sky-50 px-1.5 py-0.5 text-xs font-semibold text-[#1d76c2]">
+        {a || "—"}
+      </span>
+    </span>
+  );
+}
+
+function BulkEditCompareRow({
+  label,
+  before,
+  beforeHint,
+  changed,
+  children,
+}: {
+  label: string;
+  before: string;
+  beforeHint?: string;
+  changed?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-2 px-4 py-3.5 sm:grid-cols-[6.75rem_minmax(0,1fr)_auto_minmax(0,1.35fr)] sm:items-center sm:gap-3">
+      <span className="text-sm font-semibold text-slate-700">{label}</span>
+      <div className="min-w-0">
+        <span className="inline-flex max-w-full items-center rounded-md bg-slate-100 px-2.5 py-1.5 text-sm font-medium text-slate-600">
+          <span className="truncate">{before || "—"}</span>
+        </span>
+        {beforeHint ? (
+          <p className="mt-1 text-[11px] leading-snug text-slate-500">{beforeHint}</p>
+        ) : null}
+      </div>
+      <span
+        className="hidden shrink-0 text-lg font-light text-slate-300 sm:inline"
+        aria-hidden="true"
+      >
+        →
+      </span>
+      <div
+        className={
+          changed
+            ? "rounded-lg ring-2 ring-[#1d76c2]/25 ring-offset-1"
+            : "min-w-0"
+        }
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const bulkEditInputClass =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.12)]";
+
+const bulkEditInputDisabledClass =
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600";
+
+function scheduleRowToBulkEditDraft(row: ScheduleRow): BulkEditLessonDraft | null {
+  const parsed = parseRegularLessonRowId(row.rowId);
+  if (!parsed) return null;
+  const { timePreset, timeCustom } = pickTimePreset(row.time, row.weekday);
+  return {
+    rowId: row.rowId,
+    date: row.date,
+    timePreset,
+    timeCustom,
+    room: ROOM_OPTIONS.includes(row.room) ? row.room : ROOM_OPTIONS[0],
+    original: {
+      date: row.date,
+      weekday: row.weekday,
+      displayTime: row.time,
+      displayRoom: row.room,
+      baseTime: row.baseTime,
+      baseRoom: row.baseRoom,
+    },
+  };
+}
+
+function BulkEditLessonFields({
+  draft,
+  yearMin,
+  yearMax,
+  onChange,
+}: {
+  draft: BulkEditLessonDraft;
+  yearMin: string;
+  yearMax: string;
+  onChange: (next: BulkEditLessonDraft) => void;
+}) {
+  const newWeekday = draft.date ? weekdayFromIsoDate(draft.date) : "";
+  const newWeekdayDisplay = newWeekday ? WEEKDAY_LABEL[newWeekday] ?? newWeekday : "—";
+  const finalTime = resolveBulkEditTime(draft);
+  const timeOptions = timeOptionsForWeekday(newWeekday);
+  const origWdLabel =
+    WEEKDAY_LABEL[draft.original.weekday] ?? draft.original.weekday;
+  const changed = {
+    date: Boolean(draft.original.date) && draft.date.trim() !== draft.original.date?.trim(),
+    weekday: newWeekdayDisplay !== origWdLabel,
+    time: finalTime !== draft.original.displayTime,
+    room: draft.room.trim() !== (draft.original.displayRoom || "").trim(),
+  };
+
+  return (
+    <div className="divide-y divide-slate-100">
+      <BulkEditCompareRow
+        label="Date"
+        before={formatLessonDateLabel(draft.original.date ?? "", draft.original.weekday)}
+        changed={changed.date}
+      >
+        <input
+          type="date"
+          min={yearMin}
+          max={yearMax}
+          value={draft.date}
+          onChange={(e) => {
+            const v = e.target.value;
+            const wd = v ? weekdayFromIsoDate(v) : "";
+            const { timePreset, timeCustom } = pickTimePreset(
+              draft.timeCustom || draft.timePreset,
+              wd,
+            );
+            onChange({ ...draft, date: v, timePreset, timeCustom });
+          }}
+          className={bulkEditInputClass}
+        />
+      </BulkEditCompareRow>
+
+      <BulkEditCompareRow label="Weekday" before={origWdLabel} changed={changed.weekday}>
+        <input
+          type="text"
+          readOnly
+          disabled
+          value={newWeekdayDisplay}
+          className={bulkEditInputDisabledClass}
+        />
+      </BulkEditCompareRow>
+
+      <BulkEditCompareRow
+        label="Time"
+        before={draft.original.displayTime}
+        beforeHint={
+          draft.original.displayTime !== draft.original.baseTime
+            ? `From schedule: ${draft.original.baseTime}`
+            : undefined
+        }
+        changed={changed.time}
+      >
+        <div className="space-y-2">
+          <select
+            value={draft.timePreset}
+            onChange={(e) => onChange({ ...draft, timePreset: e.target.value })}
+            className={bulkEditInputClass}
+          >
+            {timeOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={draft.timeCustom}
+            onChange={(e) => onChange({ ...draft, timeCustom: e.target.value })}
+            placeholder="Custom time (optional)"
+            className={bulkEditInputClass}
+          />
+        </div>
+      </BulkEditCompareRow>
+
+      <BulkEditCompareRow
+        label="Room"
+        before={ROOM_LABEL[draft.original.displayRoom] ?? draft.original.displayRoom}
+        beforeHint={
+          draft.original.displayRoom !== draft.original.baseRoom
+            ? `From schedule: ${
+                ROOM_LABEL[draft.original.baseRoom] ?? draft.original.baseRoom
+              }`
+            : undefined
+        }
+        changed={changed.room}
+      >
+        <select
+          value={draft.room}
+          onChange={(e) => onChange({ ...draft, room: e.target.value })}
+          className={bulkEditInputClass}
+        >
+          {ROOM_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {ROOM_LABEL[option] ?? option}
+            </option>
+          ))}
+        </select>
+      </BulkEditCompareRow>
+    </div>
+  );
 }
 
 function timeOptionsForWeekday(wd: string): string[] {
@@ -429,6 +687,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
   const [extraSaveStatus, setExtraSaveStatus] = useState("");
   const [showBulkEditPanel, setShowBulkEditPanel] = useState(false);
   const [bulkEditMode, setBulkEditMode] = useState<BulkEditMode>("single");
+  const [bulkEditLessonDrafts, setBulkEditLessonDrafts] = useState<BulkEditLessonDraft[]>([]);
   const [bulkEditForm, setBulkEditForm] = useState<BulkEditFormState>({
     date: "",
     newWeekday: "",
@@ -439,6 +698,13 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     sourceRuleId: "",
     selectedDateIsos: [],
     sourceSlotLabel: "",
+    original: {
+      weekday: "",
+      displayTime: "",
+      displayRoom: "",
+      baseTime: "",
+      baseRoom: "",
+    },
   });
   const [bulkEditSaveStatus, setBulkEditSaveStatus] = useState("");
   const [filterMonth, setFilterMonth] = useState("");
@@ -1034,14 +1300,34 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
   }
 
   const bulkEditTimeOptions = useMemo(() => {
-    const wd =
-      bulkEditMode === "multi"
-        ? bulkEditForm.newWeekday
-        : bulkEditForm.date
-          ? weekdayFromIsoDate(bulkEditForm.date)
-          : "";
+    const wd = bulkEditForm.date ? weekdayFromIsoDate(bulkEditForm.date) : "";
     return timeOptionsForWeekday(wd);
-  }, [bulkEditMode, bulkEditForm.newWeekday, bulkEditForm.date]);
+  }, [bulkEditForm.date]);
+
+  const bulkEditNewWeekdayDisplay = useMemo(() => {
+    if (!bulkEditForm.date) return "—";
+    const wd = weekdayFromIsoDate(bulkEditForm.date);
+    return WEEKDAY_LABEL[wd] ?? wd;
+  }, [bulkEditForm.date]);
+
+  const bulkEditFinalTime = useMemo(() => resolveBulkEditTime(bulkEditForm), [bulkEditForm]);
+
+  const bulkEditFieldChanged = useMemo(
+    () => ({
+      date:
+        bulkEditMode === "single" &&
+        Boolean(bulkEditForm.original.date) &&
+        bulkEditForm.date.trim() !== bulkEditForm.original.date?.trim(),
+      weekday:
+        bulkEditNewWeekdayDisplay !==
+        (WEEKDAY_LABEL[bulkEditForm.original.weekday] ?? bulkEditForm.original.weekday),
+      time: bulkEditFinalTime !== bulkEditForm.original.displayTime,
+      room:
+        bulkEditForm.room.trim() !==
+        (bulkEditForm.original.displayRoom || "").trim(),
+    }),
+    [bulkEditMode, bulkEditForm, bulkEditNewWeekdayDisplay, bulkEditFinalTime],
+  );
 
   function openClassicReschedulePanel(opts?: {
     row?: ScheduleRow;
@@ -1126,9 +1412,6 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       return false;
     }
 
-    const selectedDateIsos = regularRows.map((r) => r.date).sort();
-    const earliestDate = selectedDateIsos[0] ?? "";
-
     if (regularRows.length === 1) {
       const row = regularRows[0];
       const parsed = parseRegularLessonRowId(row.rowId);
@@ -1138,6 +1421,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       }
       const { timePreset, timeCustom } = pickTimePreset(row.time, row.weekday);
       setBulkEditMode("single");
+      setBulkEditLessonDrafts([]);
       setBulkEditForm({
         date: row.date,
         newWeekday: row.weekday,
@@ -1148,51 +1432,32 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         sourceRuleId: parsed.ruleId,
         selectedDateIsos: [row.date],
         sourceSlotLabel: `${WEEKDAY_LABEL[row.weekday] ?? row.weekday} ${row.baseTime} · ${ROOM_LABEL[row.baseRoom] ?? row.baseRoom}`,
+        original: {
+          date: row.date,
+          weekday: row.weekday,
+          displayTime: row.time,
+          displayRoom: row.room,
+          baseTime: row.baseTime,
+          baseRoom: row.baseRoom,
+        },
       });
       setShowBulkEditPanel(true);
       return true;
     }
 
-    const slotKeys = new Set(regularRows.map((r) => regularRowSlotKey(r)));
-    if (slotKeys.size > 1) {
-      setSelectionError(
-        "For multiple rows, select lessons with the same weekday, time, and room (same weekly slot).",
-      );
-      return false;
+    const sortedRows = [...regularRows].sort((a, b) => a.date.localeCompare(b.date));
+    const drafts: BulkEditLessonDraft[] = [];
+    for (const row of sortedRows) {
+      const draft = scheduleRowToBulkEditDraft(row);
+      if (!draft) {
+        setSelectionError("Cannot edit this selection (missing schedule rule link).");
+        return false;
+      }
+      drafts.push(draft);
     }
 
-    const ruleIds = new Set(
-      regularRows
-        .map((r) => parseRegularLessonRowId(r.rowId)?.ruleId)
-        .filter((id): id is string => Boolean(id)),
-    );
-    if (ruleIds.size > 1) {
-      setSelectionError("Selected rows use different schedule rules. Select one weekly slot only.");
-      return false;
-    }
-
-    const first = regularRows[0];
-    const parsed = parseRegularLessonRowId(first.rowId);
-    if (!parsed) {
-      setSelectionError("Cannot edit this selection (missing schedule rule link).");
-      return false;
-    }
-    const sourceRecord = records.find((r) => r.id === parsed.ruleId);
-    const slotWeekday = sourceRecord?.weekday ?? first.weekday;
-    const { timePreset, timeCustom } = pickTimePreset(first.time, slotWeekday);
-
-    setBulkEditMode("multi");
-    setBulkEditForm({
-      date: "",
-      newWeekday: slotWeekday,
-      timePreset,
-      timeCustom,
-      room: ROOM_OPTIONS.includes(first.room) ? first.room : ROOM_OPTIONS[0],
-      effectiveDate: earliestDate,
-      sourceRuleId: parsed.ruleId,
-      selectedDateIsos,
-      sourceSlotLabel: `${WEEKDAY_LABEL[slotWeekday] ?? slotWeekday} ${first.baseTime} · ${ROOM_LABEL[first.baseRoom] ?? first.baseRoom}`,
-    });
+    setBulkEditMode("each");
+    setBulkEditLessonDrafts(drafts);
     setShowBulkEditPanel(true);
     return true;
   }
@@ -1227,6 +1492,109 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     if (readOnly) return;
     setBulkEditSaveStatus("Saving...");
     setSelectionError("");
+
+    if (bulkEditMode === "each") {
+      let nextReschedule = [...rescheduleEntries];
+      let nextOverrides = { ...overridesRef.current };
+      const rescheduleFromDates = new Map<string, string[]>();
+      for (const e of nextReschedule) {
+        const list = rescheduleFromDates.get(e.fromDate) ?? [];
+        list.push(e.id);
+        rescheduleFromDates.set(e.fromDate, list);
+      }
+
+      for (let i = 0; i < bulkEditLessonDrafts.length; i++) {
+        const draft = bulkEditLessonDrafts[i];
+        const scheduleRow = scheduleRowById.get(draft.rowId);
+        const lessonLabel = draft.original.date
+          ? formatLessonDateLabel(draft.original.date, draft.original.weekday)
+          : `Lesson ${i + 1}`;
+
+        if (!scheduleRow || scheduleRow.rowKind !== "normal" || scheduleRow.extraEntryId) {
+          setBulkEditSaveStatus(`Cannot find ${lessonLabel}.`);
+          setSelectionError(`Cannot find ${lessonLabel}.`);
+          return;
+        }
+
+        const finalTime = resolveBulkEditTime(draft);
+        const finalRoom = draft.room.trim();
+        if (!finalTime) {
+          setBulkEditSaveStatus(`Please set a time for ${lessonLabel}.`);
+          setSelectionError(`Please set a time for ${lessonLabel}.`);
+          return;
+        }
+        if (!finalRoom) {
+          setBulkEditSaveStatus(`Please set a room for ${lessonLabel}.`);
+          setSelectionError(`Please set a room for ${lessonLabel}.`);
+          return;
+        }
+
+        const originalDate = scheduleRow.date;
+        const newDate = draft.date.trim();
+        if (!newDate) {
+          setBulkEditSaveStatus(`Please choose a date for ${lessonLabel}.`);
+          setSelectionError(`Please choose a date for ${lessonLabel}.`);
+          return;
+        }
+        if (newDate < yearMin || newDate > yearMax) {
+          setBulkEditSaveStatus(`Date for ${lessonLabel} must be within ${targetYear}.`);
+          setSelectionError(`Date for ${lessonLabel} must be within ${targetYear}.`);
+          return;
+        }
+
+        if (newDate !== originalDate) {
+          if (!baseRowByDate.has(originalDate)) {
+            setBulkEditSaveStatus(`${lessonLabel}: original date is not a regular lesson.`);
+            setSelectionError(`${lessonLabel}: original date must be an existing regular lesson date.`);
+            return;
+          }
+          const ids = rescheduleFromDates.get(originalDate) ?? [];
+          if (ids.length > 0) {
+            setBulkEditSaveStatus(`${lessonLabel} already has a reschedule. Edit it separately.`);
+            setSelectionError(`${lessonLabel} already has a reschedule. Edit it separately.`);
+            return;
+          }
+          const newId = `${Date.now()}-${i}`;
+          nextReschedule = [
+            ...nextReschedule,
+            {
+              id: newId,
+              fromDate: originalDate,
+              toDate: newDate,
+              time: finalTime,
+              room: finalRoom,
+            },
+          ];
+          rescheduleFromDates.set(originalDate, [newId]);
+          delete nextOverrides[originalDate];
+        } else if (finalTime === scheduleRow.baseTime && finalRoom === scheduleRow.baseRoom) {
+          delete nextOverrides[originalDate];
+        } else {
+          nextOverrides[originalDate] = {
+            ...(nextOverrides[originalDate] ?? {}),
+            time: finalTime,
+            room: finalRoom,
+          };
+        }
+      }
+
+      setRescheduleEntries(nextReschedule);
+      rescheduleEntriesRef.current = nextReschedule;
+      window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(nextReschedule));
+      persistYearState({ rescheduleEntries: nextReschedule });
+      persistOverrides(nextOverrides);
+
+      setBulkEditSaveStatus("Saved.");
+      setSelectionError("Saved.");
+      window.setTimeout(() => {
+        setBulkEditSaveStatus("");
+        setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+        setShowBulkEditPanel(false);
+        setBulkEditLessonDrafts([]);
+        setSelectedRowIds([]);
+      }, 1200);
+      return;
+    }
 
     const finalTime = resolveBulkEditTime(bulkEditForm);
     const finalRoom = bulkEditForm.room.trim();
@@ -1316,146 +1684,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         setShowBulkEditPanel(false);
         setSelectedRowIds([]);
       }, 1200);
-      return;
     }
-
-    const effectiveDate = bulkEditForm.effectiveDate.trim();
-    if (!effectiveDate) {
-      setBulkEditSaveStatus("Missing effective date.");
-      setSelectionError("Missing effective date.");
-      return;
-    }
-
-    const oldRecord = records.find((r) => r.id === bulkEditForm.sourceRuleId);
-    if (!oldRecord) {
-      setBulkEditSaveStatus("Schedule rule not found. Check Lesson Schedule Settings.");
-      setSelectionError("Schedule rule not found. Check Lesson Schedule Settings.");
-      return;
-    }
-
-    const newWeekday = bulkEditForm.newWeekday.trim();
-    if (!newWeekday) {
-      setBulkEditSaveStatus("Please choose a weekday.");
-      setSelectionError("Please choose a weekday.");
-      return;
-    }
-
-    const changed =
-      newWeekday !== oldRecord.weekday ||
-      finalTime !== oldRecord.time ||
-      finalRoom !== oldRecord.room;
-
-    if (changed) {
-      const oldEffective = recordEffectiveDate(oldRecord);
-      const normalizedExisting = records.map(normalizeScheduleRecordForVersions);
-      const rulesAtNewEffective = records.filter((r) => recordEffectiveDate(r) === effectiveDate);
-      let nextRecords: ScheduleRecord[];
-
-      if (rulesAtNewEffective.length > 0) {
-        const updated: ScheduleRecord = {
-          ...oldRecord,
-          weekday: newWeekday,
-          time: finalTime,
-          room: finalRoom,
-        };
-        if (
-          hasDuplicateScheduleSlotInVersion(
-            normalizedExisting,
-            normalizeScheduleRecordForVersions(updated),
-            oldRecord.id,
-          )
-        ) {
-          setBulkEditSaveStatus(
-            "This effective date already has the same weekday, time, and room. Change time or room, or merge duplicates below.",
-          );
-          setSelectionError(
-            "This effective date already has the same weekday, time, and room. Change time or room, or merge duplicates below.",
-          );
-          return;
-        }
-        nextRecords = records.map((r) =>
-          r.id === bulkEditForm.sourceRuleId ? updated : r,
-        );
-      } else if (effectiveDate === oldEffective) {
-        const updated: ScheduleRecord = {
-          ...oldRecord,
-          weekday: newWeekday,
-          time: finalTime,
-          room: finalRoom,
-        };
-        if (
-          hasDuplicateScheduleSlotInVersion(
-            normalizedExisting,
-            normalizeScheduleRecordForVersions(updated),
-            oldRecord.id,
-          )
-        ) {
-          setBulkEditSaveStatus(
-            "This effective date already has the same weekday, time, and room. Change time or room, or merge duplicates below.",
-          );
-          setSelectionError(
-            "This effective date already has the same weekday, time, and room. Change time or room, or merge duplicates below.",
-          );
-          return;
-        }
-        nextRecords = records.map((r) =>
-          r.id === bulkEditForm.sourceRuleId ? updated : r,
-        );
-      } else {
-        const versionAtChange =
-          getActiveScheduleVersionDate(normalizedExisting, effectiveDate) ?? oldEffective;
-        const rulesAtChange = records.filter((r) => recordEffectiveDate(r) === versionAtChange);
-        const now = Date.now();
-        const cloned = rulesAtChange.map((r, idx) => {
-          const isTarget = r.id === bulkEditForm.sourceRuleId;
-          return {
-            ...r,
-            id: isTarget ? `${now}-bulk` : `${now}-clone-${idx}-${r.id}`,
-            effectiveDate,
-            weekday: isTarget ? newWeekday : r.weekday,
-            time: isTarget ? finalTime : r.time,
-            room: isTarget ? finalRoom : r.room,
-            createdAt: now + idx,
-          };
-        });
-        const projectedNormalized = [...records, ...cloned].map(normalizeScheduleRecordForVersions);
-        for (const rule of cloned) {
-          if (
-            hasDuplicateScheduleSlotInVersion(
-              projectedNormalized,
-              normalizeScheduleRecordForVersions(rule),
-              rule.id,
-            )
-          ) {
-            setBulkEditSaveStatus(
-              "This effective date already has the same weekday, time, and room. Change time or room, or merge duplicates below.",
-            );
-            setSelectionError(
-              "This effective date already has the same weekday, time, and room. Change time or room, or merge duplicates below.",
-            );
-            return;
-          }
-        }
-        nextRecords = [...records, ...cloned];
-      }
-
-      persistScheduleRecords(nextRecords);
-    }
-
-    const nextOverrides = { ...overridesRef.current };
-    for (const d of bulkEditForm.selectedDateIsos) {
-      if (d >= effectiveDate) delete nextOverrides[d];
-    }
-    persistOverrides(nextOverrides);
-
-    setBulkEditSaveStatus("Saved.");
-    setSelectionError("Saved.");
-    window.setTimeout(() => {
-      setBulkEditSaveStatus("");
-      setSelectionError((prev) => (prev === "Saved." ? "" : prev));
-      setShowBulkEditPanel(false);
-      setSelectedRowIds([]);
-    }, 1200);
   }
 
   const filteredScheduleRows = useMemo(() => {
@@ -1727,7 +1956,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
             </div>
           </div>
 
-          <div className="p-6">
+          <div className="p-6 pb-28">
             <h2 className="text-lg font-bold text-slate-900">{targetYear} Lesson Records</h2>
             {targetYear === LESSON_SYSTEM_START_YEAR ? (
               <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -1740,217 +1969,6 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
               disabled={readOnly}
               className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 disabled:opacity-95"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm text-slate-700">
-                  Selected: <span className="font-bold text-slate-900">{selectedRowIds.length}</span>
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={openRescheduleFromSelection}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
-                  >
-                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
-                      <path d="M4.5 5.75a.75.75 0 010-1.5h9.69l-2.22-2.22a.75.75 0 111.06-1.06l3.5 3.5a.75.75 0 010 1.06l-3.5 3.5a.75.75 0 01-1.06-1.06l2.22-2.22H4.5zm11 8.5a.75.75 0 010 1.5H5.81l2.22 2.22a.75.75 0 11-1.06 1.06l-3.5-3.5a.75.75 0 010-1.06l3.5-3.5a.75.75 0 011.06 1.06l-2.22 2.22H15.5z" />
-                    </svg>
-                    Reschedule
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedRowIds.length > 1) {
-                        setSelectionError(
-                          "For pending leave, select only 1 regular lesson row.",
-                        );
-                        return;
-                      }
-                      setShowBulkEditPanel(false);
-                      setShowExtraPanel(false);
-                      setReschedulePanelMode("pending");
-                      setSelectionError("");
-                      setEditingRescheduleId(null);
-                      if (selectedRowIds.length === 1) {
-                        const row = scheduleRowById.get(selectedRowIds[0]);
-                        if (!row || row.rowKind !== "normal") {
-                          setSelectionError("Select a regular lesson row to mark leave / pending makeup.");
-                          return;
-                        }
-                        setFromLessonDate(row.date);
-                        setToLessonDate("");
-                        setLockFromLessonDate(true);
-                      } else {
-                        setFromLessonDate("");
-                        setToLessonDate("");
-                        setLockFromLessonDate(false);
-                      }
-                      setShowEditPanel(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100"
-                  >
-                    {PENDING_MAKEUP_BUTTON_LABEL}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectionError("");
-                      if (selectedRowIds.length > 1) {
-                        setSelectionError("For extra lesson, select only 1 row for prefill, or clear selection and fill manually.");
-                        return;
-                      }
-                      setShowBulkEditPanel(false);
-                      setShowEditPanel(false);
-                      if (selectedRowIds.length === 1) {
-                        const row = scheduleRowById.get(selectedRowIds[0]);
-                        if (!row) {
-                          setSelectionError("Cannot find row for prefill.");
-                          return;
-                        }
-                        const wd = weekdayFromIsoDate(row.date);
-                        const opts =
-                          wd === "六" ? SATURDAY_TIME_SUGGESTIONS : WEEKDAY_TIME_SUGGESTIONS;
-                        setExtraForm({
-                          date: row.date,
-                          timePreset: opts.includes(row.time) ? row.time : opts[0],
-                          timeCustom: opts.includes(row.time) ? "" : row.time,
-                          room: ROOM_OPTIONS.includes(row.room) ? row.room : ROOM_OPTIONS[0],
-                          doubleEnabled: false,
-                        });
-                      } else {
-                        setExtraForm({
-                          date: toHkIsoDateFromMs(Date.now()),
-                          timePreset: WEEKDAY_TIME_SUGGESTIONS[0],
-                          timeCustom: "",
-                          room: ROOM_OPTIONS[0],
-                          doubleEnabled: false,
-                        });
-                      }
-                      setShowExtraPanel(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-                  >
-                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
-                      <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
-                    </svg>
-                    Extra Lesson
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedRowIds.length === 0) {
-                        setSelectionError("Please select rows to delete first.");
-                        return;
-                      }
-                      setSelectionError("");
-                      const selectedRows = selectedRowIds
-                        .map((id) => scheduleRowById.get(id))
-                        .filter((r): r is ScheduleRow => Boolean(r));
-
-                      const regularDeletes = selectedRows.filter(
-                        (row) => row.rowKind === "normal" && !row.extraEntryId,
-                      );
-                      const willHideWholeDates = new Set<string>();
-                      const willHideRuleIds = new Set<string>();
-                      for (const row of regularDeletes) {
-                        const parsed = parseRegularLessonRowId(row.rowId);
-                        if (!parsed) {
-                          willHideWholeDates.add(row.date);
-                          continue;
-                        }
-                        const sameDateRegularCount = scheduleRows.filter(
-                          (r) =>
-                            r.date === parsed.dateIso &&
-                            r.rowKind === "normal" &&
-                            !r.extraEntryId &&
-                            parseRegularLessonRowId(r.rowId),
-                        ).length;
-                        if (sameDateRegularCount > 1) {
-                          willHideRuleIds.add(parsed.ruleId);
-                        } else {
-                          willHideWholeDates.add(parsed.dateIso);
-                        }
-                      }
-                      const confirmLines = [
-                        "Hide selected lesson row(s) from this list?",
-                        willHideWholeDates.size > 0
-                          ? `• Whole dates (all lessons that day): ${[...willHideWholeDates].join(", ")}`
-                          : "",
-                        willHideRuleIds.size > 0
-                          ? `• Duplicate schedule slot only (other weekdays unchanged): ${[...willHideRuleIds].join(", ")}`
-                          : "",
-                      ].filter(Boolean);
-                      if (!window.confirm(confirmLines.join("\n"))) return;
-
-                      const rescheduleIdsToDelete = new Set<string>();
-                      const extraIdsToDelete = new Set<string>();
-                      for (const row of selectedRows) {
-                        if (row.rescheduleEntryId) {
-                          rescheduleIdsToDelete.add(row.rescheduleEntryId);
-                        }
-                        if (row.extraEntryId) {
-                          extraIdsToDelete.add(row.extraEntryId);
-                        }
-                      }
-
-                      if (rescheduleIdsToDelete.size > 0) {
-                        const nextEntries = rescheduleEntries.filter(
-                          (e) => !rescheduleIdsToDelete.has(e.id),
-                        );
-                        setRescheduleEntries(nextEntries);
-                        window.localStorage.setItem(
-                          RESCHEDULE_STORAGE_KEY,
-                          JSON.stringify(nextEntries),
-                        );
-                        persistYearState({ rescheduleEntries: nextEntries });
-                      }
-
-                      if (extraIdsToDelete.size > 0) {
-                        const nextExtraEntries = extraEntries.filter(
-                          (e) => !extraIdsToDelete.has(e.id),
-                        );
-                        setExtraEntries(nextExtraEntries);
-                        window.localStorage.setItem(
-                          EXTRA_STORAGE_KEY,
-                          JSON.stringify(nextExtraEntries),
-                        );
-                        persistYearState({ extraEntries: nextExtraEntries });
-                      }
-
-                      const nextHidden = { ...hiddenDates };
-                      for (const row of selectedRows) {
-                        if (row.rowKind !== "normal" || row.extraEntryId) continue;
-                        const parsed = parseRegularLessonRowId(row.rowId);
-                        if (!parsed) {
-                          nextHidden[row.date] = true;
-                          continue;
-                        }
-                        const sameDateRegularCount = scheduleRows.filter(
-                          (r) =>
-                            r.date === parsed.dateIso &&
-                            r.rowKind === "normal" &&
-                            !r.extraEntryId &&
-                            parseRegularLessonRowId(r.rowId),
-                        ).length;
-                        if (sameDateRegularCount > 1) {
-                          nextHidden[hiddenScheduleRuleStorageKey(parsed.ruleId)] = true;
-                        } else {
-                          nextHidden[parsed.dateIso] = true;
-                        }
-                      }
-                      persistHiddenDates(nextHidden);
-                      setSelectedRowIds([]);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
-                  >
-                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
-                      <path d="M7.5 2.75A1.75 1.75 0 005.75 4.5v.25H4a.75.75 0 000 1.5h.5l.73 9.1A2 2 0 007.22 17.2h5.56a2 2 0 001.99-1.85l.73-9.1H16a.75.75 0 000-1.5h-1.75V4.5A1.75 1.75 0 0012.5 2.75h-5zM12.75 4.5v.25h-5.5V4.5a.25.25 0 01.25-.25h5a.25.25 0 01.25.25z" />
-                    </svg>
-                    Delete
-                  </button>
-                </div>
-              </div>
-              {selectionError && (
-                <p className="mt-2 text-xs font-medium text-red-600">{selectionError}</p>
-              )}
               <ScheduleDuplicateRulesBanner
                 records={records.map((r) => ({
                   ...r,
@@ -2051,11 +2069,10 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                         </>
                       ) : (
                         <>
-                          <strong className="font-semibold text-slate-800">Weekly slot</strong> ({bulkEditForm.selectedDateIsos.length}{" "}
-                          lessons) · was {bulkEditForm.sourceSlotLabel}. From{" "}
-                          <strong className="font-semibold text-slate-800">{bulkEditForm.effectiveDate}</strong>, update the
-                          recurring weekday / time / room (does not add an extra lesson). Tutor / summary: use the room
-                          page.
+                          <strong className="font-semibold text-slate-800">{bulkEditLessonDrafts.length} lessons</strong> —
+                          edit each one separately below (date, time, room). Same date updates that lesson only; a new
+                          date moves it (reschedule). Tutor / summary:{" "}
+                          <strong className="font-semibold text-slate-800">room page</strong>.
                         </>
                       )}
                     </p>
@@ -2065,6 +2082,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                     onClick={() => {
                       setShowBulkEditPanel(false);
                       setBulkEditSaveStatus("");
+                      setBulkEditLessonDrafts([]);
                     }}
                     className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                   >
@@ -2075,139 +2093,223 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                   </button>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                  {bulkEditMode === "single" ? (
-                    <>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-semibold text-slate-700">Lesson date</span>
-                        <input
-                          type="date"
-                          min={yearMin}
-                          max={yearMax}
-                          value={bulkEditForm.date}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            const wd = v ? weekdayFromIsoDate(v) : "";
-                            const { timePreset, timeCustom } = pickTimePreset(bulkEditForm.timeCustom || bulkEditForm.timePreset, wd);
-                            setBulkEditForm((p) => ({
-                              ...p,
-                              date: v,
-                              newWeekday: wd,
-                              timePreset,
-                              timeCustom,
-                            }));
-                          }}
-                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2]"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-semibold text-slate-700">Weekday</span>
-                        <input
-                          type="text"
-                          readOnly
-                          disabled
-                          value={
-                            bulkEditForm.date
-                              ? WEEKDAY_LABEL[weekdayFromIsoDate(bulkEditForm.date)] ??
-                                weekdayFromIsoDate(bulkEditForm.date)
-                              : "—"
+                {bulkEditMode === "each" ? (
+                  <div className="mt-4 flex max-w-3xl flex-col gap-4">
+                    {bulkEditLessonDrafts.map((draft, index) => (
+                      <div
+                        key={draft.rowId}
+                        className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                      >
+                        <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-white px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Lesson {index + 1} of {bulkEditLessonDrafts.length}
+                          </p>
+                          <p className="mt-1 text-base font-semibold text-slate-900">
+                            {formatLessonDateLabel(
+                              draft.original.date ?? "",
+                              draft.original.weekday,
+                            )}
+                            <span className="mx-2 font-normal text-slate-300">·</span>
+                            {draft.original.displayTime}
+                            <span className="mx-2 font-normal text-slate-300">·</span>
+                            {ROOM_LABEL[draft.original.displayRoom] ?? draft.original.displayRoom}
+                          </p>
+                        </div>
+                        <div className="hidden border-b border-slate-100 bg-slate-50/80 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:grid sm:grid-cols-[6.75rem_minmax(0,1fr)_auto_minmax(0,1.35fr)] sm:gap-3">
+                          <span>Field</span>
+                          <span>Was</span>
+                          <span className="sr-only">To</span>
+                          <span>Change to</span>
+                        </div>
+                        <BulkEditLessonFields
+                          draft={draft}
+                          yearMin={yearMin}
+                          yearMax={yearMax}
+                          onChange={(next) =>
+                            setBulkEditLessonDrafts((prev) =>
+                              prev.map((d, i) => (i === index ? next : d)),
+                            )
                           }
-                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
                         />
-                      </label>
-                    </>
-                  ) : (
-                    <>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-semibold text-slate-700">Effective from</span>
-                        <input
-                          type="date"
-                          readOnly
-                          disabled
-                          value={bulkEditForm.effectiveDate}
-                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
-                        />
-                        <p className="mt-1 text-[11px] text-slate-500">Earliest selected lesson date (auto).</p>
-                      </label>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-semibold text-slate-700">Weekday</span>
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap items-center justify-end gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+                      {bulkEditSaveStatus ? (
+                        <span className="text-xs font-semibold text-slate-600">{bulkEditSaveStatus}</span>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={saveBulkEdit}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
+                      >
+                        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                          <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
+                        </svg>
+                        Save all changes
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                <div className="mt-4 max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                  {bulkEditForm.original.date ? (
+                    <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-white px-4 py-3.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Current lesson
+                      </p>
+                      <p className="mt-1 text-base font-semibold text-slate-900">
+                        {formatLessonDateLabel(
+                          bulkEditForm.original.date,
+                          bulkEditForm.original.weekday,
+                        )}
+                        <span className="mx-2 font-normal text-slate-300">·</span>
+                        {bulkEditForm.original.displayTime}
+                        <span className="mx-2 font-normal text-slate-300">·</span>
+                        {ROOM_LABEL[bulkEditForm.original.displayRoom] ??
+                          bulkEditForm.original.displayRoom}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <div className="hidden border-b border-slate-100 bg-slate-50/80 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:grid sm:grid-cols-[6.75rem_minmax(0,1fr)_auto_minmax(0,1.35fr)] sm:gap-3">
+                    <span>Field</span>
+                    <span>Was</span>
+                    <span className="sr-only">To</span>
+                    <span>Change to</span>
+                  </div>
+
+                  <div className="divide-y divide-slate-100">
+                    <BulkEditCompareRow
+                      label="Date"
+                      before={formatLessonDateLabel(
+                        bulkEditForm.original.date ?? "",
+                        bulkEditForm.original.weekday,
+                      )}
+                      changed={bulkEditFieldChanged.date}
+                    >
+                      <input
+                        type="date"
+                        min={yearMin}
+                        max={yearMax}
+                        value={bulkEditForm.date}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          const wd = v ? weekdayFromIsoDate(v) : "";
+                          const { timePreset, timeCustom } = pickTimePreset(
+                            bulkEditForm.timeCustom || bulkEditForm.timePreset,
+                            wd,
+                          );
+                          setBulkEditForm((p) => ({
+                            ...p,
+                            date: v,
+                            newWeekday: wd,
+                            timePreset,
+                            timeCustom,
+                          }));
+                        }}
+                        className={bulkEditInputClass}
+                      />
+                    </BulkEditCompareRow>
+
+                    <BulkEditCompareRow
+                      label="Weekday"
+                      before={
+                        WEEKDAY_LABEL[bulkEditForm.original.weekday] ??
+                        bulkEditForm.original.weekday
+                      }
+                      changed={bulkEditFieldChanged.weekday}
+                    >
+                      <input
+                        type="text"
+                        readOnly
+                        disabled
+                        value={bulkEditNewWeekdayDisplay}
+                        className={bulkEditInputDisabledClass}
+                      />
+                    </BulkEditCompareRow>
+
+                    <BulkEditCompareRow
+                      label="Time"
+                      before={bulkEditForm.original.displayTime}
+                      beforeHint={
+                        bulkEditForm.original.displayTime !== bulkEditForm.original.baseTime
+                          ? `From schedule: ${bulkEditForm.original.baseTime}`
+                          : undefined
+                      }
+                      changed={bulkEditFieldChanged.time}
+                    >
+                      <div className="space-y-2">
                         <select
-                          value={bulkEditForm.newWeekday}
-                          onChange={(e) => {
-                            const wd = e.target.value;
-                            const opts = timeOptionsForWeekday(wd);
-                            setBulkEditForm((p) => ({
-                              ...p,
-                              newWeekday: wd,
-                              timePreset: opts.includes(p.timePreset) ? p.timePreset : opts[0] ?? "",
-                              timeCustom: "",
-                            }));
-                          }}
-                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2]"
+                          value={bulkEditForm.timePreset}
+                          onChange={(e) =>
+                            setBulkEditForm((p) => ({ ...p, timePreset: e.target.value }))
+                          }
+                          className={bulkEditInputClass}
                         >
-                          {WEEKDAY_OPTIONS.map((wd) => (
-                            <option key={wd} value={wd}>
-                              {WEEKDAY_LABEL[wd] ?? wd}
+                          {bulkEditTimeOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
                             </option>
                           ))}
                         </select>
-                      </label>
-                    </>
-                  )}
+                        <input
+                          type="text"
+                          value={bulkEditForm.timeCustom}
+                          onChange={(e) =>
+                            setBulkEditForm((p) => ({ ...p, timeCustom: e.target.value }))
+                          }
+                          placeholder="Custom time (optional)"
+                          className={bulkEditInputClass}
+                        />
+                      </div>
+                    </BulkEditCompareRow>
 
-                  <div className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">Time</span>
-                    <select
-                      value={bulkEditForm.timePreset}
-                      onChange={(e) => setBulkEditForm((p) => ({ ...p, timePreset: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2]"
+                    <BulkEditCompareRow
+                      label="Room"
+                      before={
+                        ROOM_LABEL[bulkEditForm.original.displayRoom] ??
+                        bulkEditForm.original.displayRoom
+                      }
+                      beforeHint={
+                        bulkEditForm.original.displayRoom !== bulkEditForm.original.baseRoom
+                          ? `From schedule: ${
+                              ROOM_LABEL[bulkEditForm.original.baseRoom] ??
+                              bulkEditForm.original.baseRoom
+                            }`
+                          : undefined
+                      }
+                      changed={bulkEditFieldChanged.room}
                     >
-                      {bulkEditTimeOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      value={bulkEditForm.timeCustom}
-                      onChange={(e) => setBulkEditForm((p) => ({ ...p, timeCustom: e.target.value }))}
-                      placeholder="Custom time (optional)"
-                      className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2]"
-                    />
+                      <select
+                        value={bulkEditForm.room}
+                        onChange={(e) => setBulkEditForm((p) => ({ ...p, room: e.target.value }))}
+                        className={bulkEditInputClass}
+                      >
+                        {ROOM_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {ROOM_LABEL[option] ?? option}
+                          </option>
+                        ))}
+                      </select>
+                    </BulkEditCompareRow>
                   </div>
 
-                  <label className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">Room</span>
-                    <select
-                      value={bulkEditForm.room}
-                      onChange={(e) => setBulkEditForm((p) => ({ ...p, room: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2]"
-                    >
-                      {ROOM_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {ROOM_LABEL[option] ?? option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-3">
+                    {bulkEditSaveStatus ? (
+                      <span className="text-xs font-semibold text-slate-600">{bulkEditSaveStatus}</span>
+                    ) : null}
                     <button
                       type="button"
                       onClick={saveBulkEdit}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
                     >
                       <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
                         <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
                       </svg>
-                      Save
+                      Save changes
                     </button>
-                    {bulkEditSaveStatus ? (
-                      <span className="text-xs font-semibold text-slate-600">{bulkEditSaveStatus}</span>
-                    ) : null}
                   </div>
                 </div>
+                )}
               </div>
             )}
 
@@ -3125,24 +3227,45 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                             )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate
-                              ? `${r.rescheduleFromDate} → ${r.date}`
-                              : r.date}
+                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
+                              <RescheduleChangeCell
+                                before={r.rescheduleFromDate}
+                                after={r.date}
+                              />
+                            ) : (
+                              r.date
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
-                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate
-                              ? `${WEEKDAY_LABEL[weekdayFromIsoDate(r.rescheduleFromDate)] ?? weekdayFromIsoDate(r.rescheduleFromDate)} → ${WEEKDAY_LABEL[r.weekday] ?? r.weekday}`
-                              : (WEEKDAY_LABEL[r.weekday] ?? r.weekday)}
+                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
+                              <RescheduleChangeCell
+                                before={
+                                  WEEKDAY_LABEL[weekdayFromIsoDate(r.rescheduleFromDate)] ??
+                                  weekdayFromIsoDate(r.rescheduleFromDate)
+                                }
+                                after={WEEKDAY_LABEL[r.weekday] ?? r.weekday}
+                              />
+                            ) : (
+                              WEEKDAY_LABEL[r.weekday] ?? r.weekday
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate
-                              ? `${r.baseTime} → ${r.time}`
-                              : r.time}
+                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
+                              <RescheduleChangeCell before={r.baseTime} after={r.time} />
+                            ) : (
+                              r.time
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
-                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate
-                              ? `${ROOM_LABEL[r.baseRoom] ?? r.baseRoom} → ${ROOM_LABEL[r.room] ?? r.room}`
-                              : (ROOM_LABEL[r.room] ?? r.room)}
+                            {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
+                              <RescheduleChangeCell
+                                before={r.baseRoom}
+                                after={r.room}
+                                format={(v) => ROOM_LABEL[v] ?? v}
+                              />
+                            ) : (
+                              ROOM_LABEL[r.room] ?? r.room
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                             {displayTutorInCell(r.tutor)}
@@ -3199,6 +3322,226 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
             </div>
             </fieldset>
           </div>
+        </div>
+
+        <div
+          className={`fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 shadow-[0_-8px_30px_rgba(15,23,42,0.1)] backdrop-blur-md${readOnly ? " pointer-events-none opacity-60" : ""}`}
+          role="toolbar"
+          aria-label="Lesson selection actions"
+        >
+          <div className="mx-auto flex w-full max-w-[1500px] flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-5 lg:px-6">
+            <p className="text-sm text-slate-700">
+              Selected: <span className="font-bold text-slate-900">{selectedRowIds.length}</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={openRescheduleFromSelection}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                  <path d="M4.5 5.75a.75.75 0 010-1.5h9.69l-2.22-2.22a.75.75 0 111.06-1.06l3.5 3.5a.75.75 0 010 1.06l-3.5 3.5a.75.75 0 01-1.06-1.06l2.22-2.22H4.5zm11 8.5a.75.75 0 010 1.5H5.81l2.22 2.22a.75.75 0 11-1.06 1.06l-3.5-3.5a.75.75 0 010-1.06l3.5-3.5a.75.75 0 011.06 1.06l-2.22 2.22H15.5z" />
+                </svg>
+                Reschedule
+              </button>
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={() => {
+                  if (selectedRowIds.length > 1) {
+                    setSelectionError("For pending leave, select only 1 regular lesson row.");
+                    return;
+                  }
+                  setShowBulkEditPanel(false);
+                  setShowExtraPanel(false);
+                  setReschedulePanelMode("pending");
+                  setSelectionError("");
+                  setEditingRescheduleId(null);
+                  if (selectedRowIds.length === 1) {
+                    const row = scheduleRowById.get(selectedRowIds[0]);
+                    if (!row || row.rowKind !== "normal") {
+                      setSelectionError("Select a regular lesson row to mark leave / pending makeup.");
+                      return;
+                    }
+                    setFromLessonDate(row.date);
+                    setToLessonDate("");
+                    setLockFromLessonDate(true);
+                  } else {
+                    setFromLessonDate("");
+                    setToLessonDate("");
+                    setLockFromLessonDate(false);
+                  }
+                  setShowEditPanel(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {PENDING_MAKEUP_BUTTON_LABEL}
+              </button>
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={() => {
+                  setSelectionError("");
+                  if (selectedRowIds.length > 1) {
+                    setSelectionError(
+                      "For extra lesson, select only 1 row for prefill, or clear selection and fill manually.",
+                    );
+                    return;
+                  }
+                  setShowBulkEditPanel(false);
+                  setShowEditPanel(false);
+                  if (selectedRowIds.length === 1) {
+                    const row = scheduleRowById.get(selectedRowIds[0]);
+                    if (!row) {
+                      setSelectionError("Cannot find row for prefill.");
+                      return;
+                    }
+                    const wd = weekdayFromIsoDate(row.date);
+                    const opts = wd === "六" ? SATURDAY_TIME_SUGGESTIONS : WEEKDAY_TIME_SUGGESTIONS;
+                    setExtraForm({
+                      date: row.date,
+                      timePreset: opts.includes(row.time) ? row.time : opts[0],
+                      timeCustom: opts.includes(row.time) ? "" : row.time,
+                      room: ROOM_OPTIONS.includes(row.room) ? row.room : ROOM_OPTIONS[0],
+                      doubleEnabled: false,
+                    });
+                  } else {
+                    setExtraForm({
+                      date: toHkIsoDateFromMs(Date.now()),
+                      timePreset: WEEKDAY_TIME_SUGGESTIONS[0],
+                      timeCustom: "",
+                      room: ROOM_OPTIONS[0],
+                      doubleEnabled: false,
+                    });
+                  }
+                  setShowExtraPanel(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                  <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
+                </svg>
+                Extra Lesson
+              </button>
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={() => {
+                  if (selectedRowIds.length === 0) {
+                    setSelectionError("Please select rows to delete first.");
+                    return;
+                  }
+                  setSelectionError("");
+                  const selectedRows = selectedRowIds
+                    .map((id) => scheduleRowById.get(id))
+                    .filter((r): r is ScheduleRow => Boolean(r));
+
+                  const regularDeletes = selectedRows.filter(
+                    (row) => row.rowKind === "normal" && !row.extraEntryId,
+                  );
+                  const willHideWholeDates = new Set<string>();
+                  const willHideRuleIds = new Set<string>();
+                  for (const row of regularDeletes) {
+                    const parsed = parseRegularLessonRowId(row.rowId);
+                    if (!parsed) {
+                      willHideWholeDates.add(row.date);
+                      continue;
+                    }
+                    const sameDateRegularCount = scheduleRows.filter(
+                      (r) =>
+                        r.date === parsed.dateIso &&
+                        r.rowKind === "normal" &&
+                        !r.extraEntryId &&
+                        parseRegularLessonRowId(r.rowId),
+                    ).length;
+                    if (sameDateRegularCount > 1) {
+                      willHideRuleIds.add(parsed.ruleId);
+                    } else {
+                      willHideWholeDates.add(parsed.dateIso);
+                    }
+                  }
+                  const confirmLines = [
+                    "Hide selected lesson row(s) from this list?",
+                    willHideWholeDates.size > 0
+                      ? `• Whole dates (all lessons that day): ${[...willHideWholeDates].join(", ")}`
+                      : "",
+                    willHideRuleIds.size > 0
+                      ? `• Duplicate schedule slot only (other weekdays unchanged): ${[...willHideRuleIds].join(", ")}`
+                      : "",
+                  ].filter(Boolean);
+                  if (!window.confirm(confirmLines.join("\n"))) return;
+
+                  const rescheduleIdsToDelete = new Set<string>();
+                  const extraIdsToDelete = new Set<string>();
+                  for (const row of selectedRows) {
+                    if (row.rescheduleEntryId) {
+                      rescheduleIdsToDelete.add(row.rescheduleEntryId);
+                    }
+                    if (row.extraEntryId) {
+                      extraIdsToDelete.add(row.extraEntryId);
+                    }
+                  }
+
+                  if (rescheduleIdsToDelete.size > 0) {
+                    const nextEntries = rescheduleEntries.filter(
+                      (e) => !rescheduleIdsToDelete.has(e.id),
+                    );
+                    setRescheduleEntries(nextEntries);
+                    window.localStorage.setItem(
+                      RESCHEDULE_STORAGE_KEY,
+                      JSON.stringify(nextEntries),
+                    );
+                    persistYearState({ rescheduleEntries: nextEntries });
+                  }
+
+                  if (extraIdsToDelete.size > 0) {
+                    const nextExtraEntries = extraEntries.filter(
+                      (e) => !extraIdsToDelete.has(e.id),
+                    );
+                    setExtraEntries(nextExtraEntries);
+                    window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(nextExtraEntries));
+                    persistYearState({ extraEntries: nextExtraEntries });
+                  }
+
+                  const nextHidden = { ...hiddenDates };
+                  for (const row of selectedRows) {
+                    if (row.rowKind !== "normal" || row.extraEntryId) continue;
+                    const parsed = parseRegularLessonRowId(row.rowId);
+                    if (!parsed) {
+                      nextHidden[row.date] = true;
+                      continue;
+                    }
+                    const sameDateRegularCount = scheduleRows.filter(
+                      (r) =>
+                        r.date === parsed.dateIso &&
+                        r.rowKind === "normal" &&
+                        !r.extraEntryId &&
+                        parseRegularLessonRowId(r.rowId),
+                    ).length;
+                    if (sameDateRegularCount > 1) {
+                      nextHidden[hiddenScheduleRuleStorageKey(parsed.ruleId)] = true;
+                    } else {
+                      nextHidden[parsed.dateIso] = true;
+                    }
+                  }
+                  persistHiddenDates(nextHidden);
+                  setSelectedRowIds([]);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                  <path d="M7.5 2.75A1.75 1.75 0 005.75 4.5v.25H4a.75.75 0 000 1.5h.5l.73 9.1A2 2 0 007.22 17.2h5.56a2 2 0 001.99-1.85l.73-9.1H16a.75.75 0 000-1.5h-1.75V4.5A1.75 1.75 0 0012.5 2.75h-5zM12.75 4.5v.25h-5.5V4.5a.25.25 0 01.25-.25h5a.25.25 0 01.25.25z" />
+                </svg>
+                Delete
+              </button>
+            </div>
+          </div>
+          {selectionError ? (
+            <div className="mx-auto max-w-[1500px] px-3 pb-2.5 sm:px-5 lg:px-6">
+              <p className="text-xs font-medium text-red-600">{selectionError}</p>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

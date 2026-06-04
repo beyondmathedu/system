@@ -192,6 +192,7 @@ function buildStudentSearchBlob(student: {
   nameZh: string;
   nameEn: string;
   nicknameEn: string;
+  school: string;
   textbookPublisher: string;
   studentPhone: string;
 }) {
@@ -201,6 +202,7 @@ function buildStudentSearchBlob(student: {
     student.nameZh,
     student.nameEn,
     student.nicknameEn,
+    student.school,
     student.textbookPublisher,
     student.studentPhone,
   ]
@@ -913,7 +915,7 @@ export default function StudentsPage() {
                   <svg viewBox="0 0 20 20" className="h-4 w-4 text-slate-500" fill="currentColor" aria-hidden="true">
                     <path d="M8.5 2.75a5.75 5.75 0 104.02 9.86l2.93 2.93a.75.75 0 101.06-1.06l-2.93-2.93A5.75 5.75 0 008.5 2.75zm-4.25 5.75a4.25 4.25 0 118.5 0 4.25 4.25 0 01-8.5 0z" />
                   </svg>
-                  <span>Search by ID / Chinese name / English name / nickname / Contact number</span>
+                  <span>Search by ID / Chinese name / English name / nickname / Contact number / School</span>
                 </span>
               </label>
               <ClientOnlyAfterMount
@@ -929,7 +931,7 @@ export default function StudentsPage() {
                   type="text"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="e.g. 00001, 王小明, Tom, 91234567, Oxford"
+                  placeholder="e.g. 00001, 王小明, Tom, 91234567, 聖保羅, Oxford"
                   className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 outline-none ring-0 transition focus:border-blue-500 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15)]"
                 />
               </ClientOnlyAfterMount>

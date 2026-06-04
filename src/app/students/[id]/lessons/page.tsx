@@ -311,6 +311,12 @@ export default function StudentLessonsPage() {
                       <span className="inline-flex rounded-md bg-sky-100 px-3 py-2 text-sm font-bold text-sky-800">
                         Unattended This Month {currentMonthUntickedCount}
                       </span>
+                      <Link
+                        href={`/student-progress/${encodeURIComponent(studentId)}`}
+                        className="inline-flex items-center rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90"
+                      >
+                        Student Progress
+                      </Link>
                     </div>
                   </div>
                 </div>
