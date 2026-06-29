@@ -247,9 +247,28 @@ export function tutorDisplayForLessonRow(opts: {
   return pendingLabel;
 }
 
-/** 常規課打勾 key；兼容舊資料只用 dateIso 的情況。 */
+const REGULAR_ATTENDANCE_KEY_RE = /^regular:([^:]+):(\d{4}-\d{2}-\d{2})$/;
+
+export function parseRegularAttendanceRuleId(attendanceKey: string): string | null {
+  const m = REGULAR_ATTENDANCE_KEY_RE.exec(attendanceKey);
+  return m ? m[1] : null;
+}
+
+/** Remove legacy rule-wide `regular:id` when saving a per-date regular key. */
+export function attendanceAfterRegularToggle(
+  attendance: Record<string, boolean>,
+  attendanceKey: string,
+  checked: boolean,
+): Record<string, boolean> {
+  const next = { ...attendance, [attendanceKey]: checked };
+  const m = REGULAR_ATTENDANCE_KEY_RE.exec(attendanceKey);
+  if (m) delete next[`regular:${m[1]}`];
+  return next;
+}
+
+/** 常規課打勾 key（每堂獨立）；兼容舊資料 regular:id 與 dateIso。 */
 export function regularLessonAttendanceKey(rule: { id?: string }, dateIso: string): string {
-  return rule.id ? `regular:${rule.id}` : dateIso;
+  return rule.id ? `regular:${rule.id}:${dateIso}` : dateIso;
 }
 
 export function isRegularLessonAttended(
@@ -257,9 +276,13 @@ export function isRegularLessonAttended(
   rule: { id?: string },
   dateIso: string,
 ): boolean {
-  const key = regularLessonAttendanceKey(rule, dateIso);
-  if (attendance[key]) return true;
-  if (rule.id && attendance[dateIso]) return true;
+  if (!rule.id) {
+    return Boolean(attendance[dateIso]);
+  }
+  if (attendance[regularLessonAttendanceKey(rule, dateIso)]) return true;
+  // Legacy: one key marked every matching weekday in the year.
+  if (attendance[`regular:${rule.id}`]) return true;
+  if (attendance[dateIso]) return true;
   return false;
 }
 

@@ -6,13 +6,10 @@ import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import { supabase } from "@/lib/supabase";
 import type { DayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings";
 import { DEFAULT_DAY_TIMETABLE_STYLE } from "@/lib/dayTimetableStyleSettings";
-import type { DayTimetableUiLocale } from "@/lib/dayTimetableUiStrings";
 import { dayTimetableStyleEditorStrings } from "@/lib/dayTimetableUiStrings";
 import { revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
-
 type Props = {
   initial: DayTimetableStyleSettings;
-  uiLocale?: DayTimetableUiLocale;
 };
 
 function normalizeHexInput(v: string): string {
@@ -31,7 +28,7 @@ function StyleEditorFormFallback({
   te,
 }: {
   settings: DayTimetableStyleSettings;
-  te: (typeof dayTimetableStyleEditorStrings)[DayTimetableUiLocale];
+  te: typeof dayTimetableStyleEditorStrings;
 }) {
   const colorRow = (label: string, hex: string, fallback: string) => (
     <label className="block text-xs text-slate-700">
@@ -64,8 +61,8 @@ function StyleEditorFormFallback({
   );
 }
 
-export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Props) {
-  const te = dayTimetableStyleEditorStrings[uiLocale];
+export default function DayTimetableStyleEditor({ initial }: Props) {
+  const te = dayTimetableStyleEditorStrings;
   const router = useRouter();
   const [settings, setSettings] = useState<DayTimetableStyleSettings>(initial);
   const [status, setStatus] = useState("");

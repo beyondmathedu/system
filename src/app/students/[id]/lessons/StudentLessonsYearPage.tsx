@@ -28,7 +28,7 @@ import {
 } from "@/lib/lessonSystemStart";
 import {
   formatHiddenScheduleKeyLabel,
-  hiddenScheduleRuleStorageKey,
+  hiddenScheduleRuleDateStorageKey,
   listHiddenScheduleKeys,
   parseRegularLessonRowId,
 } from "@/lib/lessonScheduleHidden";
@@ -1034,11 +1034,18 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
           result = na - nb;
           break;
         }
-        case "attendance":
-          result =
-            (attendance[a.attendanceKey] ? 1 : 0) -
-            (attendance[b.attendanceKey] ? 1 : 0);
+        case "attendance": {
+          const attendedA =
+            a.rowKind === "normal" && a.scheduleRuleId
+              ? isRegularLessonAttended(attendance, { id: a.scheduleRuleId }, a.date)
+              : Boolean(attendance[a.attendanceKey]);
+          const attendedB =
+            b.rowKind === "normal" && b.scheduleRuleId
+              ? isRegularLessonAttended(attendance, { id: b.scheduleRuleId }, b.date)
+              : Boolean(attendance[b.attendanceKey]);
+          result = (attendedA ? 1 : 0) - (attendedB ? 1 : 0);
           break;
+        }
         case "date":
           result = a.date.localeCompare(b.date);
           break;
@@ -1521,26 +1528,52 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     filterType,
   ]);
 
-  const mayScheduleStats = useMemo(() => {
-    const total = scheduleRows.filter((r) => r.month === 5).length;
-    const visible = filteredScheduleRows.filter((r) => r.month === 5).length;
-    return { total, visible };
-  }, [scheduleRows, filteredScheduleRows]);
+  const diagnosticMonth = filterMonth
+    ? Number(filterMonth)
+    : targetYear === LESSON_SYSTEM_START_YEAR
+      ? LESSON_SYSTEM_START_MONTH
+      : 1;
 
-  const activeMayVersionDate = useMemo(() => {
+  const monthDiagnostic = useMemo(() => {
+    if (!studentId) return { total: 0, visible: 0 };
+    const monthRows = buildStudentScheduleRows(
+      records,
+      scheduleMapperState,
+      targetYear,
+      hkTodayYmd,
+      { month: diagnosticMonth },
+    );
+    return {
+      total: monthRows.length,
+      visible: filteredScheduleRows.filter((r) => r.month === diagnosticMonth).length,
+    };
+  }, [
+    records,
+    studentId,
+    scheduleMapperState,
+    targetYear,
+    hkTodayYmd,
+    diagnosticMonth,
+    filteredScheduleRows,
+  ]);
+
+  const activeDiagnosticVersionDate = useMemo(() => {
     if (records.length === 0) return null;
     const normalized = records.map((r) => ({
       effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
     }));
-    return getActiveScheduleVersionDate(normalized, `${targetYear}-05-15`);
-  }, [records, targetYear]);
+    const midMonthDay = `${targetYear}-${String(diagnosticMonth).padStart(2, "0")}-15`;
+    return getActiveScheduleVersionDate(normalized, midMonthDay);
+  }, [records, targetYear, diagnosticMonth]);
 
-  const activeMayRuleCount = useMemo(() => {
-    if (!activeMayVersionDate) return 0;
+  const activeDiagnosticRuleCount = useMemo(() => {
+    if (!activeDiagnosticVersionDate) return 0;
     return records.filter(
-      (r) => (r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt)) === activeMayVersionDate,
+      (r) => (r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt)) === activeDiagnosticVersionDate,
     ).length;
-  }, [records, activeMayVersionDate]);
+  }, [records, activeDiagnosticVersionDate]);
+
+  const diagnosticMonthLabel = MONTH_LABEL[diagnosticMonth] ?? String(diagnosticMonth);
 
   const allVisibleSelected =
     filteredScheduleRows.length > 0 &&
@@ -1839,8 +1872,8 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
               />
               {hiddenScheduleKeys.length > 0 ||
               records.length === 0 ||
-              mayScheduleStats.total === 0 ||
-              (mayScheduleStats.total > 0 && mayScheduleStats.visible === 0) ? (
+              (records.length > 0 && monthDiagnostic.total === 0) ||
+              (monthDiagnostic.total > 0 && monthDiagnostic.visible === 0) ? (
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
                   {hiddenScheduleKeys.length > 0 ? (
                     <>
@@ -1876,24 +1909,24 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                         全部恢復顯示
                       </button>
                     </>
-                  ) : (
-                    <p className="font-semibold">沒有 hidden_dates 隱藏紀錄</p>
-                  )}
+                  ) : null}
                   {records.length === 0 ? (
-                    <p className="mt-2 leading-snug">
-                      課表設定（student_lesson_records）目前為<strong>空</strong>，所以 5 月不會有任何 Regular
-                      行。請到上一頁「Lesson Schedule Settings」重新加入星期／時間／房間。
+                    <p className={`leading-snug${hiddenScheduleKeys.length > 0 ? " mt-2" : ""}`}>
+                      課表設定（student_lesson_records）目前為<strong>空</strong>，所以{" "}
+                      {diagnosticMonthLabel} 不會有任何 Regular 行。請到上一頁「Lesson Schedule Settings」重新加入星期／時間／房間。
                     </p>
-                  ) : mayScheduleStats.total === 0 ? (
-                    <p className="mt-2 leading-snug">
-                      有 {records.length} 條課表規則，但 5 月仍無課堂行。5 月使用版本 effective date：
-                      <strong> {activeMayVersionDate ?? "—"}</strong>（共 {activeMayRuleCount}{" "}
-                      條）。若你曾在課表設定刪走該版本嘅規則，要重新 Add Record。
+                  ) : monthDiagnostic.total === 0 ? (
+                    <p className={`leading-snug${hiddenScheduleKeys.length > 0 ? " mt-2" : ""}`}>
+                      有 {records.length} 條課表規則，但 {diagnosticMonthLabel} 仍無課堂行。{diagnosticMonthLabel}{" "}
+                      使用版本 effective date：
+                      <strong> {activeDiagnosticVersionDate ?? "—"}</strong>（共 {activeDiagnosticRuleCount}{" "}
+                      條）。若規則嘅<strong>星期</strong>同該月實際日期對唔上，或你曾在課表設定刪走該版本嘅規則，要重新 Add
+                      Record。
                     </p>
-                  ) : mayScheduleStats.visible === 0 ? (
-                    <p className="mt-2 leading-snug">
-                      5 月共有 {mayScheduleStats.total} 堂，但被上方篩選（Month / Room / Tutor 等）濾走。請將
-                      Month 改為 All 或 5。
+                  ) : monthDiagnostic.visible === 0 ? (
+                    <p className={`leading-snug${hiddenScheduleKeys.length > 0 ? " mt-2" : ""}`}>
+                      {diagnosticMonthLabel} 共有 {monthDiagnostic.total} 堂，但被上方篩選（Month / Room / Tutor
+                      等）濾走。請將 Month 改為 All 或 {diagnosticMonth}。
                     </p>
                   ) : null}
                   <Link
@@ -3068,8 +3101,8 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                 aria-label={`${r.date} attendance (read-only)`}
                                 title="Attendance is read-only here. Please mark attendance in the Room page."
                               >
-                                {r.rowKind === "normal" && r.attendanceKey.startsWith("regular:")
-                                  ? isRegularLessonAttended(attendance, { id: r.attendanceKey.slice("regular:".length) }, r.date)
+                                {r.rowKind === "normal" && r.scheduleRuleId
+                                  ? isRegularLessonAttended(attendance, { id: r.scheduleRuleId }, r.date)
                                     ? "✓"
                                     : ""
                                   : attendance[r.attendanceKey]
@@ -3293,33 +3326,22 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                     (row) => row.rowKind === "normal" && !row.extraEntryId,
                   );
                   const willHideWholeDates = new Set<string>();
-                  const willHideRuleIds = new Set<string>();
+                  const willHideRuleDates = new Set<string>();
                   for (const row of regularDeletes) {
                     const parsed = parseRegularLessonRowId(row.rowId);
                     if (!parsed) {
                       willHideWholeDates.add(row.date);
                       continue;
                     }
-                    const sameDateRegularCount = scheduleRows.filter(
-                      (r) =>
-                        r.date === parsed.dateIso &&
-                        r.rowKind === "normal" &&
-                        !r.extraEntryId &&
-                        parseRegularLessonRowId(r.rowId),
-                    ).length;
-                    if (sameDateRegularCount > 1) {
-                      willHideRuleIds.add(parsed.ruleId);
-                    } else {
-                      willHideWholeDates.add(parsed.dateIso);
-                    }
+                    willHideRuleDates.add(`${parsed.dateIso} · rule ${parsed.ruleId}`);
                   }
                   const confirmLines = [
                     "Hide selected lesson row(s) from this list?",
                     willHideWholeDates.size > 0
                       ? `• Whole dates (all lessons that day): ${[...willHideWholeDates].join(", ")}`
                       : "",
-                    willHideRuleIds.size > 0
-                      ? `• Duplicate schedule slot only (other weekdays unchanged): ${[...willHideRuleIds].join(", ")}`
+                    willHideRuleDates.size > 0
+                      ? `• Selected date only: ${[...willHideRuleDates].join(", ")}`
                       : "",
                   ].filter(Boolean);
                   if (!window.confirm(confirmLines.join("\n"))) return;
@@ -3364,18 +3386,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       nextHidden[row.date] = true;
                       continue;
                     }
-                    const sameDateRegularCount = scheduleRows.filter(
-                      (r) =>
-                        r.date === parsed.dateIso &&
-                        r.rowKind === "normal" &&
-                        !r.extraEntryId &&
-                        parseRegularLessonRowId(r.rowId),
-                    ).length;
-                    if (sameDateRegularCount > 1) {
-                      nextHidden[hiddenScheduleRuleStorageKey(parsed.ruleId)] = true;
-                    } else {
-                      nextHidden[parsed.dateIso] = true;
-                    }
+                    nextHidden[hiddenScheduleRuleDateStorageKey(parsed.ruleId, parsed.dateIso)] = true;
                   }
                   persistHiddenDates(nextHidden);
                   setSelectedRowIds([]);

@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
+import DayTimetableLegend from "@/components/DayTimetableLegend";
 import DayTimetableStyleEditorLazy from "@/components/DayTimetableStyleEditorLazy";
 import DayTimetableTable from "@/components/DayTimetableTable";
+import { dayTimetablePageIntroStrings } from "@/lib/dayTimetableUiStrings";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
@@ -48,13 +50,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">{payload.titleDate} Daily Timetable</h1>
-            <p className="mt-1 text-sm text-blue-100">
-              When multiple students share the same room and time slot, entries are ordered as: regular lessons
-              {" \u2192 "}rescheduled lessons{" \u2192 "}extra lessons (same type sorted by student ID). Lesson summaries are
-              synchronized with scheduling. Exam dates come from each student&apos;s lesson page. Regular lesson colors
-              follow Tutor settings; rescheduled/extra backgrounds and fee highlights can be changed below in
-              “Timetable colours & fee highlights”.
-            </p>
+            <p className="mt-1 text-sm text-blue-100">{dayTimetablePageIntroStrings.daily}</p>
           </div>
 
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
@@ -93,10 +89,10 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
                 emptyMessage="No lessons on this day."
                 showPeriodSeparatorOnly
                 repeatRoomHeadersPerTimeSlot
-                uiLocale="en"
               />
+              <DayTimetableLegend timetableStyle={payload.timetableStyle} />
               <div className="mt-6">
-                <DayTimetableStyleEditorLazy initial={payload.timetableStyle} uiLocale="en" />
+                <DayTimetableStyleEditorLazy initial={payload.timetableStyle} />
               </div>
             </div>
           </div>

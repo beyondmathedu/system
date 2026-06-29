@@ -57,7 +57,7 @@ export type BuiltScheduleRow = {
   rowKind: "normal" | "cancelled_original" | "reschedule";
   attendanceKey: string;
   rowId: string;
-  /** 恆常課對應的課表規則 id（用於 regular:id 出席鍵） */
+  /** 恆常課對應的課表規則 id（用於 regular:id:date 出席鍵） */
   scheduleRuleId?: string;
   /** 恆常 / 補堂 / 加堂 / 取消 / Pending makeup（请假补堂日期待定） */
   lessonType: "恆常" | "補堂" | "加堂" | "取消" | typeof PENDING_MAKEUP_TYPE_LABEL;

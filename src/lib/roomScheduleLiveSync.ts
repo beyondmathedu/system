@@ -1,5 +1,5 @@
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
-import { isScheduleAttendanceMarked } from "@/lib/lessonScheduleVersions";
+import { isScheduleAttendanceMarked, parseRegularAttendanceRuleId } from "@/lib/lessonScheduleVersions";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
 import { parseLessonYearStateDbRow } from "@/lib/studentLessonStorage";
@@ -48,6 +48,7 @@ export function patchRoomRowsFromLessonState(
       attendanceKey: r.attendanceKey,
       dateIso: r.dateIso,
       lessonType: lessonTypeForAttendance(r.lessonType),
+      scheduleRuleId: r.scheduleRuleId ?? parseRegularAttendanceRuleId(r.attendanceKey) ?? undefined,
     });
 
     if (r.lessonType === "補堂") {

@@ -28,8 +28,7 @@ function feeToneForStudent(
   );
 }
 import { formatGradeDisplay } from "@/lib/grade";
-import type { DayTimetableUiLocale } from "@/lib/dayTimetableUiStrings";
-import { dayTimetableTableStrings, formatFeeHeavyLine } from "@/lib/dayTimetableUiStrings";
+import { dayTimetableTableStrings } from "@/lib/dayTimetableUiStrings";
 
 const TD_BASE = "h-9 border border-slate-300 px-2 py-1 text-sm";
 const TD_BASE_WIDE = "h-9 border border-slate-300 px-3 py-1 text-sm";
@@ -163,7 +162,6 @@ type Props = {
   /** Daily：每個時段前重複 B／M前／… 房名與 Name／Grade／Exam 小標題 */
   repeatRoomHeadersPerTimeSlot?: boolean;
   /** `en`：Regular timetable page */
-  uiLocale?: DayTimetableUiLocale;
 };
 
 const COLS_PER_ROOM = 3;
@@ -185,9 +183,8 @@ export default function DayTimetableTable({
   showRegularCapacitySummary = false,
   showPeriodSeparatorOnly = false,
   repeatRoomHeadersPerTimeSlot = false,
-  uiLocale = "zh",
 }: Props) {
-  const t = dayTimetableTableStrings[uiLocale];
+  const t = dayTimetableTableStrings;
   const {
     rowFrames,
     byTimeRoom,
@@ -316,58 +313,12 @@ export default function DayTimetableTable({
 
   return (
     <div className="rounded-lg border border-slate-300 bg-white">
-      <p className="border-b border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-600">
-        <span className="font-semibold text-slate-700">{t.examBlurbTitle}</span>
-        {t.examDateBlurb}
-        <span className="ml-2 text-slate-500">{t.remarkBlurb}</span>
-      </p>
-      <p className="border-b border-slate-200 bg-white px-3 py-2 text-xs leading-relaxed text-slate-600">
-        <span className="font-semibold text-slate-700">{t.coloursLegendTitle}</span>
-        {t.coloursIntroBeforeSwatches}
-        <span
-          className="mx-1 inline-block h-3 w-5 rounded-sm align-[-2px] ring-1 ring-violet-200/80"
-          style={{ backgroundColor: timetableStyle.rescheduleCellBgHex }}
-          title={t.swatchTitleResched}
-        />{" "}
-        {t.coloursBetweenSwatches}
-        <span
-          className="mx-1 inline-block h-3 w-5 rounded-sm align-[-2px] ring-1 ring-amber-200/80"
-          style={{ backgroundColor: timetableStyle.extraCellBgHex }}
-          title={t.swatchTitleExtra}
-        />{" "}
-        {t.coloursAfterExtraSwatch}
-        {t.feeIntro}
-        <span
-          className="mx-1 inline-block h-3 w-1.5 rounded-sm align-middle"
-          style={{ backgroundColor: timetableStyle.feeUnpaidStripeHex }}
-        />
-        {t.feeBetweenStripes}
-        <span
-          className="mx-1 inline-block h-3 w-1.5 rounded-sm align-middle"
-          style={{ backgroundColor: timetableStyle.feeArrearsStripeHex }}
-        />{" "}
-        {formatFeeHeavyLine(
-          uiLocale,
-          timetableStyle.feeLookbackMonths,
-          timetableStyle.feeHeavyUnpaidThreshold,
-        )}
-      </p>
       {omittedRoomsToday.length > 0 && !repeatRoomHeadersPerTimeSlot ? (
         <p className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
           {t.roomsHiddenToday.replace(
             "{rooms}",
-            omittedRoomsToday.join(uiLocale === "zh" ? "、" : ", "),
+            omittedRoomsToday.join(", "),
           )}
-        </p>
-      ) : null}
-      {showRegularCapacitySummary ? (
-        <p className="border-b border-slate-200 bg-emerald-50/80 px-3 py-2 text-xs text-slate-700">
-          <span className="font-semibold text-slate-800">{t.capacityLabel}</span>
-          {t.capacityBlurbBeforeLink}
-          <Link href="/rooms" className="font-semibold text-[#1d76c2] underline">
-            Rooms
-          </Link>
-          {t.capacityBlurbAfterLink}
         </p>
       ) : null}
       {repeatRoomHeadersPerTimeSlot ? (
@@ -377,7 +328,7 @@ export default function DayTimetableTable({
             <span className="mt-1 block font-normal text-slate-600">
               {t.roomsHiddenToday.replace(
                 "{rooms}",
-                omittedRoomsToday.join(uiLocale === "zh" ? "、" : ", "),
+                omittedRoomsToday.join(", "),
               )}
             </span>
           ) : null}

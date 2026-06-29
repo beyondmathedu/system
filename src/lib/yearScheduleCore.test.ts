@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { hiddenScheduleRuleStorageKey } from "@/lib/lessonScheduleHidden";
+import { hiddenScheduleRuleDateStorageKey, hiddenScheduleRuleStorageKey } from "@/lib/lessonScheduleHidden";
+import { attendanceAfterRegularToggle, isRegularLessonAttended } from "@/lib/lessonScheduleVersions";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import {
   buildYearScheduleRowsForDateRange,
@@ -85,6 +86,17 @@ describe("yearScheduleCore", () => {
     expect(may.some((r) => r.date === "2026-05-25" && r.lessonType === "恆常")).toBe(false);
   });
 
+  it("respects hidden_dates by rule id and calendar date only", () => {
+    const records = [mondayRule({ id: "rule-hide-me" })];
+    const state = emptyState();
+    state.hiddenDates[hiddenScheduleRuleDateStorageKey("rule-hide-me", "2026-05-25")] = true;
+
+    const may = buildYearScheduleRowsForMonth(records, state, YEAR, 5);
+
+    expect(may.some((r) => r.date === "2026-05-25" && r.lessonType === "恆常")).toBe(false);
+    expect(may.some((r) => r.date === "2026-05-18" && r.lessonType === "恆常")).toBe(true);
+  });
+
   it("respects hidden_dates by calendar date", () => {
     const records = [mondayRule()];
     const state = emptyState();
@@ -114,7 +126,34 @@ describe("yearScheduleCore", () => {
     );
 
     expect(may25).toHaveLength(2);
-    expect(may25.map((r) => r.attendanceKey).sort()).toEqual(["regular:rule-a", "regular:rule-b"]);
+    expect(may25.map((r) => r.attendanceKey).sort()).toEqual([
+      "regular:rule-a:2026-05-25",
+      "regular:rule-b:2026-05-25",
+    ]);
+  });
+
+  it("marks regular attendance per calendar date, not whole rule", () => {
+    const records = [mondayRule({ id: "rule-mon" })];
+    const june = buildYearScheduleRowsForMonth(records, emptyState(), YEAR, 6);
+    const july = buildYearScheduleRowsForMonth(records, emptyState(), YEAR, 7);
+    const juneDate = june.find((r) => r.lessonType === "恆常")?.date;
+    const julyDate = july.find((r) => r.lessonType === "恆常")?.date;
+    expect(juneDate).toBeTruthy();
+    expect(julyDate).toBeTruthy();
+
+    const attendance = { [`regular:rule-mon:${juneDate}`]: true };
+    expect(isRegularLessonAttended(attendance, { id: "rule-mon" }, juneDate!)).toBe(true);
+    expect(isRegularLessonAttended(attendance, { id: "rule-mon" }, julyDate!)).toBe(false);
+  });
+
+  it("drops legacy rule-wide attendance when toggling a single date", () => {
+    expect(
+      attendanceAfterRegularToggle(
+        { "regular:rule-mon": true },
+        "regular:rule-mon:2026-06-02",
+        true,
+      ),
+    ).toEqual({ "regular:rule-mon:2026-06-02": true });
   });
 
   it("expands only dates inside a custom range", () => {

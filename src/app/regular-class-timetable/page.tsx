@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
+import DayTimetableLegend from "@/components/DayTimetableLegend";
 import DayTimetableStyleEditorLazy from "@/components/DayTimetableStyleEditorLazy";
 import DayTimetableTable from "@/components/DayTimetableTable";
+import { dayTimetablePageIntroStrings } from "@/lib/dayTimetableUiStrings";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
@@ -48,12 +50,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">{payload.titleDate} Regular Class Timetable</h1>
-            <p className="mt-1 text-sm text-blue-100">
-              Same layout as Daily Timetable, but <strong className="font-semibold">regular lessons only</strong>{" "}
-              (no reschedule or extra). Each slot shows per room: regular count / capacity / remaining; capacity is set on{" "}
-              <span className="font-semibold">Rooms</span>. Exam dates and fee stripes match Daily; edit colours in
-              “Timetable colours & fee highlights” below (shared with Daily).
-            </p>
+            <p className="mt-1 text-sm text-blue-100">{dayTimetablePageIntroStrings.regular}</p>
           </div>
 
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
@@ -91,10 +88,10 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
                 payload={payload}
                 emptyMessage="No regular lessons on this day."
                 showRegularCapacitySummary
-                uiLocale="en"
               />
+              <DayTimetableLegend timetableStyle={payload.timetableStyle} showCapacityLegend />
               <div className="mt-6">
-                <DayTimetableStyleEditorLazy initial={payload.timetableStyle} uiLocale="en" />
+                <DayTimetableStyleEditorLazy initial={payload.timetableStyle} />
               </div>
             </div>
           </div>

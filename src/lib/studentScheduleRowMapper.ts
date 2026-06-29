@@ -37,6 +37,7 @@ export type StudentLessonScheduleRow = {
   rowKind: "normal" | "cancelled_original" | "reschedule";
   rowId: string;
   attendanceKey: string;
+  scheduleRuleId?: string;
   displayOrder: number;
   rescheduleEntryId?: string;
   extraEntryId?: string;
@@ -174,6 +175,7 @@ function mapCoreRowToStudentRow(
     rowKind: core.rowKind,
     rowId: core.rowId,
     attendanceKey: core.attendanceKey,
+    scheduleRuleId: core.scheduleRuleId,
     rescheduleEntryId,
     extraEntryId,
     pendingMakeupLabel,

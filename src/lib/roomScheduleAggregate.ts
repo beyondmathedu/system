@@ -44,6 +44,7 @@ export type RoomScheduleRow = {
   studentName: string;
   grade: string;
   attendanceKey: string;
+  scheduleRuleId?: string;
   attended: boolean;
   dateIso: string;
   dateDisplay: string;
@@ -671,6 +672,7 @@ async function fetchRoomScheduleAggregateUncached(
         studentName: name,
         grade: (st.grade ?? "").toString(),
         attendanceKey: r.attendanceKey,
+        scheduleRuleId: r.scheduleRuleId,
         attended: isScheduleAttendanceMarked(state.attendance, {
           attendanceKey: r.attendanceKey,
           dateIso: r.date,

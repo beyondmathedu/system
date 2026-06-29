@@ -15,6 +15,7 @@ import { queueSaveLessonYearState, retrySaveLessonYearState } from "@/lib/queueS
 import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import { loadTutorVisibility } from "@/lib/tutorVisibility";
 import { isSharedIpadTutorDisplayName } from "@/lib/tutorConstants";
+import { attendanceAfterRegularToggle } from "@/lib/lessonScheduleVersions";
 import { formatGradeDisplay } from "@/lib/grade";
 import { useRoomLessonStateRealtime } from "@/lib/useRoomLessonStateRealtime";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
@@ -446,10 +447,7 @@ export default function RoomScheduleTable({
     const current = stateCache.current.get(row.studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
     const nextState: StudentLesson2026State = {
       ...current,
-      attendance: {
-        ...current.attendance,
-        [row.attendanceKey]: checked,
-      },
+      attendance: attendanceAfterRegularToggle(current.attendance, row.attendanceKey, checked),
     };
     stateCache.current.set(row.studentId, nextState);
     queueSaveLessonYearState(row.studentId, year, nextState, ["attendance"], [row.attendanceKey]);
