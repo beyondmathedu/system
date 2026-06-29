@@ -928,22 +928,18 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
 
   const hkTodayYmd = useMemo(() => toHkIsoDateFromMs(Date.now()), []);
 
-  const scheduleBuildOptions = useMemo((): StudentScheduleBuildOptions => {
+  const scheduleBuildOptions = useMemo((): StudentScheduleBuildOptions | undefined => {
     const from = filterDateFrom.trim();
     const to = filterDateTo.trim();
     if (from && to) {
       return { rangeStartIso: from, rangeEndIso: to };
     }
-    const hk = hkYmdNow();
-    const month = filterMonth
-      ? Number(filterMonth)
-      : hk.y === targetYear
-        ? hk.m
-        : targetYear === LESSON_SYSTEM_START_YEAR
-          ? LESSON_SYSTEM_START_MONTH
-          : 1;
-    return { month };
-  }, [filterDateFrom, filterDateTo, filterMonth, targetYear]);
+    if (filterMonth) {
+      return { month: Number(filterMonth) };
+    }
+    // Month = All: expand the full year (system start through Dec), not just the current month.
+    return undefined;
+  }, [filterDateFrom, filterDateTo, filterMonth]);
 
   const scheduleMapperState = useMemo(
     () => ({

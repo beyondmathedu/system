@@ -3,6 +3,26 @@ import { canonicalScheduleRoomLabel } from "@/lib/dayTimetableShared";
 
 /** 平日規則：同一 effectiveDate 為一版課表；較新生效日取代舊版（非按星期几疊加）。 */
 
+/** Map Mon/Monday/星期一 → 一 for schedule row expansion. */
+export function normalizeScheduleWeekday(raw: unknown): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (["一", "二", "三", "四", "五", "六", "日"].includes(s)) return s;
+  if (s.startsWith("星期")) {
+    const c = s.slice(2, 3);
+    if (["一", "二", "三", "四", "五", "六", "日"].includes(c)) return c;
+  }
+  const lower = s.toLowerCase();
+  if (lower === "mon" || lower === "monday") return "一";
+  if (lower === "tue" || lower === "tuesday") return "二";
+  if (lower === "wed" || lower === "wednesday") return "三";
+  if (lower === "thu" || lower === "thursday") return "四";
+  if (lower === "fri" || lower === "friday") return "五";
+  if (lower === "sat" || lower === "saturday") return "六";
+  if (lower === "sun" || lower === "sunday") return "日";
+  return s;
+}
+
 export type LessonScheduleVersionRule = {
   effectiveDate: string;
   weekday: string;

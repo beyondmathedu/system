@@ -13,6 +13,7 @@ import {
 import { isLessonScheduleHidden } from "@/lib/lessonScheduleHidden";
 import {
   getActiveDedupedScheduleRulesForDate,
+  normalizeScheduleWeekday,
   readLessonDayOverrideField,
   regularLessonAttendanceKey,
   tutorDisplayForLessonRow,
@@ -136,6 +137,7 @@ function buildScheduleRows(
   const normalized = records.map((r) => ({
     ...r,
     effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
+    weekday: normalizeScheduleWeekday(r.weekday),
   }));
   const sortedRules = [...normalized].sort((a, b) => {
     const ed = a.effectiveDate.localeCompare(b.effectiveDate);

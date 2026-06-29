@@ -95,6 +95,13 @@ describe("yearScheduleCore", () => {
     expect(may.some((r) => r.date === "2026-05-25")).toBe(false);
   });
 
+  it("expands English weekday labels (Mon) into regular rows", () => {
+    const records = [mondayRule({ weekday: "Mon" })];
+    const may = buildYearScheduleRowsForMonth(records, emptyState(), YEAR, 5);
+
+    expect(may.some((r) => r.date === "2026-05-25" && r.lessonType === "恆常")).toBe(true);
+  });
+
   it("emits two regular rows when two rules share a weekday with different slots", () => {
     const records = [
       mondayRule({ id: "rule-a", time: "4:00 PM", room: "M前" }),

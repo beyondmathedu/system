@@ -56,6 +56,14 @@ describe("studentScheduleRowMapper", () => {
     expect(reschedule?.rescheduleEntryId).toBe("rs-1");
   });
 
+  it("expands all months when no month option is set (Month filter All)", () => {
+    const records = [mondayRule()];
+    const rows = buildStudentScheduleRows(records, emptyState(), YEAR, "2026-06-01");
+
+    expect(rows.some((r) => r.month === 5)).toBe(true);
+    expect(rows.some((r) => r.month === 6)).toBe(true);
+  });
+
   it("builds only the requested month when month option is set", () => {
     const records = [mondayRule()];
     const rows = buildStudentScheduleRows(records, emptyState(), YEAR, "2026-06-01", { month: 5 });
