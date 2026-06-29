@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { supabase } from "@/lib/supabase";
+import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 
 type TeacherStatus = "工作中" | "放假中" | "已解僱";
 const TEACHER_STATUS_OPTIONS: TeacherStatus[] = ["工作中", "放假中", "已解僱"];
@@ -155,16 +156,9 @@ export default function TeacherPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [rateByTeacherId, setRateByTeacherId] = useState<Record<string, { junior: number; senior: number; single: number }>>({});
   const [sortConfig, setSortConfig] = useState<TeacherSortConfig>(null);
+  const [syncedRateKey, setSyncedRateKey] = useState<string | null>(null);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const bottomTrackRef = useRef<HTMLDivElement | null>(null);
-  const sideTrackRef = useRef<HTMLDivElement | null>(null);
-  const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
-  const [bottomScrollClientWidth, setBottomScrollClientWidth] = useState(0);
-  const [sideScrollHeight, setSideScrollHeight] = useState(0);
-  const [sideScrollClientHeight, setSideScrollClientHeight] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
-  const [scrollTop, setScrollTop] = useState(0);
 
   const filteredTeachers = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -235,6 +229,27 @@ export default function TeacherPage() {
     return rows;
   }, [filteredTeachers, rateByTeacherId, sortConfig]);
 
+  const {
+    tableScrollId,
+    bottomTrackRef,
+    sideTrackRef,
+    bottomThumb,
+    sideThumb,
+    bottomScrollWidth,
+    bottomScrollClientWidth,
+    sideScrollHeight,
+    sideScrollClientHeight,
+    bottomTrackA11yProps,
+    sideTrackA11yProps,
+    onBottomTrackMouseDown,
+    onSideTrackMouseDown,
+    startDragBottomThumb,
+    startDragSideThumb,
+  } = useCustomScrollbars({
+    tableScrollRef,
+    contentKey: sortedTeachers.length,
+  });
+
   async function loadTeachers() {
     setDataError("");
     const fullSelect =
@@ -284,143 +299,9 @@ export default function TeacherPage() {
     };
   }, []);
 
-  useEffect(() => {
-    const tableEl = tableScrollRef.current;
-    if (!tableEl) return;
-
-    const updateMetrics = () => {
-      setBottomScrollWidth(tableEl.scrollWidth);
-      setBottomScrollClientWidth(tableEl.clientWidth);
-      setSideScrollHeight(tableEl.scrollHeight);
-      setSideScrollClientHeight(tableEl.clientHeight);
-    };
-
-    const onTableScroll = () => {
-      setScrollLeft(tableEl.scrollLeft);
-      setScrollTop(tableEl.scrollTop);
-    };
-
-    updateMetrics();
-    setScrollLeft(tableEl.scrollLeft);
-    setScrollTop(tableEl.scrollTop);
-    tableEl.addEventListener("scroll", onTableScroll, { passive: true });
-    const ro = new ResizeObserver(() => updateMetrics());
-    ro.observe(tableEl);
-
-    return () => {
-      tableEl.removeEventListener("scroll", onTableScroll);
-      ro.disconnect();
-    };
-  }, [sortedTeachers.length]);
-
-  const bottomThumb = useMemo(() => {
-    const trackEl = bottomTrackRef.current;
-    const trackWidth = trackEl?.clientWidth ?? 0;
-    if (!trackWidth || !bottomScrollWidth || !bottomScrollClientWidth) return { size: 0, offset: 0 };
-    const ratio = bottomScrollClientWidth / bottomScrollWidth;
-    const size = Math.max(28, Math.floor(trackWidth * ratio));
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-    const offset = Math.round((scrollLeft / maxScroll) * maxOffset);
-    return { size, offset };
-  }, [bottomScrollClientWidth, bottomScrollWidth, scrollLeft]);
-
-  const sideThumb = useMemo(() => {
-    const trackEl = sideTrackRef.current;
-    const trackHeight = trackEl?.clientHeight ?? 0;
-    if (!trackHeight || !sideScrollHeight || !sideScrollClientHeight) return { size: 0, offset: 0 };
-    const ratio = sideScrollClientHeight / sideScrollHeight;
-    const size = Math.max(28, Math.floor(trackHeight * ratio));
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-    const offset = Math.round((scrollTop / maxScroll) * maxOffset);
-    return { size, offset };
-  }, [sideScrollClientHeight, sideScrollHeight, scrollTop]);
-
-  const onBottomTrackMouseDown = (e: React.MouseEvent) => {
-    const track = bottomTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const { size } = bottomThumb;
-    const trackWidth = rect.width;
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-    const targetOffset = Math.min(maxOffset, Math.max(0, x - size / 2));
-    tableEl.scrollLeft = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
-  };
-
-  const onSideTrackMouseDown = (e: React.MouseEvent) => {
-    const track = sideTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const { size } = sideThumb;
-    const trackHeight = rect.height;
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-    const targetOffset = Math.min(maxOffset, Math.max(0, y - size / 2));
-    tableEl.scrollTop = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
-  };
-
-  const startDragBottomThumb = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const track = bottomTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const startX = e.clientX;
-    const startOffset = bottomThumb.offset;
-    const size = bottomThumb.size;
-    const trackWidth = rect.width;
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-
-    const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - startX;
-      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dx));
-      tableEl.scrollLeft = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  const startDragSideThumb = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const track = sideTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const startY = e.clientY;
-    const startOffset = sideThumb.offset;
-    const size = sideThumb.size;
-    const trackHeight = rect.height;
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-
-    const onMove = (ev: MouseEvent) => {
-      const dy = ev.clientY - startY;
-      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dy));
-      tableEl.scrollTop = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
   function resetForm() {
     setEditingId(null);
+    setSyncedRateKey(null);
     setTeacherNickname("");
     setTeacherNameZh("");
     setTeacherNameEn("");
@@ -459,6 +340,34 @@ export default function TeacherPage() {
       setRateSenior("");
       setRateSingle("");
     }
+  }
+
+  function applyTeacherSelection(tutorId: string | null) {
+    if (!tutorId) {
+      setSelectedIds([]);
+      resetForm();
+      setSelectionError("");
+      return;
+    }
+    setSelectedIds([tutorId]);
+    loadTeacherIntoForm(tutorId);
+    const rates = rateByTeacherId[tutorId];
+    setSyncedRateKey(
+      rates ? `${tutorId}:${rates.junior}:${rates.senior}:${rates.single}` : null,
+    );
+  }
+
+  const selectedSingleId = selectedIds.length === 1 ? selectedIds[0] : null;
+  const ratesForSelected = selectedSingleId ? rateByTeacherId[selectedSingleId] : undefined;
+  const rateSyncKey =
+    selectedSingleId && editingId === selectedSingleId && ratesForSelected
+      ? `${selectedSingleId}:${ratesForSelected.junior}:${ratesForSelected.senior}:${ratesForSelected.single}`
+      : null;
+  if (rateSyncKey && rateSyncKey !== syncedRateKey) {
+    setSyncedRateKey(rateSyncKey);
+    setRateJunior(String(ratesForSelected!.junior));
+    setRateSenior(String(ratesForSelected!.senior));
+    setRateSingle(String(ratesForSelected!.single));
   }
 
   function parseRates() {
@@ -640,22 +549,6 @@ export default function TeacherPage() {
     resetForm();
     await Promise.all([loadTeachers(), loadLatestRates()]);
   }
-
-  useEffect(() => {
-    if (selectedIds.length === 1) {
-      loadTeacherIntoForm(selectedIds[0]);
-      return;
-    }
-    if (selectedIds.length === 0) {
-      // Back to add mode when nothing is selected.
-      if (editingId) resetForm();
-      setSelectionError("");
-      return;
-    }
-    // Multiple selected: keep form in add mode to avoid confusion.
-    if (editingId) resetForm();
-    setSelectionError("");
-  }, [selectedIds, teacherById, rateByTeacherId, editingId]);
 
   async function deleteSelected() {
     if (selectedIds.length === 0) {
@@ -922,6 +815,7 @@ export default function TeacherPage() {
               <div className="flex">
                 <div
                   ref={tableScrollRef}
+                  id={tableScrollId}
                   className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                   style={{ maxHeight: TEACHER_TABLE_MAX_H }}
                 >
@@ -937,11 +831,10 @@ export default function TeacherPage() {
                         checked={Boolean(firstFilteredTeacherId) && selectedIds.length === 1 && selectedIds[0] === firstFilteredTeacherId}
                         onChange={(event) => {
                           if (!event.target.checked) {
-                            setSelectedIds([]);
+                            applyTeacherSelection(null);
                             return;
                           }
-                          // In single-select mode, "select all" selects the first visible row.
-                          setSelectedIds(firstFilteredTeacherId ? [firstFilteredTeacherId] : []);
+                          applyTeacherSelection(firstFilteredTeacherId);
                         }}
                         className="h-4 w-4 accent-[#1d76c2]"
                         aria-label="Select tutor"
@@ -1003,8 +896,7 @@ export default function TeacherPage() {
                             type="checkbox"
                             checked={selectedIds.length === 1 && selectedIds[0] === teacher.id}
                             onChange={(event) => {
-                              if (event.target.checked) setSelectedIds([teacher.id]);
-                              else setSelectedIds([]);
+                              applyTeacherSelection(event.target.checked ? teacher.id : null);
                             }}
                             className="h-4 w-4 accent-[#1d76c2]"
                             aria-label={`Select ${teacher.id}`}
@@ -1082,8 +974,7 @@ export default function TeacherPage() {
                   <div className="border-l border-slate-200 bg-slate-50 px-2 py-2">
                     <div
                       ref={sideTrackRef}
-                      role="scrollbar"
-                      aria-label="Vertical scrollbar"
+                      {...sideTrackA11yProps}
                       className="relative w-2.5 select-none rounded bg-white ring-1 ring-slate-200"
                       style={{ height: `calc(${TEACHER_TABLE_MAX_H} - 16px)` }}
                       onMouseDown={onSideTrackMouseDown}
@@ -1102,8 +993,7 @@ export default function TeacherPage() {
                 <div className="border-t border-slate-200 bg-slate-50 px-4 py-2">
                   <div
                     ref={bottomTrackRef}
-                    role="scrollbar"
-                    aria-label="Horizontal scrollbar"
+                    {...bottomTrackA11yProps}
                     className="relative h-2.5 select-none rounded bg-white ring-1 ring-slate-200"
                     onMouseDown={onBottomTrackMouseDown}
                   >
@@ -1144,20 +1034,6 @@ function SaveIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden>
       <path d="m4.5 10 3.25 3.25L15.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function EditIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden>
-      <path
-        d="M13.9 3.4a1.5 1.5 0 0 1 2.1 2.1l-8.3 8.3-3.2.7.7-3.2 8.3-8.3Z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
     </svg>
   );
 }

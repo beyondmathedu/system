@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 export async function GET() {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+  }
+
   const clientId = process.env.ZOHO_CLIENT_ID ?? "";
   const clientSecret = process.env.ZOHO_CLIENT_SECRET ?? "";
   const redirectUri = process.env.ZOHO_REDIRECT_URI ?? "";

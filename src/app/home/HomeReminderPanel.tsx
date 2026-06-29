@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 
 export type HomeReminderRow = {
   studentId: string;
@@ -50,7 +51,7 @@ export default function HomeReminderPanel({
               className="rounded-md border border-slate-200/60 bg-white/80 px-3 py-2"
             >
               <Link
-                href={`/students/${encodeURIComponent(row.studentId)}/lessons/2026`}
+                href={studentLessonsYearPath(row.studentId)}
                 className="font-semibold text-[#1d76c2] hover:underline"
               >
                 {row.displayName}

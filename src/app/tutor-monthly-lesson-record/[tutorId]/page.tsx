@@ -154,13 +154,23 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
         } else if (sorted.length === 1) {
           sorted[0].amount = rates.single;
           g.subtotal = sorted[0].amount;
-          g.students = sorted.map(({ band, ...rest }) => rest);
+          g.students = sorted.map(({ studentId, studentName, grade, amount }) => ({
+            studentId,
+            studentName,
+            grade,
+            amount,
+          }));
         } else {
           sorted[0].amount = multiStudentFirstAmount;
           for (let i = 1; i < sorted.length; i++) {
             sorted[i].amount = sorted[i].band === "senior" ? rates.senior : rates.junior;
           }
-          g.students = sorted.map(({ band, ...rest }) => rest);
+          g.students = sorted.map(({ studentId, studentName, grade, amount }) => ({
+            studentId,
+            studentName,
+            grade,
+            amount,
+          }));
           g.subtotal = g.students.reduce((sum, st) => sum + (Number(st.amount) || 0), 0);
         }
         g.studentIdSet.clear();
@@ -266,7 +276,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
             </p>
             <p className="mt-2 text-sm text-blue-100">
               {year}/{month}: expanded from all student schedules. Lessons are included when the tutor field matches
-              any of this tutor's English name / Chinese name / nickname on the Tutor page (excluding cancelled
+              any of this tutor&apos;s English name / Chinese name / nickname on the Tutor page (excluding cancelled
               lessons), and only when attendance is ticked on the student schedule or room page.
             </p>
             <p className="mt-2 max-w-3xl text-xs leading-relaxed text-blue-100/95">
@@ -482,10 +492,10 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                     <tr className="bg-slate-50 text-slate-900">
                       <td className="border border-slate-200 px-3 py-2" />
                       <td colSpan={3} className="border border-slate-200 px-3 py-2">
-                        Employer's Signature
+                        Employer&apos;s Signature
                       </td>
                       <td colSpan={3} className="border border-slate-200 px-3 py-2">
-                        Employee's Signature
+                        Employee&apos;s Signature
                       </td>
                     </tr>
                   </tfoot>

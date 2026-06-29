@@ -199,14 +199,9 @@ export default function RoomsAdminClient() {
           );
           return;
         }
-        if (
-          prop.stats.lessonRecordRows +
-            prop.stats.lessons2026Rows +
-            prop.stats.lessonsYearRows >
-          0
-        ) {
+        if (prop.stats.lessonRecordRows + prop.stats.lessonsYearRows > 0) {
           setFormNotice(
-            `Updated classroom name in schedules from "${editSnapshot!.name}" to "${name}": lesson_records ${prop.stats.lessonRecordRows} rows, 2026 state ${prop.stats.lessons2026Rows} rows, yearly state ${prop.stats.lessonsYearRows} rows.`,
+            `Updated classroom name in schedules from "${editSnapshot!.name}" to "${name}": lesson_records ${prop.stats.lessonRecordRows} rows, yearly state ${prop.stats.lessonsYearRows} rows.`,
           );
         }
       }

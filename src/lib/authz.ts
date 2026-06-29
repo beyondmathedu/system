@@ -16,6 +16,16 @@ export type ViewerContext = {
   allowedRoomSlugs: string[];
 };
 
+type UserProfileRow = {
+  role?: string | null;
+  tutor_id?: string | null;
+  student_id?: string | null;
+};
+
+type TutorRoomPermissionRow = {
+  room_slug?: string | null;
+};
+
 async function getViewerContextUncached(): Promise<ViewerContext> {
   const supabase = await createSupabaseServerClient();
   const { data: auth } = await supabase.auth.getUser();
@@ -40,13 +50,14 @@ async function getViewerContextUncached(): Promise<ViewerContext> {
     .eq("user_id", userId)
     .maybeSingle();
 
-  const roleRaw = String((profile as any)?.role ?? "").toLowerCase();
+  const profileRow = profile as UserProfileRow | null;
+  const roleRaw = String(profileRow?.role ?? "").toLowerCase();
   const role: AppRole | null =
     roleRaw === "admin" || roleRaw === "tutor" || roleRaw === "student"
       ? (roleRaw as AppRole)
       : null;
-  const tutorId = String((profile as any)?.tutor_id ?? "").trim() || null;
-  const studentId = String((profile as any)?.student_id ?? "").trim() || null;
+  const tutorId = String(profileRow?.tutor_id ?? "").trim() || null;
+  const studentId = String(profileRow?.student_id ?? "").trim() || null;
 
   const isSharedIpadTutor = email === TUTOR_SHARED_IPAD_EMAIL.trim().toLowerCase();
 
@@ -59,7 +70,7 @@ async function getViewerContextUncached(): Promise<ViewerContext> {
       .select("room_slug")
       .eq("tutor_id", tutorId);
     allowedRoomSlugs = (roomPermRows ?? [])
-      .map((r) => String((r as any).room_slug ?? "").trim().toLowerCase())
+      .map((r) => String((r as TutorRoomPermissionRow).room_slug ?? "").trim().toLowerCase())
       .filter(Boolean);
   }
 

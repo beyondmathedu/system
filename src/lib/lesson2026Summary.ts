@@ -1,104 +1,34 @@
-"use client";
-
-import { readYmdParts } from "@/lib/intlFormatParts";
-import {
-  getLessonSystemStartDate,
-  isOnOrAfterLessonSystemStart,
-} from "@/lib/lessonSystemStart";
+import { isOnOrAfterLessonSystemStart } from "@/lib/lessonSystemStart";
 import { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
+import {
+  buildYearScheduleRows,
+  buildYearScheduleRowsForDateRange,
+  type BuiltScheduleRow,
+  type YearLessonRecord,
+  type YearLessonState,
+} from "@/lib/yearScheduleCore";
+import { isScheduleAttendanceMarked } from "@/lib/lessonScheduleVersions";
 
 export { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
-import { isLessonScheduleHidden } from "@/lib/lessonScheduleHidden";
-import {
-  getActiveDedupedScheduleRulesForDate,
-  isRegularLessonAttended,
-  regularLessonAttendanceKey,
-} from "@/lib/lessonScheduleVersions";
 
-export type Lesson2026Record = {
-  id?: string;
-  effectiveDate?: string;
-  weekday: string;
-  time: string;
-  room: string;
-  tutor?: string;
-  lessonSummary?: string;
-  createdAt: number;
-};
+export type Lesson2026Record = YearLessonRecord;
 
-export type Lesson2026State = {
-  attendance: Record<string, boolean>;
-  hiddenDates: Record<string, boolean>;
-  overrides: Record<string, { time?: string; room?: string; tutor?: string; lessonSummary?: string }>;
-  rescheduleEntries: Array<{ id: string; fromDate: string; toDate: string; time: string; room: string }>;
-  extraEntries: Array<{ id: string; date: string; time: string; room: string }>;
-};
+export type Lesson2026State = YearLessonState;
 
-type Row = {
-  date: string;
-  time: string;
-  room: string;
-  rowKind: "normal" | "cancelled_original" | "reschedule";
-  attendanceKey: string;
-  rowId: string;
-};
-
-function numberToWeekday(num: number) {
-  switch (num) {
-    case 1:
-      return "一";
-    case 2:
-      return "二";
-    case 3:
-      return "三";
-    case 4:
-      return "四";
-    case 5:
-      return "五";
-    case 6:
-      return "六";
-    case 7:
-      return "日";
-    default:
-      return "";
-  }
-}
-
-function toIsoDate(d: Date) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function toHkIsoDateFromMs(ms: number) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(ms));
-
-  const { y, m, d } = readYmdParts(parts);
-  return `${y}-${m}-${d}`;
-}
-
-function getHkWeekdayNumber(d: Date) {
-  const js = d.getDay();
-  return js === 0 ? 7 : js;
-}
-
-function isRowMarkedAttended(r: Row, state: Lesson2026State): boolean {
-  if (Boolean(state.attendance[r.attendanceKey])) return true;
-  if (r.rowKind === "normal" && r.attendanceKey.startsWith("regular:")) {
-    const ruleId = r.attendanceKey.slice("regular:".length);
-    return isRegularLessonAttended(state.attendance, { id: ruleId }, r.date);
-  }
-  return Boolean(state.attendance[r.date]);
+function isRowMarkedAttended(r: BuiltScheduleRow, state: Lesson2026State): boolean {
+  if (r.rowKind === "cancelled_original") return false;
+  const lt = r.lessonType;
+  if (lt !== "恆常" && lt !== "補堂" && lt !== "加堂") return false;
+  return isScheduleAttendanceMarked(state.attendance, {
+    attendanceKey: r.attendanceKey,
+    dateIso: r.date,
+    lessonType: lt,
+    scheduleRuleId: r.scheduleRuleId,
+  });
 }
 
 function filterUntickedRowsInMakeupWindow(
-  rows: Row[],
+  rows: BuiltScheduleRow[],
   state: Lesson2026State,
   startIso: string,
   endIso: string,
@@ -123,7 +53,7 @@ export function getLessonUntickedMetrics(
   nowMs = Date.now(),
   calendarYear = 2026,
 ): LessonUntickedMetrics {
-  const rows = buildRows(records, state, calendarYear);
+  const rows = buildYearScheduleRows(records, state, calendarYear);
   const { startIso, endIso } = getPriorMonthMakeupWindow(nowMs, calendarYear);
   const makeupRows = filterUntickedRowsInMakeupWindow(rows, state, startIso, endIso);
   const now = new Date(nowMs);
@@ -160,132 +90,6 @@ export function getCurrentMonthUntickedCount(
   return getLessonUntickedMetrics(records, state, nowMs, calendarYear).currentMonthUntickedCount;
 }
 
-function buildRows(
-  records: Lesson2026Record[],
-  state: Lesson2026State,
-  calendarYear: number,
-  options?: { rangeStartIso?: string; rangeEndIso?: string },
-) {
-  const normalized = records.map((r) => ({
-    ...r,
-    effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
-  }));
-  const sortedRules = [...normalized].sort((a, b) => {
-    const ed = a.effectiveDate.localeCompare(b.effectiveDate);
-    if (ed !== 0) return ed;
-    return a.createdAt - b.createdAt;
-  });
-  const baseRows: Row[] = [];
-  const defaultStart = getLessonSystemStartDate(calendarYear);
-  const start = options?.rangeStartIso
-    ? new Date(
-        Math.max(
-          defaultStart.getTime(),
-          new Date(`${options.rangeStartIso}T00:00:00+08:00`).getTime(),
-        ),
-      )
-    : defaultStart;
-  const end = options?.rangeEndIso
-    ? new Date(`${options.rangeEndIso}T00:00:00+08:00`)
-    : new Date(calendarYear, 11, 31);
-  const versionCache = new Map<string, (typeof normalized)[0][]>();
-
-  for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
-    const hkNum = getHkWeekdayNumber(cur);
-    const weekday = numberToWeekday(hkNum);
-    const dateIso = toIsoDate(cur);
-    const activeRules = getActiveDedupedScheduleRulesForDate(sortedRules, dateIso, versionCache);
-    for (const rule of activeRules) {
-      if (rule.weekday !== weekday) continue;
-      if (
-        isLessonScheduleHidden({
-          hiddenDates: state.hiddenDates,
-          dateIso,
-          scheduleRuleId: rule.id,
-        })
-      ) {
-        continue;
-      }
-      const attendanceKey = regularLessonAttendanceKey(rule, dateIso);
-      baseRows.push({
-        date: dateIso,
-        time: (state.overrides[dateIso]?.time ?? rule.time).toString(),
-        room: (state.overrides[dateIso]?.room ?? rule.room).toString(),
-        rowKind: "normal",
-        rowId: `${dateIso}-regular-${rule.id ?? `${rule.time}-${rule.room}`}`,
-        attendanceKey,
-      });
-    }
-  }
-
-  const rescheduleByFromDate = new Map<string, (typeof state.rescheduleEntries)[number]>();
-  for (const e of state.rescheduleEntries) {
-    if (e.fromDate) rescheduleByFromDate.set(e.fromDate, e);
-  }
-
-  const rows: Row[] = [];
-  const emittedRescheduleIds = new Set<string>();
-  for (const orig of baseRows) {
-    const e = rescheduleByFromDate.get(orig.date);
-    if (!e) {
-      rows.push({ ...orig });
-      continue;
-    }
-    if (!isOnOrAfterLessonSystemStart(e.toDate, calendarYear)) {
-      rows.push({
-        ...orig,
-        rowKind: "cancelled_original",
-        rowId: `cancelled-${e.id}-${e.fromDate}`,
-        attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
-      });
-      continue;
-    }
-    rows.push({
-      ...orig,
-      rowKind: "cancelled_original",
-      rowId: `cancelled-${e.id}-${e.fromDate}`,
-      attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
-    });
-    if (!emittedRescheduleIds.has(e.id)) {
-      emittedRescheduleIds.add(e.id);
-      rows.push({
-        date: e.toDate,
-        time: e.time,
-        room: e.room,
-        rowKind: "reschedule",
-        rowId: `reschedule-${e.id}`,
-        attendanceKey: `reschedule:${e.id}`,
-      });
-    }
-  }
-
-  for (const e of state.rescheduleEntries) {
-    if (!e.fromDate || rescheduleByFromDate.has(e.fromDate)) continue;
-    if (!isOnOrAfterLessonSystemStart(e.toDate, calendarYear)) continue;
-    rows.push({
-      date: e.toDate,
-      time: e.time,
-      room: e.room,
-      rowKind: "reschedule",
-      rowId: `reschedule-${e.id}`,
-      attendanceKey: `reschedule:${e.id}`,
-    });
-  }
-
-  for (const e of state.extraEntries) {
-    if (!isOnOrAfterLessonSystemStart(e.date, calendarYear)) continue;
-    rows.push({
-      date: e.date,
-      time: e.time,
-      room: e.room,
-      rowKind: "normal",
-      rowId: `extra-${e.id}`,
-      attendanceKey: `extra:${e.id}`,
-    });
-  }
-  return rows.filter((r) => isOnOrAfterLessonSystemStart(r.date, calendarYear));
-}
-
 /** ISO dates (YYYY-MM-DD) of unticked lessons in the prior calendar month (same window as Makeup Count). */
 export function getUpcomingUntickedDates(
   records: Lesson2026Record[],
@@ -294,7 +98,7 @@ export function getUpcomingUntickedDates(
   calendarYear = 2026,
 ): string[] {
   const { startIso, endIso } = getPriorMonthMakeupWindow(nowMs, calendarYear);
-  const rows = buildRows(records, state, calendarYear, { rangeStartIso: startIso, rangeEndIso: endIso });
+  const rows = buildYearScheduleRowsForDateRange(records, state, calendarYear, startIso, endIso);
   return filterUntickedRowsInMakeupWindow(rows, state, startIso, endIso)
     .map((r) => r.date)
     .sort();

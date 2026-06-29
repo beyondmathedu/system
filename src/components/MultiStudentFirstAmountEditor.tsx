@@ -50,7 +50,7 @@ export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
       <p className="mt-1 text-xs leading-relaxed text-slate-600">
         For lessons on the same day with the same timetable time and <strong>2 or more students</strong>: the{" "}
         <strong>lowest grade student</strong> uses <strong>this amount</strong> (if grade is the same, student ID is used).
-        Every other student uses that tutor's{" "}
+        Every other student uses that tutor&apos;s{" "}
         <a href="/tutor" className="font-medium text-[#1d76c2] hover:underline">
           Tutor
         </a>{" "}

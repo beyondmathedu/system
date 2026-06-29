@@ -59,7 +59,6 @@ function patchRoomInObjectArray(
 
 export type PropagateRoomNameStats = {
   lessonRecordRows: number;
-  lessons2026Rows: number;
   lessonsYearRows: number;
 };
 
@@ -72,7 +71,7 @@ export async function propagateClassroomNameChange(
 ): Promise<{ ok: boolean; error?: string; stats: PropagateRoomNameStats }> {
   const oldTrim = trimName(oldName);
   const newTrim = trimName(newName);
-  const stats: PropagateRoomNameStats = { lessonRecordRows: 0, lessons2026Rows: 0, lessonsYearRows: 0 };
+  const stats: PropagateRoomNameStats = { lessonRecordRows: 0, lessonsYearRows: 0 };
 
   if (!oldTrim || !newTrim || oldTrim === newTrim) {
     return { ok: true, stats };
@@ -110,72 +109,6 @@ export async function propagateClassroomNameChange(
         return { ok: false, error: upErr.message, stats };
       }
       stats.lessonRecordRows += 1;
-    }
-
-    if (rows.length < PAGE) break;
-    offset += PAGE;
-  }
-
-  offset = 0;
-  for (;;) {
-    const { data, error } = await supabase
-      .from("student_lessons_2026_state")
-      .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-      .order("student_id")
-      .range(offset, offset + PAGE - 1);
-
-    if (error) {
-      return { ok: false, error: error.message, stats };
-    }
-    const rows = data ?? [];
-    if (rows.length === 0) break;
-
-    for (const row of rows) {
-      const sid = String((row as { student_id?: string }).student_id ?? "");
-      if (!sid) continue;
-      const overrides = (row as { overrides?: unknown }).overrides;
-      const reschedule = (row as { reschedule_entries?: unknown }).reschedule_entries;
-      const extra = (row as { extra_entries?: unknown }).extra_entries;
-
-      let changed = false;
-      let nextOverrides = overrides && typeof overrides === "object" ? { ...(overrides as Record<string, unknown>) } : {};
-      let nextReschedule = Array.isArray(reschedule) ? [...reschedule] : [];
-      let nextExtra = Array.isArray(extra) ? [...extra] : [];
-
-      const po = patchOverrides(nextOverrides, oldTrim, newTrim);
-      if (po.changed) {
-        nextOverrides = po.next;
-        changed = true;
-      }
-      const pr = patchRoomInObjectArray(nextReschedule, oldTrim, newTrim);
-      if (pr.changed) {
-        nextReschedule = pr.next;
-        changed = true;
-      }
-      const pe = patchRoomInObjectArray(nextExtra, oldTrim, newTrim);
-      if (pe.changed) {
-        nextExtra = pe.next;
-        changed = true;
-      }
-
-      if (!changed) continue;
-
-      const { error: upErr } = await supabase.from("student_lessons_2026_state").upsert(
-        {
-          student_id: sid,
-          attendance: (row as { attendance?: unknown }).attendance ?? {},
-          hidden_dates: (row as { hidden_dates?: unknown }).hidden_dates ?? {},
-          overrides: nextOverrides,
-          reschedule_entries: nextReschedule,
-          extra_entries: nextExtra,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "student_id" },
-      );
-      if (upErr) {
-        return { ok: false, error: upErr.message, stats };
-      }
-      stats.lessons2026Rows += 1;
     }
 
     if (rows.length < PAGE) break;

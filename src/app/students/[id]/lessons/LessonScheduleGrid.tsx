@@ -9,6 +9,10 @@ import {
   saveLessonScheduleRecords,
 } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
+import {
+  canonicalScheduleRoomLabel,
+  ROOM_GROUPS,
+} from "@/lib/dayTimetableShared";
 
 function LessonScheduleGridFallback() {
   return (
@@ -28,7 +32,7 @@ function LessonScheduleGridFallback() {
 }
 
 const WEEKDAY_OPTIONS = ["一", "二", "三", "四", "五", "六", "日"];
-const ROOM_OPTIONS = ["B", "M前", "M後", "Hope 1", "Hope 2"];
+const ROOM_OPTIONS = [...ROOM_GROUPS];
 const WEEKDAY_LABEL: Record<string, string> = {
   一: "Mon",
   二: "Tue",
@@ -42,7 +46,7 @@ const ROOM_LABEL: Record<string, string> = {
   B: "B",
   M前: "M Front",
   M後: "M Back",
-  "Hope 1": "Hope 1",
+  Hope: "Hope",
   "Hope 2": "Hope 2",
 };
 
@@ -94,10 +98,9 @@ export type LessonScheduleRecord = {
 type ScheduleRecord = LessonScheduleRecord;
 
 function normalizeLessonRecord(raw: ScheduleRecord): ScheduleRecord & { effectiveDate: string } {
-  const normalizedRoom = (raw.room ?? "").trim() === "Hope" ? "Hope 1" : (raw.room ?? "").trim();
   return {
     ...raw,
-    room: normalizedRoom,
+    room: canonicalScheduleRoomLabel(raw.room ?? ""),
     effectiveDate: raw.effectiveDate ?? toHkIsoDateFromMs(raw.createdAt),
   };
 }
@@ -120,10 +123,13 @@ export default function LessonScheduleGrid({
   const [room2, setRoom2] = useState("B");
 
   const RECORDS_STORAGE_KEY = `lesson_schedule_records:${studentId}`;
+  const recordsBootstrapKey =
+    initialRecords != null ? `props:${studentId}:${initialRecords.length}` : `fetch:${studentId}`;
+  const [recordsBootstrap, setRecordsBootstrap] = useState(recordsBootstrapKey);
   const [records, setRecords] = useState<ScheduleRecord[]>(() =>
     initialRecords?.map(normalizeLessonRecord) ?? [],
   );
-  const [effectiveDate, setEffectiveDate] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState(() => toHkIsoDateFromMs(Date.now()));
   const [filterEffectiveDate, setFilterEffectiveDate] = useState("");
   const [filterWeekday, setFilterWeekday] = useState("");
   const [filterTime, setFilterTime] = useState("");
@@ -142,13 +148,19 @@ export default function LessonScheduleGrid({
     return WEEKDAY_TIME_SUGGESTIONS;
   }, [weekday2]);
 
-  useEffect(() => {
+  if (recordsBootstrapKey !== recordsBootstrap) {
+    setRecordsBootstrap(recordsBootstrapKey);
     if (initialRecords != null) {
       const normalized = initialRecords.map(normalizeLessonRecord);
       setRecords(normalized);
       window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
-      return;
+    } else {
+      setRecords([]);
     }
+  }
+
+  useEffect(() => {
+    if (initialRecords != null) return;
     let cancelled = false;
     void (async () => {
       const cloudRecords = await loadLessonScheduleRecords(studentId);
@@ -174,11 +186,6 @@ export default function LessonScheduleGrid({
       cancelled = true;
     };
   }, [RECORDS_STORAGE_KEY, studentId, initialRecords]);
-
-  useEffect(() => {
-    if (effectiveDate) return;
-    setEffectiveDate(toHkIsoDateFromMs(Date.now()));
-  }, [effectiveDate]);
 
   const effectiveTime = useMemo(() => {
     if (weekday === "日") return customTime?.trim() ? customTime.trim() : "";
@@ -237,7 +244,7 @@ export default function LessonScheduleGrid({
       setTime(r.time);
       setCustomTime("");
     }
-    setRoom(r.room);
+    setRoom(canonicalScheduleRoomLabel(r.room));
   }
 
   function clearEditMode() {
@@ -640,7 +647,7 @@ export default function LessonScheduleGrid({
             </div>
             {records.length === 0 ? (
               <p className="text-xs text-slate-500">
-                No records yet. Choose effective date, day, time, and room, then click "Add Record".
+                No records yet. Choose effective date, day, time, and room, then click &quot;Add Record&quot;.
               </p>
             ) : filteredRecordsSortedDesc.length === 0 ? (
               <p className="text-xs text-slate-500">

@@ -6,22 +6,22 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import ScheduleDuplicateRulesBanner from "@/components/ScheduleDuplicateRulesBanner";
 import { supabase } from "@/lib/supabase";
-import {
-  loadExamInfo,
-  loadLessonScheduleRecords,
-  loadLessonYearState,
-  saveLessonScheduleRecords,
-  saveLessonYearState,
-} from "@/lib/studentLessonStorage";
+import { queueSaveLessonYearState, retrySaveLessonYearState } from "@/lib/queueSaveLessonYearState";
+import { queueSaveLessonScheduleRecords, retrySaveLessonScheduleRecords } from "@/lib/queueSaveLessonScheduleRecords";
+import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
 import {
-  getLessonSystemStartDate,
+  defaultLessonYear,
+  hkYmdNow,
+  studentLessonsYearPath,
+} from "@/lib/lessonCalendar";
+import { lessonYearStateFieldsFromPatch } from "@/lib/lessonYearStateShared";
+import {
   getLessonSystemStartIso,
-  isOnOrAfterLessonSystemStart,
   LESSON_SYSTEM_START_LABEL_ZH,
   LESSON_SYSTEM_START_MONTH,
   LESSON_SYSTEM_START_YEAR,
@@ -29,28 +29,33 @@ import {
 import {
   formatHiddenScheduleKeyLabel,
   hiddenScheduleRuleStorageKey,
-  isLessonScheduleHidden,
   listHiddenScheduleKeys,
   parseRegularLessonRowId,
 } from "@/lib/lessonScheduleHidden";
 import {
-  getActiveDedupedScheduleRulesForDate,
   getActiveScheduleVersionDate,
-  hasDuplicateScheduleSlotInVersion,
   isRegularLessonAttended,
-  readLessonDayOverrideField,
-  regularLessonAttendanceKey,
 } from "@/lib/lessonScheduleVersions";
 import {
-  formatPendingMakeupReminder,
   isPendingRescheduleEntry,
   PENDING_MAKEUP_BUTTON_LABEL,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
+import {
+  buildStudentBaseScheduleRows,
+  buildStudentScheduleRows,
+  type StudentScheduleBuildOptions,
+  type StudentLessonScheduleRow,
+} from "@/lib/studentScheduleRowMapper";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
+import {
+  canonicalScheduleRoomLabel,
+  ROOM_GROUPS,
+  resolveScheduleRoomPickerValue,
+} from "@/lib/dayTimetableShared";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
-const ROOM_OPTIONS = ["B", "M前", "M後", "Hope", "Hope 2"];
+const ROOM_OPTIONS = [...ROOM_GROUPS];
 const ROOM_LABEL: Record<string, string> = {
   B: "B",
   M前: "M Front",
@@ -89,10 +94,6 @@ const MONTH_LABEL: Record<number, string> = {
   12: "Dec",
 };
 
-function isDoubleReschedulePairId(id: unknown): boolean {
-  return String(id ?? "").endsWith("-double-reschedule");
-}
-
 type StudentSummary = {
   id: string;
   nameZh: string;
@@ -124,32 +125,7 @@ type DayOverride = {
   lessonType?: string;
 };
 
-type ScheduleRow = {
-  month: number;
-  lLabel: string;
-  date: string;
-  weekday: string;
-  /** 時段設定（未套用調堂覆寫） */
-  baseTime: string;
-  baseRoom: string;
-  /** 調堂：原本日期（from），用於顯示 from → to */
-  rescheduleFromDate?: string;
-  time: string;
-  room: string;
-  tutor: string;
-  lessonSummary: string;
-  lessonType: string;
-  rowKind: "normal" | "cancelled_original" | "reschedule";
-  /** 列勾選、React key */
-  rowId: string;
-  /** localStorage 出席鍵（調堂列用 reschedule:id 避免同日兩筆衝突） */
-  attendanceKey: string;
-  /** 預設列順序（調堂插入在原列下方） */
-  displayOrder: number;
-  rescheduleEntryId?: string;
-  extraEntryId?: string;
-  pendingMakeupLabel?: string;
-};
+type ScheduleRow = StudentLessonScheduleRow;
 
 type RescheduleEntry = {
   id: string;
@@ -214,37 +190,6 @@ type BulkEditFormState = {
   original: BulkEditOriginalSnapshot;
 };
 
-const WEEKDAY_OPTIONS = ["一", "二", "三", "四", "五", "六", "日"] as const;
-
-function numberToWeekday(num: number) {
-  switch (num) {
-    case 1:
-      return "一";
-    case 2:
-      return "二";
-    case 3:
-      return "三";
-    case 4:
-      return "四";
-    case 5:
-      return "五";
-    case 6:
-      return "六";
-    case 7:
-      return "日";
-    default:
-      return "";
-  }
-}
-
-function toIsoDate(d: Date) {
-  // YYYY-MM-DD（避免本地时区导致日期偏移）
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 function toHkIsoDateFromMs(ms: number) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Hong_Kong",
@@ -257,12 +202,6 @@ function toHkIsoDateFromMs(ms: number) {
   return `${y}-${m}-${d}`;
 }
 
-function getHkWeekdayNumber(d: Date) {
-  // HK：Mon=1..Sun=7
-  const js = d.getDay(); // Sun=0..Sat=6
-  return js === 0 ? 7 : js;
-}
-
 function weekdayFromIsoDate(iso: string) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return "";
@@ -270,8 +209,10 @@ function weekdayFromIsoDate(iso: string) {
   const mm = Number(m[2]);
   const d = Number(m[3]);
   const dt = new Date(y, mm - 1, d);
-  const hkNum = getHkWeekdayNumber(dt);
-  return numberToWeekday(hkNum);
+  const js = dt.getDay();
+  const hkNum = js === 0 ? 7 : js;
+  const weekdays = ["", "一", "二", "三", "四", "五", "六", "日"] as const;
+  return weekdays[hkNum] ?? "";
 }
 
 function resolveBulkEditTime(form: Pick<BulkEditFormState, "timePreset" | "timeCustom">): string {
@@ -390,7 +331,7 @@ function scheduleRowToBulkEditDraft(row: ScheduleRow): BulkEditLessonDraft | nul
     date: row.date,
     timePreset,
     timeCustom,
-    room: ROOM_OPTIONS.includes(row.room) ? row.room : ROOM_OPTIONS[0],
+    room: resolveScheduleRoomPickerValue(row.room),
     original: {
       date: row.date,
       weekday: row.weekday,
@@ -534,18 +475,7 @@ function pickTimePreset(displayTime: string, wd: string): { timePreset: string; 
   return { timePreset: opts[0] ?? "", timeCustom: "" };
 }
 
-function normalizeScheduleRecordForVersions(r: ScheduleRecord) {
-  return {
-    ...r,
-    effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
-  };
-}
-
-function recordEffectiveDate(r: ScheduleRecord): string {
-  return r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt);
-}
-
-export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: number }) {
+export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { targetYear?: number }) {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -596,10 +526,11 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         .select("role, student_id")
         .eq("user_id", user.id)
         .maybeSingle();
-      const role = String((profile as any)?.role ?? "").toLowerCase();
-      const ownStudentId = normalizeStudentId(String((profile as any)?.student_id ?? ""));
+      const profileRow = profile as { role?: string | null; student_id?: string | null } | null;
+      const role = String(profileRow?.role ?? "").toLowerCase();
+      const ownStudentId = normalizeStudentId(String(profileRow?.student_id ?? ""));
       if (role === "student" && ownStudentId && ownStudentId !== studentId) {
-        router.replace(`/students/${encodeURIComponent(ownStudentId)}/lessons/2026`);
+        router.replace(studentLessonsYearPath(ownStudentId));
         return;
       }
       if (isSharedByEmail || forceReadOnlyFromNext) {
@@ -707,7 +638,15 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     },
   });
   const [bulkEditSaveStatus, setBulkEditSaveStatus] = useState("");
-  const [filterMonth, setFilterMonth] = useState("");
+  const [cloudSaveNotice, setCloudSaveNotice] = useState("");
+  const [cloudSaveFailed, setCloudSaveFailed] = useState(false);
+  const cloudSaveKindRef = useRef<"year" | "records">("year");
+  const awaitingBulkEditSyncRef = useRef(false);
+  const [filterMonth, setFilterMonth] = useState(() => {
+    const hk = hkYmdNow();
+    if (hk.y === targetYear) return String(hk.m);
+    return String(targetYear === LESSON_SYSTEM_START_YEAR ? LESSON_SYSTEM_START_MONTH : 1);
+  });
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterTime, setFilterTime] = useState("");
@@ -735,13 +674,19 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
   }) {
     if (isReadOnlyViewer) return;
     if (!studentId) return;
-    void saveLessonYearState(studentId, targetYear, {
-      attendance: next.attendance ?? attendance,
-      hiddenDates: next.hiddenDates ?? hiddenDates,
-      overrides: next.overrides ?? overrides,
-      rescheduleEntries: next.rescheduleEntries ?? rescheduleEntries,
-      extraEntries: next.extraEntries ?? extraEntries,
-    });
+    const dirtyFields = lessonYearStateFieldsFromPatch(next);
+    queueSaveLessonYearState(
+      studentId,
+      targetYear,
+      {
+        attendance: next.attendance ?? attendance,
+        hiddenDates: next.hiddenDates ?? hiddenDates,
+        overrides: next.overrides ?? overrides,
+        rescheduleEntries: next.rescheduleEntries ?? rescheduleEntries,
+        extraEntries: next.extraEntries ?? extraEntries,
+      },
+      dirtyFields,
+    );
   }
 
   useEffect(() => {
@@ -774,100 +719,11 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
   }, []);
 
   useEffect(() => {
-    if (!studentId) return;
+    if (!studentId || !accessReady) return;
     const scheduleKey = `lesson_schedule_records:${studentId}`;
     let mounted = true;
     setStudentLoaded(false);
     setStudentNotFound(false);
-    void (async () => {
-      const [studentRes, examInfo, cloudRecords] = await Promise.all([
-        supabase
-          .from("students")
-          .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
-          .eq("id", studentId)
-          .maybeSingle(),
-        loadExamInfo(studentId),
-        loadLessonScheduleRecords(studentId),
-      ]);
-      if (!mounted) return;
-
-      setExamInfo(examInfo);
-
-      const { data } = studentRes;
-      if (!data) {
-        setStudentSummary({
-          id: studentId,
-          nameZh: "",
-          nameEn: "",
-          nicknameEn: "",
-          grade: "",
-          school: "",
-          textbookPublisher: "",
-        });
-        setStudentNotFound(true);
-        setStudentLoaded(true);
-        return;
-      }
-      setStudentSummary({
-        id: data.id,
-        nameZh: data.name_zh ?? "",
-        nameEn: data.name_en ?? "",
-        nicknameEn: data.nickname_en ?? "",
-        grade: data.grade ?? "",
-        school: data.school ?? "",
-        textbookPublisher: data.textbook_publisher ?? "",
-      });
-      setStudentLoaded(true);
-
-      if (Array.isArray(cloudRecords) && cloudRecords.length > 0) {
-        const normalized = (cloudRecords as ScheduleRecord[]).map((r) => ({
-          ...r,
-          effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
-        }));
-        setRecords(normalized);
-        window.localStorage.setItem(scheduleKey, JSON.stringify(normalized));
-        return;
-      }
-      try {
-        const raw = window.localStorage.getItem(scheduleKey);
-        if (!raw) return;
-        const parsed = JSON.parse(raw) as ScheduleRecord[];
-        if (Array.isArray(parsed)) setRecords(parsed);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [studentId]);
-
-  useEffect(() => {
-    if (!studentId) return;
-    let mounted = true;
-
-    function applyYearState(state: {
-      attendance: Record<string, boolean>;
-      hiddenDates: Record<string, boolean>;
-      overrides: Record<string, DayOverride>;
-      rescheduleEntries: RescheduleEntry[];
-      extraEntries: ExtraEntry[];
-    }) {
-      if (!mounted) return;
-      setAttendance(state.attendance);
-      setHiddenDates(state.hiddenDates);
-      setOverrides(state.overrides);
-      setRescheduleEntries(state.rescheduleEntries);
-      setExtraEntries(state.extraEntries);
-      window.localStorage.setItem(ATTENDANCE_STORAGE_KEY, JSON.stringify(state.attendance));
-      window.localStorage.setItem(HIDDEN_DATES_STORAGE_KEY, JSON.stringify(state.hiddenDates));
-      window.localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(state.overrides));
-      window.localStorage.setItem(
-        RESCHEDULE_STORAGE_KEY,
-        JSON.stringify(state.rescheduleEntries),
-      );
-      window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(state.extraEntries));
-    }
 
     function readYearStateFromLocalStorage() {
       const readJson = <T,>(key: string, fallback: T): T => {
@@ -888,93 +744,227 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       };
     }
 
+    function applyYearState(state: {
+      attendance: Record<string, boolean>;
+      hiddenDates: Record<string, boolean>;
+      overrides: Record<string, DayOverride>;
+      rescheduleEntries: RescheduleEntry[];
+      extraEntries: ExtraEntry[];
+    }) {
+      if (!mounted) return;
+      setAttendance(state.attendance);
+      setHiddenDates(state.hiddenDates);
+      setOverrides(state.overrides);
+      setRescheduleEntries(state.rescheduleEntries);
+      setExtraEntries(state.extraEntries);
+      window.localStorage.setItem(ATTENDANCE_STORAGE_KEY, JSON.stringify(state.attendance));
+      window.localStorage.setItem(HIDDEN_DATES_STORAGE_KEY, JSON.stringify(state.hiddenDates));
+      window.localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(state.overrides));
+      window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(state.rescheduleEntries));
+      window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(state.extraEntries));
+    }
+
     void (async () => {
       try {
-        const cloud = await loadLessonYearState(studentId, targetYear);
-        applyYearState({
-          attendance: cloud.attendance as Record<string, boolean>,
-          hiddenDates: cloud.hiddenDates as Record<string, boolean>,
-          overrides: cloud.overrides as Record<string, DayOverride>,
-          rescheduleEntries: cloud.rescheduleEntries as RescheduleEntry[],
-          extraEntries: cloud.extraEntries as ExtraEntry[],
+        const res = await fetch(
+          `/api/students/${encodeURIComponent(studentId)}/lessons-bootstrap?year=${targetYear}`,
+          { credentials: "same-origin" },
+        );
+        if (!res.ok) throw new Error("bootstrap failed");
+        const body = (await res.json()) as {
+          ok?: boolean;
+          student?: {
+            id: string;
+            name_zh?: string | null;
+            name_en?: string | null;
+            nickname_en?: string | null;
+            grade?: string | null;
+            school?: string | null;
+            textbook_publisher?: string | null;
+          } | null;
+          examInfo?: { examDate?: string; examContent?: string };
+          scheduleRecords?: unknown[];
+          yearState?: {
+            attendance?: Record<string, boolean>;
+            hiddenDates?: Record<string, boolean>;
+            overrides?: Record<string, DayOverride>;
+            rescheduleEntries?: RescheduleEntry[];
+            extraEntries?: ExtraEntry[];
+          };
+        };
+        if (!mounted) return;
+
+        setExamInfo({
+          examDate: body.examInfo?.examDate ?? "",
+          examContent: body.examInfo?.examContent ?? "",
         });
+
+        const data = body.student;
+        if (!data) {
+          setStudentSummary({
+            id: studentId,
+            nameZh: "",
+            nameEn: "",
+            nicknameEn: "",
+            grade: "",
+            school: "",
+            textbookPublisher: "",
+          });
+          setStudentNotFound(true);
+          setStudentLoaded(true);
+          return;
+        }
+
+        setStudentSummary({
+          id: data.id,
+          nameZh: data.name_zh ?? "",
+          nameEn: data.name_en ?? "",
+          nicknameEn: data.nickname_en ?? "",
+          grade: data.grade ?? "",
+          school: data.school ?? "",
+          textbookPublisher: data.textbook_publisher ?? "",
+        });
+        setStudentNotFound(false);
+        setStudentLoaded(true);
+
+        const cloudRecords = body.scheduleRecords;
+        if (Array.isArray(cloudRecords) && cloudRecords.length > 0) {
+          const normalized = (cloudRecords as ScheduleRecord[]).map((r) => ({
+            ...r,
+            effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
+          }));
+          setRecords(normalized);
+          window.localStorage.setItem(scheduleKey, JSON.stringify(normalized));
+        } else {
+          try {
+            const raw = window.localStorage.getItem(scheduleKey);
+            if (raw) {
+              const parsed = JSON.parse(raw) as ScheduleRecord[];
+              if (Array.isArray(parsed)) setRecords(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        const cloud = body.yearState;
+        if (cloud) {
+          applyYearState({
+            attendance: (cloud.attendance ?? {}) as Record<string, boolean>,
+            hiddenDates: (cloud.hiddenDates ?? {}) as Record<string, boolean>,
+            overrides: (cloud.overrides ?? {}) as Record<string, DayOverride>,
+            rescheduleEntries: (cloud.rescheduleEntries ?? []) as RescheduleEntry[],
+            extraEntries: (cloud.extraEntries ?? []) as ExtraEntry[],
+          });
+        } else {
+          applyYearState(readYearStateFromLocalStorage());
+        }
       } catch {
+        if (!mounted) return;
         applyYearState(readYearStateFromLocalStorage());
+        setStudentLoaded(true);
       }
     })();
 
     return () => {
       mounted = false;
     };
-  }, [
-    studentId,
-    targetYear,
-    ATTENDANCE_STORAGE_KEY,
-    HIDDEN_DATES_STORAGE_KEY,
-    OVERRIDES_STORAGE_KEY,
-    RESCHEDULE_STORAGE_KEY,
-    EXTRA_STORAGE_KEY,
-  ]);
+  }, [studentId, targetYear, accessReady, ATTENDANCE_STORAGE_KEY, HIDDEN_DATES_STORAGE_KEY, OVERRIDES_STORAGE_KEY, RESCHEDULE_STORAGE_KEY, EXTRA_STORAGE_KEY]);
+
+  useEffect(() => {
+    if (!studentId) return;
+    return subscribeLessonSaveStatus((evt) => {
+      if (evt.studentId !== studentId) return;
+      if (evt.kind === "year" && evt.year !== targetYear) return;
+
+      if (evt.status === "saving") {
+        setCloudSaveFailed(false);
+        setCloudSaveNotice("雲端同步中…");
+        return;
+      }
+
+      if (evt.status === "saved") {
+        setCloudSaveFailed(false);
+        setCloudSaveNotice("已同步雲端");
+        window.setTimeout(() => {
+          setCloudSaveNotice((prev) => (prev === "已同步雲端" ? "" : prev));
+        }, 2500);
+        if (awaitingBulkEditSyncRef.current) {
+          awaitingBulkEditSyncRef.current = false;
+          setBulkEditSaveStatus("Synced.");
+          setSelectionError("Synced.");
+          window.setTimeout(() => {
+            setBulkEditSaveStatus("");
+            setSelectionError((prev) => (prev === "Synced." ? "" : prev));
+            setShowBulkEditPanel(false);
+            setBulkEditLessonDrafts([]);
+            setSelectedRowIds([]);
+          }, 1200);
+        }
+        return;
+      }
+
+      if (evt.status === "failed") {
+        cloudSaveKindRef.current = evt.kind;
+        setCloudSaveFailed(true);
+        setCloudSaveNotice(evt.message ?? "雲端儲存失敗，請重試");
+        if (awaitingBulkEditSyncRef.current) {
+          awaitingBulkEditSyncRef.current = false;
+          setBulkEditSaveStatus("Sync failed.");
+          setSelectionError("Sync failed.");
+        }
+      }
+    });
+  }, [studentId, targetYear]);
+
+  function retryCloudSave() {
+    if (!studentId) return;
+    if (cloudSaveKindRef.current === "records") {
+      retrySaveLessonScheduleRecords(studentId);
+      return;
+    }
+    retrySaveLessonYearState(studentId, targetYear);
+  }
+
+  const hkTodayYmd = useMemo(() => toHkIsoDateFromMs(Date.now()), []);
+
+  const scheduleBuildOptions = useMemo((): StudentScheduleBuildOptions => {
+    const from = filterDateFrom.trim();
+    const to = filterDateTo.trim();
+    if (from && to) {
+      return { rangeStartIso: from, rangeEndIso: to };
+    }
+    const hk = hkYmdNow();
+    const month = filterMonth
+      ? Number(filterMonth)
+      : hk.y === targetYear
+        ? hk.m
+        : targetYear === LESSON_SYSTEM_START_YEAR
+          ? LESSON_SYSTEM_START_MONTH
+          : 1;
+    return { month };
+  }, [filterDateFrom, filterDateTo, filterMonth, targetYear]);
+
+  const scheduleMapperState = useMemo(
+    () => ({
+      hiddenDates,
+      overrides,
+      rescheduleEntries,
+      extraEntries,
+    }),
+    [hiddenDates, overrides, rescheduleEntries, extraEntries],
+  );
 
   const baseScheduleRows = useMemo(() => {
     if (!studentId) return [];
-
-    const normalized = records.map((r) => ({
-      ...r,
-      effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
-    }));
-    const sortedRules = [...normalized].sort((a, b) => {
-      const ed = a.effectiveDate.localeCompare(b.effectiveDate);
-      if (ed !== 0) return ed;
-      return a.createdAt - b.createdAt;
-    });
-    const start = getLessonSystemStartDate(targetYear);
-    const end = new Date(targetYear, 11, 31);
-
-    const monthCounter: Record<number, number> = {};
-    const rows: ScheduleRow[] = [];
-    const versionCache = new Map<string, (typeof sortedRules)[0][]>();
-
-    for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
-      const hkNum = getHkWeekdayNumber(cur);
-      const weekday = numberToWeekday(hkNum);
-      const dateIso = toIsoDate(cur);
-      const activeRules = getActiveDedupedScheduleRulesForDate(sortedRules, dateIso, versionCache);
-      for (const rec of activeRules) {
-        if (rec.weekday !== weekday) continue;
-
-        const month = cur.getMonth() + 1;
-        monthCounter[month] = (monthCounter[month] ?? 0) + 1;
-        const attendanceKey = regularLessonAttendanceKey(rec, dateIso);
-        rows.push({
-          month,
-          lLabel: `L${monthCounter[month]}`,
-          date: dateIso,
-          weekday,
-          baseTime: rec.time.toString(),
-          baseRoom: rec.room.toString(),
-          time: (overrides[dateIso]?.time ?? rec.time).toString(),
-          room: (overrides[dateIso]?.room ?? rec.room).toString(),
-          tutor: (overrides[dateIso]?.tutor ?? rec.tutor ?? "").toString(),
-          lessonSummary: (overrides[dateIso]?.lessonSummary ?? rec.lessonSummary ?? "").toString(),
-          lessonType: TYPE_REGULAR,
-          rowKind: "normal",
-          rowId: `${dateIso}-regular-${rec.id}`,
-          attendanceKey,
-          displayOrder: 0,
-        });
-      }
-    }
-
-    return rows.filter(
-      (r) =>
-        !isLessonScheduleHidden({
-          hiddenDates,
-          dateIso: r.date,
-          scheduleRuleId: parseRegularLessonRowId(r.rowId)?.ruleId,
-        }),
+    return buildStudentBaseScheduleRows(
+      records,
+      scheduleMapperState,
+      targetYear,
+      hkTodayYmd,
+      scheduleBuildOptions,
     );
-  }, [records, studentId, overrides, hiddenDates, targetYear]);
+  }, [records, studentId, scheduleMapperState, targetYear, hkTodayYmd, scheduleBuildOptions]);
 
   const baseRowByDate = useMemo(() => {
     const map = new Map<string, ScheduleRow>();
@@ -1000,180 +990,16 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     return map;
   }, [rescheduleEntries]);
 
-  const rescheduleEntryByFromDate = useMemo(() => {
-    const map = new Map<string, RescheduleEntry>();
-    for (const e of rescheduleEntries) {
-      if (!map.has(e.fromDate)) map.set(e.fromDate, e);
-    }
-    return map;
-  }, [rescheduleEntries]);
-
-  const hkTodayYmd = useMemo(() => toHkIsoDateFromMs(Date.now()), []);
-
   const scheduleRows = useMemo(() => {
     if (!studentId) return [];
-
-    let rows: ScheduleRow[] = [];
-    const baseDates = new Set(baseScheduleRows.map((r) => r.date));
-    /** Same fromDate can have multiple base rows (duplicate weekday rules); emit each reschedule once. */
-    const emittedRescheduleRowIds = new Set<string>();
-    for (const r of baseScheduleRows) {
-      const e = rescheduleEntryByFromDate.get(r.date);
-      if (!e) {
-        rows.push({ ...r });
-        continue;
-      }
-      if (isPendingRescheduleEntry(e)) {
-        if (!emittedRescheduleRowIds.has(e.id)) {
-          emittedRescheduleRowIds.add(e.id);
-          const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.fromDate);
-          const fromMonth = parts ? Number(parts[2]) : r.month;
-          rows.push({
-            ...r,
-            month: fromMonth,
-            lessonType: TYPE_PENDING,
-            rowKind: "cancelled_original",
-            rowId: `pending-${e.id}`,
-            attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
-            lLabel: "/",
-            pendingMakeupLabel: formatPendingMakeupReminder(e.fromDate, hkTodayYmd),
-            rescheduleEntryId: e.id,
-          });
-        }
-        continue;
-      }
-      if (!isOnOrAfterLessonSystemStart(e.toDate, targetYear)) {
-        rows.push({ ...r });
-        continue;
-      }
-
-      if (!emittedRescheduleRowIds.has(e.id)) {
-        emittedRescheduleRowIds.add(e.id);
-        const toWd = weekdayFromIsoDate(e.toDate);
-        const toParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.toDate);
-        const toMonth = toParts ? Number(toParts[2]) : 1;
-
-        rows.push({
-          month: toMonth,
-          lLabel: "L0",
-          date: e.toDate,
-          weekday: toWd,
-          baseTime: r.baseTime,
-          baseRoom: r.baseRoom,
-          rescheduleFromDate: e.fromDate,
-          time: e.time,
-          room: e.room,
-          tutor: readLessonDayOverrideField(overrides, e.toDate, "tutor"),
-          lessonSummary: readLessonDayOverrideField(overrides, e.toDate, "lessonSummary"),
-          lessonType: TYPE_RESCHEDULE,
-          rowKind: "reschedule",
-          rowId: `reschedule-${e.id}`,
-          attendanceKey: `reschedule:${e.id}`,
-          displayOrder: 0,
-          rescheduleEntryId: e.id,
-        });
-      }
-    }
-
-    for (const e of rescheduleEntries) {
-      if (isPendingRescheduleEntry(e)) continue;
-      if (!isOnOrAfterLessonSystemStart(e.toDate, targetYear)) continue;
-      if (baseDates.has(e.fromDate)) continue;
-      const toWd = weekdayFromIsoDate(e.toDate);
-      const toParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.toDate);
-      const toMonth = toParts ? Number(toParts[2]) : 1;
-      rows.push({
-        month: toMonth,
-        lLabel: "L0",
-        date: e.toDate,
-        weekday: toWd,
-        baseTime: e.time,
-        baseRoom: e.room,
-        rescheduleFromDate: e.fromDate,
-        time: e.time,
-        room: e.room,
-        tutor: readLessonDayOverrideField(overrides, e.toDate, "tutor"),
-        lessonSummary: readLessonDayOverrideField(overrides, e.toDate, "lessonSummary"),
-        lessonType: TYPE_RESCHEDULE,
-        rowKind: "reschedule",
-        rowId: `reschedule-${e.id}`,
-        attendanceKey: `reschedule:${e.id}`,
-        displayOrder: 0,
-        rescheduleEntryId: e.id,
-      });
-    }
-
-    for (const e of extraEntries) {
-      if (!isOnOrAfterLessonSystemStart(e.date, targetYear)) continue;
-      const wd = weekdayFromIsoDate(e.date);
-      const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
-      const month = parts ? Number(parts[2]) : 1;
-      rows.push({
-        month,
-        lLabel: "L0",
-        date: e.date,
-        weekday: wd,
-        baseTime: e.time,
-        baseRoom: e.room,
-        time: e.time,
-        room: e.room,
-        tutor: readLessonDayOverrideField(overrides, e.date, "tutor"),
-        lessonSummary: readLessonDayOverrideField(overrides, e.date, "lessonSummary"),
-        lessonType: TYPE_EXTRA,
-        rowKind: "normal",
-        rowId: `extra-${e.id}`,
-        attendanceKey: `extra:${e.id}`,
-        displayOrder: 0,
-        extraEntryId: e.id,
-      });
-    }
-
-    rows = rows.filter((r) => isOnOrAfterLessonSystemStart(r.date, targetYear));
-
-    rows.sort((a, b) => {
-      const dc = a.date.localeCompare(b.date);
-      if (dc !== 0) return dc;
-      const tc = a.time.localeCompare(b.time, "en", { numeric: true });
-      if (tc !== 0) return tc;
-      return a.rowId.localeCompare(b.rowId);
-    });
-
-    const autoDoubleKeys = new Set<string>();
-    for (const r of rows) {
-      if (r.extraEntryId && isDoubleReschedulePairId(r.extraEntryId)) {
-        autoDoubleKeys.add(`${r.date}|${r.time}|${r.room}`);
-      }
-    }
-
-    const monthCounter: Record<number, number> = {};
-    rows = rows.map((r, i) => {
-      if (r.rowKind === "cancelled_original") {
-        return { ...r, lLabel: "/", displayOrder: i };
-      }
-      const rowKey = `${r.date}|${r.time}|${r.room}`;
-      if (r.extraEntryId && isDoubleReschedulePairId(r.extraEntryId)) {
-        // Auto-generated pair row for reschedule double lesson: do not count again.
-        return { ...r, lLabel: "/", displayOrder: i };
-      }
-      if (r.rowKind === "reschedule" && autoDoubleKeys.has(rowKey)) {
-        const start = (monthCounter[r.month] ?? 0) + 1;
-        monthCounter[r.month] = start + 1;
-        return { ...r, lLabel: `L${start} / L${start + 1}`, displayOrder: i };
-      }
-      monthCounter[r.month] = (monthCounter[r.month] ?? 0) + 1;
-      return { ...r, lLabel: `L${monthCounter[r.month]}`, displayOrder: i };
-    });
-    return rows;
-  }, [
-    baseScheduleRows,
-    studentId,
-    targetYear,
-    rescheduleEntryByFromDate,
-    rescheduleEntries,
-    extraEntries,
-    overrides,
-    hkTodayYmd,
-  ]);
+    return buildStudentScheduleRows(
+      records,
+      scheduleMapperState,
+      targetYear,
+      hkTodayYmd,
+      scheduleBuildOptions,
+    );
+  }, [records, studentId, scheduleMapperState, targetYear, hkTodayYmd, scheduleBuildOptions]);
 
   const scheduleRowById = useMemo(() => {
     const map = new Map<string, ScheduleRow>();
@@ -1251,10 +1077,10 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
   const selectedRowIdSet = useMemo(() => new Set(selectedRowIds), [selectedRowIds]);
 
-  const monthFilterOptions = useMemo(
-    () => [...new Set(scheduleRows.map((r) => r.month))].sort((a, b) => a - b),
-    [scheduleRows],
-  );
+  const monthFilterOptions = useMemo(() => {
+    const start = targetYear === LESSON_SYSTEM_START_YEAR ? LESSON_SYSTEM_START_MONTH : 1;
+    return Array.from({ length: 12 - start + 1 }, (_, i) => start + i);
+  }, [targetYear]);
   const roomFilterOptions = useMemo(
     () => [...new Set(scheduleRows.map((r) => r.room).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [scheduleRows],
@@ -1288,7 +1114,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     const key = `lesson_schedule_records:${studentId}`;
     setRecords(next);
     window.localStorage.setItem(key, JSON.stringify(next));
-    void saveLessonScheduleRecords(studentId, next);
+    queueSaveLessonScheduleRecords(studentId, next);
   }
 
   function persistOverrides(next: Record<string, DayOverride>) {
@@ -1359,7 +1185,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       setEditForm({
         timePreset: timeOpts.includes(entry.time) ? entry.time : timeOpts[0],
         timeCustom: timeOpts.includes(entry.time) ? "" : entry.time,
-        room: ROOM_OPTIONS.includes(entry.room) ? entry.room : ROOM_OPTIONS[0],
+        room: resolveScheduleRoomPickerValue(entry.room),
         doubleEnabled: false,
       });
       setShowEditPanel(true);
@@ -1376,7 +1202,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       setEditForm({
         timePreset: timeOpts.includes(opts.row.time) ? opts.row.time : timeOpts[0],
         timeCustom: timeOpts.includes(opts.row.time) ? "" : opts.row.time,
-        room: ROOM_OPTIONS.includes(opts.row.room) ? opts.row.room : ROOM_OPTIONS[0],
+        room: resolveScheduleRoomPickerValue(opts.row.room),
         doubleEnabled: false,
       });
     } else {
@@ -1427,7 +1253,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         newWeekday: row.weekday,
         timePreset,
         timeCustom,
-        room: ROOM_OPTIONS.includes(row.room) ? row.room : ROOM_OPTIONS[0],
+        room: resolveScheduleRoomPickerValue(row.room),
         effectiveDate: row.date,
         sourceRuleId: parsed.ruleId,
         selectedDateIsos: [row.date],
@@ -1495,7 +1321,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
     if (bulkEditMode === "each") {
       let nextReschedule = [...rescheduleEntries];
-      let nextOverrides = { ...overridesRef.current };
+      const nextOverrides = { ...overridesRef.current };
       const rescheduleFromDates = new Map<string, string[]>();
       for (const e of nextReschedule) {
         const list = rescheduleFromDates.get(e.fromDate) ?? [];
@@ -1517,7 +1343,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         }
 
         const finalTime = resolveBulkEditTime(draft);
-        const finalRoom = draft.room.trim();
+        const finalRoom = canonicalScheduleRoomLabel(draft.room.trim());
         if (!finalTime) {
           setBulkEditSaveStatus(`Please set a time for ${lessonLabel}.`);
           setSelectionError(`Please set a time for ${lessonLabel}.`);
@@ -1584,20 +1410,14 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
       persistYearState({ rescheduleEntries: nextReschedule });
       persistOverrides(nextOverrides);
 
-      setBulkEditSaveStatus("Saved.");
-      setSelectionError("Saved.");
-      window.setTimeout(() => {
-        setBulkEditSaveStatus("");
-        setSelectionError((prev) => (prev === "Saved." ? "" : prev));
-        setShowBulkEditPanel(false);
-        setBulkEditLessonDrafts([]);
-        setSelectedRowIds([]);
-      }, 1200);
+      awaitingBulkEditSyncRef.current = true;
+      setBulkEditSaveStatus("Syncing…");
+      setSelectionError("Syncing…");
       return;
     }
 
     const finalTime = resolveBulkEditTime(bulkEditForm);
-    const finalRoom = bulkEditForm.room.trim();
+    const finalRoom = canonicalScheduleRoomLabel(bulkEditForm.room.trim());
     if (!finalTime) {
       setBulkEditSaveStatus("Please select or enter a lesson time.");
       setSelectionError("Please select or enter a lesson time.");
@@ -1676,14 +1496,9 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
         persistOverrides(nextOverrides);
       }
 
-      setBulkEditSaveStatus("Saved.");
-      setSelectionError("Saved.");
-      window.setTimeout(() => {
-        setBulkEditSaveStatus("");
-        setSelectionError((prev) => (prev === "Saved." ? "" : prev));
-        setShowBulkEditPanel(false);
-        setSelectedRowIds([]);
-      }, 1200);
+      awaitingBulkEditSyncRef.current = true;
+      setBulkEditSaveStatus("Syncing…");
+      setSelectionError("Syncing…");
     }
   }
 
@@ -1756,12 +1571,9 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
           : opts.includes(prev.timePreset)
             ? prev.timePreset
             : opts[0];
-      const room =
-        row && ROOM_OPTIONS.includes(row.room)
-          ? row.room
-          : ROOM_OPTIONS.includes(prev.room)
-            ? prev.room
-            : ROOM_OPTIONS[0];
+      const room = row
+        ? resolveScheduleRoomPickerValue(row.room)
+        : resolveScheduleRoomPickerValue(prev.room);
       return {
         ...prev,
         timePreset,
@@ -1801,20 +1613,19 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
 
     const timer = window.setTimeout(() => {
       lessonSummarySaveTimersRef.current.delete(dateIso);
-      void (async () => {
-        if (!studentId) return;
-        try {
-          await saveLessonYearState(studentId, targetYear, {
-            attendance: attendanceRef.current,
-            hiddenDates: hiddenDatesRef.current,
-            overrides: overridesRef.current,
-            rescheduleEntries: rescheduleEntriesRef.current,
-            extraEntries: extraEntriesRef.current,
-          });
-        } catch {
-          // 失敗就不影響 UI（之後刷新/再次編輯仍可重試）
-        }
-      })();
+      if (!studentId) return;
+      queueSaveLessonYearState(
+        studentId,
+        targetYear,
+        {
+          attendance: attendanceRef.current,
+          hiddenDates: hiddenDatesRef.current,
+          overrides: overridesRef.current,
+          rescheduleEntries: rescheduleEntriesRef.current,
+          extraEntries: extraEntriesRef.current,
+        },
+        ["overrides"],
+      );
     }, LESSON_SUMMARY_SAVE_DEBOUNCE_MS);
 
     lessonSummarySaveTimersRef.current.set(dateIso, timer);
@@ -1863,6 +1674,43 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
         <AppTopNav highlight="students" />
+
+        {cloudSaveNotice ? (
+          <div
+            className={`mb-4 rounded-lg border px-4 py-2 text-sm ${
+              cloudSaveFailed
+                ? "border-red-200 bg-red-50 text-red-800"
+                : "border-slate-200 bg-white text-slate-700 shadow-sm"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p>
+                {cloudSaveFailed ? (
+                  <>
+                    <span className="font-semibold">雲端儲存失敗：</span>
+                    {cloudSaveNotice}
+                  </>
+                ) : (
+                  cloudSaveNotice
+                )}
+              </p>
+              {cloudSaveFailed ? (
+                <button
+                  type="button"
+                  onClick={retryCloudSave}
+                  className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-800 hover:bg-red-100"
+                >
+                  重試
+                </button>
+              ) : null}
+            </div>
+            {cloudSaveFailed ? (
+              <p className="mt-1 text-xs text-red-700">
+                畫面已更新，但可能未寫入資料庫；請重試後再離開此頁。
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
@@ -1957,7 +1805,15 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
           </div>
 
           <div className="p-6 pb-28">
-            <h2 className="text-lg font-bold text-slate-900">{targetYear} Lesson Records</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-bold text-slate-900">{targetYear} Lesson Records</h2>
+              <Link
+                href={`/student-progress/${encodeURIComponent(studentId)}`}
+                className="inline-flex items-center rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90"
+              >
+                Student Progress
+              </Link>
+            </div>
             {targetYear === LESSON_SYSTEM_START_YEAR ? (
               <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                 網站由 {LESSON_SYSTEM_START_LABEL_ZH} 起管理課表；{LESSON_SYSTEM_START_MONTH - 1}{" "}
@@ -2536,7 +2392,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                         fromDate: from,
                                         toDate: to,
                                         time: finalTime,
-                                        room: editForm.room.trim(),
+                                        room: canonicalScheduleRoomLabel(editForm.room.trim()),
                                         pending: false,
                                       }
                                     : e,
@@ -2548,7 +2404,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                     fromDate: from,
                                     toDate: to,
                                     time: finalTime,
-                                    room: editForm.room.trim(),
+                                    room: canonicalScheduleRoomLabel(editForm.room.trim()),
                                   },
                                 ];
                             setRescheduleEntries(nextList);
@@ -2564,7 +2420,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                   id: `${Date.now()}-double-reschedule`,
                                   date: to,
                                   time: finalTime,
-                                  room: editForm.room.trim(),
+                                  room: canonicalScheduleRoomLabel(editForm.room.trim()),
                                 },
                               ];
                               setExtraEntries(nextExtraEntries);
@@ -2851,7 +2707,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                 id: `${Date.now()}`,
                                 date,
                                 time: finalTime,
-                                room: extraForm.room.trim(),
+                                room: canonicalScheduleRoomLabel(extraForm.room.trim()),
                               },
                             ];
                             if (extraForm.doubleEnabled) {
@@ -2859,7 +2715,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                                 id: `${Date.now()}-2`,
                                 date,
                                 time: finalTime,
-                                room: extraForm.room.trim(),
+                                room: canonicalScheduleRoomLabel(extraForm.room.trim()),
                               });
                             }
                             setExtraEntries(nextExtra);
@@ -3403,7 +3259,7 @@ export function StudentLessonsYearPage({ targetYear = 2026 }: { targetYear?: num
                       date: row.date,
                       timePreset: opts.includes(row.time) ? row.time : opts[0],
                       timeCustom: opts.includes(row.time) ? "" : row.time,
-                      room: ROOM_OPTIONS.includes(row.room) ? row.room : ROOM_OPTIONS[0],
+                      room: resolveScheduleRoomPickerValue(row.room),
                       doubleEnabled: false,
                     });
                   } else {

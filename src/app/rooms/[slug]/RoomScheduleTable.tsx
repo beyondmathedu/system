@@ -7,15 +7,17 @@ import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import { normalizeStudentId } from "@/lib/studentId";
 import {
   loadExamInfoBatch,
-  loadLessonYearState,
   loadLessonYearStatesBatch,
-  saveLessonYearState,
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
+import { DEFAULT_LESSON_YEAR_STATE } from "@/lib/lessonYearStateShared";
+import { queueSaveLessonYearState, retrySaveLessonYearState } from "@/lib/queueSaveLessonYearState";
+import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import { loadTutorVisibility } from "@/lib/tutorVisibility";
 import { isSharedIpadTutorDisplayName } from "@/lib/tutorConstants";
 import { formatGradeDisplay } from "@/lib/grade";
 import { useRoomLessonStateRealtime } from "@/lib/useRoomLessonStateRealtime";
+import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 
 function RoomScheduleTableSkeleton() {
@@ -104,9 +106,11 @@ export default function RoomScheduleTable({
 
   const [localRows, setLocalRows] = useState(rows);
   const [sortConfig, setSortConfig] = useState<RoomScheduleSortConfig>(null);
-  const [savingRowKey, setSavingRowKey] = useState<string | null>(null);
-  const [savingLessonSummaryRowKey, setSavingLessonSummaryRowKey] = useState<string | null>(null);
+  const [savingRowKey] = useState<string | null>(null);
+  const [savingLessonSummaryRowKey] = useState<string | null>(null);
   const [saveError, setSaveError] = useState("");
+  const [saveErrorStudentId, setSaveErrorStudentId] = useState("");
+  const saveErrorStudentIdRef = useRef("");
   const [teacherOptions, setTeacherOptions] = useState<string[]>([]);
   const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
   const [activeTutorAliasToNickname, setActiveTutorAliasToNickname] = useState<Map<string, string>>(
@@ -131,6 +135,27 @@ export default function RoomScheduleTable({
   savingRowKeyRef.current = savingRowKey;
   savingLessonSummaryRowKeyRef.current = savingLessonSummaryRowKey;
 
+  const studentIdsOnPage = useMemo(
+    () => new Set(localRows.map((r) => r.studentId).filter(Boolean)),
+    [localRows],
+  );
+
+  useEffect(() => {
+    return subscribeLessonSaveStatus((evt) => {
+      if (evt.kind !== "year" || evt.year !== year) return;
+      if (!studentIdsOnPage.has(evt.studentId)) return;
+      if (evt.status === "failed") {
+        saveErrorStudentIdRef.current = evt.studentId;
+        setSaveErrorStudentId(evt.studentId);
+        setSaveError(evt.message ?? "Cloud save failed. Please retry.");
+      } else if (evt.status === "saved" && evt.studentId === saveErrorStudentIdRef.current) {
+        saveErrorStudentIdRef.current = "";
+        setSaveErrorStudentId("");
+        setSaveError("");
+      }
+    });
+  }, [year, studentIdsOnPage]);
+
   useRoomLessonStateRealtime({
     year,
     rows,
@@ -144,16 +169,6 @@ export default function RoomScheduleTable({
   });
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const bottomScrollRef = useRef<HTMLDivElement | null>(null);
-  const bottomTrackRef = useRef<HTMLDivElement | null>(null);
-  const sideScrollRef = useRef<HTMLDivElement | null>(null);
-  const sideTrackRef = useRef<HTMLDivElement | null>(null);
-  const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
-  const [bottomScrollClientWidth, setBottomScrollClientWidth] = useState(0);
-  const [sideScrollHeight, setSideScrollHeight] = useState(0);
-  const [sideScrollClientHeight, setSideScrollClientHeight] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
-  const [scrollTop, setScrollTop] = useState(0);
 
   function slotKey(r: Pick<RoomScheduleRow, "dateIso" | "time" | "room">) {
     return `${r.dateIso}__${r.time}__${r.room}`.toLowerCase();
@@ -269,8 +284,46 @@ export default function RoomScheduleTable({
     return copied;
   }, [filteredRows, sortConfig, examDatesByStudentId]);
 
+  const {
+    tableScrollId,
+    bottomTrackRef,
+    sideTrackRef,
+    bottomThumb,
+    sideThumb,
+    bottomScrollWidth,
+    bottomScrollClientWidth,
+    sideScrollHeight,
+    sideScrollClientHeight,
+    bottomTrackA11yProps,
+    sideTrackA11yProps,
+    onBottomTrackMouseDown,
+    onSideTrackMouseDown,
+    startDragBottomThumb,
+    startDragSideThumb,
+  } = useCustomScrollbars({
+    tableScrollRef,
+    contentKey: sortedLocalRows.length,
+  });
+
+  function seedStateCacheFromRows(nextRows: RoomScheduleRow[]) {
+    const attendanceByStudent = new Map<string, Record<string, boolean>>();
+    for (const r of nextRows) {
+      const prev = attendanceByStudent.get(r.studentId) ?? {};
+      prev[r.attendanceKey] = r.attended;
+      attendanceByStudent.set(r.studentId, prev);
+    }
+    for (const [studentId, attendance] of attendanceByStudent) {
+      const existing = stateCache.current.get(studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
+      stateCache.current.set(studentId, {
+        ...existing,
+        attendance: { ...existing.attendance, ...attendance },
+      });
+    }
+  }
+
   useEffect(() => {
     setLocalRows(rows);
+    seedStateCacheFromRows(rows);
     for (const t of lessonSummarySaveTimersRef.current.values()) window.clearTimeout(t);
     lessonSummarySaveTimersRef.current.clear();
     lessonSummaryPendingRef.current.clear();
@@ -313,170 +366,6 @@ export default function RoomScheduleTable({
     setLessonTypeFilter("all");
     setAttendanceFilter("all");
   }
-
-  useEffect(() => {
-    const tableEl = tableScrollRef.current;
-    const bottomEl = bottomScrollRef.current;
-    const sideEl = sideScrollRef.current;
-    if (!tableEl) return;
-
-    let syncing = false;
-
-    const updateMetrics = () => {
-      setBottomScrollWidth(tableEl.scrollWidth);
-      setBottomScrollClientWidth(tableEl.clientWidth);
-      setSideScrollHeight(tableEl.scrollHeight);
-      setSideScrollClientHeight(tableEl.clientHeight);
-    };
-
-    const onTableScroll = () => {
-      if (syncing) return;
-      syncing = true;
-      setScrollLeft(tableEl.scrollLeft);
-      setScrollTop(tableEl.scrollTop);
-      syncing = false;
-    };
-
-    const onBottomScroll = () => {
-      if (!bottomEl || syncing) return;
-      syncing = true;
-      tableEl.scrollLeft = bottomEl.scrollLeft;
-      syncing = false;
-    };
-
-    const onSideScroll = () => {
-      if (!sideEl || syncing) return;
-      syncing = true;
-      tableEl.scrollTop = sideEl.scrollTop;
-      syncing = false;
-    };
-
-    updateMetrics();
-    setScrollLeft(tableEl.scrollLeft);
-    setScrollTop(tableEl.scrollTop);
-
-    tableEl.addEventListener("scroll", onTableScroll, { passive: true });
-    bottomEl?.addEventListener("scroll", onBottomScroll, { passive: true });
-    sideEl?.addEventListener("scroll", onSideScroll, { passive: true });
-
-    const ro = new ResizeObserver(() => updateMetrics());
-    ro.observe(tableEl);
-
-    return () => {
-      tableEl.removeEventListener("scroll", onTableScroll);
-      bottomEl?.removeEventListener("scroll", onBottomScroll);
-      sideEl?.removeEventListener("scroll", onSideScroll);
-      ro.disconnect();
-    };
-  }, [sortedLocalRows.length]);
-
-  const bottomThumb = useMemo(() => {
-    const trackEl = bottomTrackRef.current;
-    const trackWidth = trackEl?.clientWidth ?? 0;
-    if (!trackWidth || !bottomScrollWidth || !bottomScrollClientWidth) return { size: 0, offset: 0 };
-    const ratio = bottomScrollClientWidth / bottomScrollWidth;
-    const size = Math.max(28, Math.floor(trackWidth * ratio));
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-    const offset = Math.round((scrollLeft / maxScroll) * maxOffset);
-    return { size, offset };
-  }, [bottomScrollClientWidth, bottomScrollWidth, scrollLeft]);
-
-  const sideThumb = useMemo(() => {
-    const trackEl = sideTrackRef.current;
-    const trackHeight = trackEl?.clientHeight ?? 0;
-    if (!trackHeight || !sideScrollHeight || !sideScrollClientHeight) return { size: 0, offset: 0 };
-    const ratio = sideScrollClientHeight / sideScrollHeight;
-    const size = Math.max(28, Math.floor(trackHeight * ratio));
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-    const offset = Math.round((scrollTop / maxScroll) * maxOffset);
-    return { size, offset };
-  }, [sideScrollClientHeight, sideScrollHeight, scrollTop]);
-
-  const onBottomTrackMouseDown = (e: React.MouseEvent) => {
-    const track = bottomTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const { size } = bottomThumb;
-    const trackWidth = rect.width;
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-
-    const targetOffset = Math.min(maxOffset, Math.max(0, x - size / 2));
-    tableEl.scrollLeft = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
-  };
-
-  const onSideTrackMouseDown = (e: React.MouseEvent) => {
-    const track = sideTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const { size } = sideThumb;
-    const trackHeight = rect.height;
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-
-    const targetOffset = Math.min(maxOffset, Math.max(0, y - size / 2));
-    tableEl.scrollTop = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
-  };
-
-  const startDragBottomThumb = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const track = bottomTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const startX = e.clientX;
-    const startOffset = bottomThumb.offset;
-    const size = bottomThumb.size;
-    const trackWidth = rect.width;
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-
-    const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - startX;
-      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dx));
-      tableEl.scrollLeft = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  const startDragSideThumb = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const track = sideTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const startY = e.clientY;
-    const startOffset = sideThumb.offset;
-    const size = sideThumb.size;
-    const trackHeight = rect.height;
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-
-    const onMove = (ev: MouseEvent) => {
-      const dy = ev.clientY - startY;
-      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dy));
-      tableEl.scrollTop = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
 
   useEffect(() => {
     if (!rows.length) return;
@@ -550,104 +439,36 @@ export default function RoomScheduleTable({
     };
   }, []);
 
-  async function getStudentState(studentId: string) {
-    const cached = stateCache.current.get(studentId);
-    if (cached) return cached;
-    const loaded = await loadLessonYearState(studentId, year);
-    stateCache.current.set(studentId, loaded);
-    return loaded;
-  }
-
-  async function onToggle(row: RoomScheduleRow, checked: boolean) {
+  function onToggle(row: RoomScheduleRow, checked: boolean) {
     setSaveError("");
-    setSavingRowKey(row.rowKey);
     setLocalRows((prev) => prev.map((r) => (r.rowKey === row.rowKey ? { ...r, attended: checked } : r)));
 
-    try {
-      const current = await getStudentState(row.studentId);
-      const nextState: StudentLesson2026State = {
-        ...current,
-        attendance: {
-          ...current.attendance,
-          [row.attendanceKey]: checked,
-        },
-      };
-      await saveLessonYearState(row.studentId, year, nextState);
-      stateCache.current.set(row.studentId, nextState);
-    } catch (error) {
-      setLocalRows((prev) => prev.map((r) => (r.rowKey === row.rowKey ? { ...r, attended: row.attended } : r)));
-      setSaveError(error instanceof Error ? error.message : "Failed to save attendance");
-    } finally {
-      setSavingRowKey(null);
-    }
+    const current = stateCache.current.get(row.studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
+    const nextState: StudentLesson2026State = {
+      ...current,
+      attendance: {
+        ...current.attendance,
+        [row.attendanceKey]: checked,
+      },
+    };
+    stateCache.current.set(row.studentId, nextState);
+    queueSaveLessonYearState(row.studentId, year, nextState, ["attendance"], [row.attendanceKey]);
   }
 
-  async function onChangeTutor(row: RoomScheduleRow, displayTutor: string) {
+  function onChangeTutor(row: RoomScheduleRow, displayTutor: string) {
     setSaveError("");
     const slot = slotKey(row);
-    setSavingRowKey(slot);
     const nextTutor = displayTutor.trim() || "TBD";
     const affected = localRows.filter((r) => slotKey(r) === slot);
     setLocalRows((prev) => prev.map((r) => (slotKey(r) === slot ? { ...r, tutor: nextTutor } : r)));
 
-    try {
-      const results = await Promise.all(
-        affected.map(async (r) => {
-          try {
-            const current = await getStudentState(r.studentId);
-            const overrides =
-              current.overrides && typeof current.overrides === "object"
-                ? (current.overrides as Record<string, unknown>)
-                : {};
-            const existing = overrides[r.dateIso];
-            const existingEntry =
-              existing && typeof existing === "object" && !Array.isArray(existing)
-                ? (existing as Record<string, unknown>)
-                : {};
-
-            const nextState: StudentLesson2026State = {
-              ...current,
-              overrides: {
-                ...overrides,
-                [r.dateIso]: {
-                  ...existingEntry,
-                  tutor: nextTutor === "TBD" ? "" : nextTutor,
-                },
-              },
-            };
-            await saveLessonYearState(r.studentId, year, nextState);
-            stateCache.current.set(r.studentId, nextState);
-            return { ok: true as const };
-          } catch (error) {
-            return { ok: false as const, error };
-          }
-        }),
-      );
-
-      const failCount = results.filter((x) => !x.ok).length;
-      if (failCount > 0) {
-        setSaveError(`Failed to save tutor for ${failCount} student(s).`);
-      }
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Failed to save tutor");
-    } finally {
-      setSavingRowKey(null);
-    }
-  }
-
-  async function onChangeLessonSummary(row: RoomScheduleRow, nextNoteRaw: string) {
-    const nextNote = nextNoteRaw.trim();
-
-    setSaveError("");
-    setSavingLessonSummaryRowKey(row.rowKey);
-    try {
-      const current = await getStudentState(row.studentId);
+    for (const r of affected) {
+      const current = stateCache.current.get(r.studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
       const overrides =
         current.overrides && typeof current.overrides === "object"
           ? (current.overrides as Record<string, unknown>)
           : {};
-
-      const existing = overrides[row.dateIso];
+      const existing = overrides[r.dateIso];
       const existingEntry =
         existing && typeof existing === "object" && !Array.isArray(existing)
           ? (existing as Record<string, unknown>)
@@ -657,30 +478,47 @@ export default function RoomScheduleTable({
         ...current,
         overrides: {
           ...overrides,
-          [row.dateIso]: {
+          [r.dateIso]: {
             ...existingEntry,
-            lessonSummary: nextNote,
+            tutor: nextTutor === "TBD" ? "" : nextTutor,
           },
         },
       };
-
-      await saveLessonYearState(row.studentId, year, nextState);
-      stateCache.current.set(row.studentId, nextState);
-      initialNoteByRowKey.current.set(row.rowKey, nextNote);
-    } catch (error) {
-      // 失敗就回復先前 note
-      const original = initialNoteByRowKey.current.get(row.rowKey) ?? row.note;
-      // 若使用者在送出期間又繼續輸入，避免用失敗回復覆蓋更新
-      const latest = latestNoteByRowKeyRef.current.get(row.rowKey) ?? "";
-      if (latest.trim() === nextNote.trim()) {
-        setLocalRows((prev) =>
-          prev.map((r) => (r.rowKey === row.rowKey ? { ...r, note: original } : r)),
-        );
-      }
-      setSaveError(error instanceof Error ? error.message : "Failed to save lesson summary");
-    } finally {
-      setSavingLessonSummaryRowKey(null);
+      stateCache.current.set(r.studentId, nextState);
+      queueSaveLessonYearState(r.studentId, year, nextState, ["overrides"]);
     }
+  }
+
+  function onChangeLessonSummary(row: RoomScheduleRow, nextNoteRaw: string) {
+    const nextNote = nextNoteRaw.trim();
+
+    setSaveError("");
+    const current = stateCache.current.get(row.studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
+    const overrides =
+      current.overrides && typeof current.overrides === "object"
+        ? (current.overrides as Record<string, unknown>)
+        : {};
+
+    const existing = overrides[row.dateIso];
+    const existingEntry =
+      existing && typeof existing === "object" && !Array.isArray(existing)
+        ? (existing as Record<string, unknown>)
+        : {};
+
+    const nextState: StudentLesson2026State = {
+      ...current,
+      overrides: {
+        ...overrides,
+        [row.dateIso]: {
+          ...existingEntry,
+          lessonSummary: nextNote,
+        },
+      },
+    };
+
+    stateCache.current.set(row.studentId, nextState);
+    initialNoteByRowKey.current.set(row.rowKey, nextNote);
+    queueSaveLessonYearState(row.studentId, year, nextState, ["overrides"]);
   }
 
   function persistLessonSummaryQueued(row: RoomScheduleRow, nextNote: string) {
@@ -737,9 +575,25 @@ export default function RoomScheduleTable({
     <ClientOnlyAfterMount fallback={<RoomScheduleTableSkeleton />}>
     <div>
       {saveError ? (
-        <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
-          Save failed: {saveError}
-        </p>
+        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p>
+              <span className="font-semibold">Cloud save failed:</span> {saveError}
+            </p>
+            {saveErrorStudentId ? (
+              <button
+                type="button"
+                onClick={() => retrySaveLessonYearState(saveErrorStudentId, year)}
+                className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-800 hover:bg-red-100"
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs text-red-700">
+            Changes are shown on screen but may not be saved yet. Retry before leaving this page.
+          </p>
+        </div>
       ) : null}
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-2">
@@ -803,7 +657,9 @@ export default function RoomScheduleTable({
             <span className="text-[11px] font-semibold tracking-wider text-slate-500">Attendance</span>
             <select
               value={attendanceFilter}
-              onChange={(e) => setAttendanceFilter(e.target.value as any)}
+              onChange={(e) =>
+                setAttendanceFilter(e.target.value as "all" | "attended" | "not_attended")
+              }
               className="h-8 min-w-[140px] rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700"
             >
               <option value="all">All</option>
@@ -835,6 +691,7 @@ export default function RoomScheduleTable({
         <div className="flex">
           <div
             ref={tableScrollRef}
+            id={tableScrollId}
             className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
             <table className="min-w-[1200px] w-full border-collapse text-left text-sm">
@@ -1079,11 +936,9 @@ export default function RoomScheduleTable({
 
           {sideScrollHeight > sideScrollClientHeight ? (
             <div className="border-l border-slate-200 bg-slate-50 px-2 py-2">
-              <div ref={sideScrollRef} className="sr-only" aria-hidden />
               <div
                 ref={sideTrackRef}
-                role="scrollbar"
-                aria-label="Vertical scrollbar"
+                {...sideTrackA11yProps}
                 className="relative w-2.5 select-none rounded bg-white ring-1 ring-slate-200"
                 style={{ height: "calc(70vh - 16px)" }}
                 onMouseDown={onSideTrackMouseDown}
@@ -1100,11 +955,9 @@ export default function RoomScheduleTable({
 
         {bottomScrollWidth > bottomScrollClientWidth ? (
           <div className="border-t border-slate-200 bg-slate-50 px-4 py-2">
-            <div ref={bottomScrollRef} className="sr-only" aria-hidden />
             <div
               ref={bottomTrackRef}
-              role="scrollbar"
-              aria-label="Horizontal scrollbar"
+              {...bottomTrackA11yProps}
               className="relative h-2.5 select-none rounded bg-white ring-1 ring-slate-200"
               onMouseDown={onBottomTrackMouseDown}
             >

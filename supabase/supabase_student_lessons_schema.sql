@@ -145,6 +145,15 @@ create table if not exists public.student_lessons_2026_metrics (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.student_lessons_year_metrics (
+  student_id text not null references public.students(id) on delete cascade,
+  year integer not null,
+  remedial_count integer not null default 0,
+  current_month_absent_count integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (student_id, year)
+);
+
 create table if not exists public.student_lessons_year_state (
   student_id text not null references public.students(id) on delete cascade,
   year integer not null,
@@ -210,6 +219,7 @@ alter table public.student_monthly_fee_records enable row level security;
 alter table public.student_lesson_records enable row level security;
 alter table public.student_lessons_2026_state enable row level security;
 alter table public.student_lessons_2026_metrics enable row level security;
+alter table public.student_lessons_year_metrics enable row level security;
 alter table public.student_lessons_year_state enable row level security;
 alter table public.tutors enable row level security;
 alter table public.tutor_rates enable row level security;
@@ -249,6 +259,9 @@ create policy "allow all student_lessons_2026_state" on public.student_lessons_2
 
 drop policy if exists "allow all student_lessons_2026_metrics" on public.student_lessons_2026_metrics;
 create policy "allow all student_lessons_2026_metrics" on public.student_lessons_2026_metrics for all using (true) with check (true);
+
+drop policy if exists "allow all student_lessons_year_metrics" on public.student_lessons_year_metrics;
+create policy "allow all student_lessons_year_metrics" on public.student_lessons_year_metrics for all using (true) with check (true);
 
 drop policy if exists "allow all student_lessons_year_state" on public.student_lessons_year_state;
 create policy "allow all student_lessons_year_state" on public.student_lessons_year_state for all using (true) with check (true);

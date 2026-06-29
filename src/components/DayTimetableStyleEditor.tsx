@@ -8,7 +8,7 @@ import type { DayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings"
 import { DEFAULT_DAY_TIMETABLE_STYLE } from "@/lib/dayTimetableStyleSettings";
 import type { DayTimetableUiLocale } from "@/lib/dayTimetableUiStrings";
 import { dayTimetableStyleEditorStrings } from "@/lib/dayTimetableUiStrings";
-import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
+import { revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
 
 type Props = {
   initial: DayTimetableStyleSettings;
@@ -99,7 +99,7 @@ export default function DayTimetableStyleEditor({ initial, uiLocale = "zh" }: Pr
       return;
     }
     setStatus(te.saved);
-    notifyScheduleCachesStale();
+    await revalidateScheduleCachesNow();
     router.refresh();
   }
 

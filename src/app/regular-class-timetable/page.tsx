@@ -6,6 +6,7 @@ import DayTimetableTable from "@/components/DayTimetableTable";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
+import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchDayTimetablePayload, parseDayParams } from "@/lib/dayTimetableGrid";
 import { normalizeStudentId } from "@/lib/studentId";
@@ -29,7 +30,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   ]);
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
-    redirect(`/students/${encodeURIComponent(normalizeStudentId(viewer.studentId))}/lessons/2026`);
+    redirect(studentLessonsYearPath(normalizeStudentId(viewer.studentId)));
   }
   if (viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");

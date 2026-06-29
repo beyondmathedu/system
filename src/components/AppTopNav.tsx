@@ -1,11 +1,15 @@
 "use client";
 
-import { useLayoutEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import AppTopNavContent from "./AppTopNavContent";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import type { HighlightKey } from "./AppTopNavContent";
 
 export type { HighlightKey };
+
+function subscribeNavReady() {
+  return () => {};
+}
 
 /** Same shell as pre-hydration so server HTML matches the client’s first paint (avoids next/dynamic + Suspense drift). */
 function NavHydrationShell() {
@@ -27,11 +31,7 @@ function NavHydrationShell() {
 }
 
 export default function AppTopNav({ highlight = null }: { highlight?: HighlightKey }) {
-  const [navReady, setNavReady] = useState(false);
-
-  useLayoutEffect(() => {
-    setNavReady(true);
-  }, []);
+  const navReady = useSyncExternalStore(subscribeNavReady, () => true, () => false);
 
   return (
     <div className="contents">

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getViewerContext } from "@/lib/authz";
+import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { isSharedIpadTutorViewer } from "@/lib/tutorRoomAccess";
 import { normalizeStudentId } from "@/lib/studentId";
@@ -20,7 +21,7 @@ export default async function StudentsSectionLayout({
     if (!ownStudentId) redirect("/login");
     const pathStudentId = normalizeStudentId(String(routeParams?.id ?? ""));
     if (pathStudentId && pathStudentId === ownStudentId) return children;
-    redirect(`/students/${encodeURIComponent(ownStudentId)}/lessons/2026`);
+    redirect(studentLessonsYearPath(ownStudentId));
   }
   redirectTutorAwayFromAdminPages(viewer);
   if (viewer.role !== "admin") redirect("/login");

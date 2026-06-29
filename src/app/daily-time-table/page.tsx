@@ -6,6 +6,7 @@ import DayTimetableTable from "@/components/DayTimetableTable";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
+import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchDayTimetablePayload, parseDayParams } from "@/lib/dayTimetableGrid";
 import { normalizeStudentId } from "@/lib/studentId";
@@ -29,7 +30,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
   ]);
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
-    redirect(`/students/${encodeURIComponent(normalizeStudentId(viewer.studentId))}/lessons/2026`);
+    redirect(studentLessonsYearPath(normalizeStudentId(viewer.studentId)));
   }
   if (viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");
@@ -50,7 +51,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
             <p className="mt-1 text-sm text-blue-100">
               When multiple students share the same room and time slot, entries are ordered as: regular lessons
               {" \u2192 "}rescheduled lessons{" \u2192 "}extra lessons (same type sorted by student ID). Lesson summaries are
-              synchronized with scheduling. Exam dates come from each student's lesson page. Regular lesson colors
+              synchronized with scheduling. Exam dates come from each student&apos;s lesson page. Regular lesson colors
               follow Tutor settings; rescheduled/extra backgrounds and fee highlights can be changed below in
               “Timetable colours & fee highlights”.
             </p>

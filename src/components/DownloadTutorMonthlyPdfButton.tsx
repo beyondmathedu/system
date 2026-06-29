@@ -93,8 +93,8 @@ export default function DownloadTutorMonthlyPdfButton({ fileName, head, body }: 
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 
       setHint("已開啟列印視窗：請選擇「另存為 PDF」");
-    } catch (e: any) {
-      setErr(String(e?.message ?? e ?? "PDF 生成失敗"));
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e ?? "PDF 生成失敗"));
     } finally {
       setBusy(false);
     }

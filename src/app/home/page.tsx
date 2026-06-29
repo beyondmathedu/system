@@ -130,6 +130,13 @@ function stripPunctuation(input: string) {
     .trim();
 }
 
+function dailyPositiveLine(seed: string) {
+  let hash = 0;
+  for (const ch of seed) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  const index = hash % CANTONESE_POSITIVE_LINES.length;
+  return stripPunctuation(CANTONESE_POSITIVE_LINES[index]);
+}
+
 export default async function HomeLandingPage() {
   const viewer = await getViewerContext();
   if (!viewer.userId) redirect("/login");
@@ -140,7 +147,6 @@ export default async function HomeLandingPage() {
   const dashboard = await fetchHomeDashboardData();
   const {
     ymdToday,
-    year,
     month,
     birthdaySummary,
     todayWhatsappHref,
@@ -154,9 +160,7 @@ export default async function HomeLandingPage() {
     daysLeftInMonth,
   } = dashboard;
 
-  const randomLine = stripPunctuation(
-    CANTONESE_POSITIVE_LINES[Math.floor(Math.random() * CANTONESE_POSITIVE_LINES.length)],
-  );
+  const randomLine = dailyPositiveLine(ymdToday);
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">

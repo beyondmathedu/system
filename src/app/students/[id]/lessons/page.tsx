@@ -7,13 +7,14 @@ import { useParams, useRouter } from "next/navigation";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
 import { supabase } from "@/lib/supabase";
 import {
-  loadLesson2026State,
   loadLessonScheduleRecords,
+  loadLessonYearState,
   loadStudentVisibilityMode,
   saveStudentVisibilityMode,
-  saveLesson2026Metrics,
+  saveLessonYearMetrics,
 } from "@/lib/studentLessonStorage";
 import { getLessonUntickedMetrics, type Lesson2026State } from "@/lib/lesson2026Summary";
+import { availableLessonYears, defaultLessonYear } from "@/lib/lessonCalendar";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import AppTopNav from "@/components/AppTopNav";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
@@ -29,7 +30,7 @@ const LessonScheduleGrid = dynamic(() => import("./LessonScheduleGrid"), {
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 
-function toLesson2026State(state: Awaited<ReturnType<typeof loadLesson2026State>>): Lesson2026State {
+function toLesson2026State(state: Awaited<ReturnType<typeof loadLessonYearState>>): Lesson2026State {
   return {
     attendance: state.attendance as Record<string, boolean>,
     hiddenDates: state.hiddenDates as Record<string, boolean>,
@@ -71,15 +72,8 @@ export default function StudentLessonsPage() {
   const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [scheduleRecords, setScheduleRecords] = useState<LessonScheduleRecord[] | null>(null);
-  const availableYears = useMemo(() => {
-    const startYear = 2026;
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const openNextYear = now.getMonth() === 11 && now.getDate() >= 1;
-    const maxYear = openNextYear ? currentYear + 1 : currentYear;
-    if (maxYear < startYear) return [startYear];
-    return Array.from({ length: maxYear - startYear + 1 }, (_, i) => startYear + i);
-  }, []);
+  const availableYears = useMemo(() => availableLessonYears(), []);
+  const hubYear = defaultLessonYear();
 
   useEffect(() => {
     let mounted = true;
@@ -120,7 +114,7 @@ export default function StudentLessonsPage() {
           .maybeSingle(),
         loadStudentVisibilityMode(studentId),
         loadLessonScheduleRecords(studentId),
-        loadLesson2026State(studentId),
+        loadLessonYearState(studentId, hubYear),
       ]);
 
       if (cancelled) return;
@@ -162,13 +156,18 @@ export default function StudentLessonsPage() {
       setCurrentMonthUntickedCount(metrics.currentMonthUntickedCount);
       setScheduleRecords(records as LessonScheduleRecord[]);
       setStudentLoaded(true);
-      void saveLesson2026Metrics(studentId, metrics.makeupCount, metrics.currentMonthUntickedCount);
+      void saveLessonYearMetrics(
+        studentId,
+        hubYear,
+        metrics.makeupCount,
+        metrics.currentMonthUntickedCount,
+      );
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [studentId]);
+  }, [studentId, hubYear]);
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getViewerContext } from "@/lib/authz";
 import { flatLessonUnitPrice, gradeForFeePricing } from "@/lib/studentFeePricingGrade";
 import { loadStudentFeeTierSettingsAdmin } from "@/lib/studentFeeTierSettings";
 import { FEE_RECORD_SELECT_PRICING } from "@/lib/studentMonthlyFeeRecordsCompat";
@@ -269,6 +270,14 @@ async function mapWithConcurrency<T, R>(
 }
 
 export async function POST(request: Request) {
+  const viewer = await getViewerContext();
+  if (!viewer.userId) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  if (viewer.role !== "admin") {
+    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
   try {
     const body = (await request.json().catch(() => ({}))) as SyncRequestBody;
     const year = Number(body?.year);

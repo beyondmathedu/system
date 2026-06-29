@@ -1,4 +1,3 @@
-/* eslint-disable react/no-array-index-key */
 "use client";
 
 import {
@@ -8,30 +7,23 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import Link from "next/link";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
-import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
-import { supabase } from "@/lib/supabase";
 import {
   FEE_OPENING_BALANCE_AS_OF_MONTH,
   FEE_OPENING_BALANCE_AS_OF_YEAR,
-  loadStudentFeeOpeningBalances,
+  readFeeOpeningBalancesFromLocal,
   upsertStudentFeeOpeningBalance,
   writeFeeOpeningBalanceToLocal,
 } from "@/lib/studentFeeOpeningBalance";
 import {
-  loadLessonScheduleRecordsBatch,
-  loadLessonYearStatesBatch,
-  loadStudentMonthlyFeeRecordsInMonthRange,
   upsertStudentMonthlyFeeRecord,
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
 import { readMonthPart, readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 import {
@@ -52,6 +44,21 @@ import {
   type Lesson2026State,
 } from "@/lib/lesson2026Summary";
 import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
+import {
+  collectBillableLessonDatesForMonth,
+  countAttendedBillableLessonsInMonth,
+  normalizeFeeLessonRecords,
+  toYearLessonStateFromClient,
+} from "@/lib/feeRecordLessonDates";
+import {
+  availableLessonYears,
+  defaultLessonYear,
+} from "@/lib/lessonCalendar";
+import {
+  LESSON_SYSTEM_START_MONTH,
+  LESSON_SYSTEM_START_YEAR,
+} from "@/lib/lessonSystemStart";
+import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 
 type StudentRow = {
   id: string;
@@ -63,10 +70,6 @@ type StudentRow = {
 };
 
 const L_COUNT = 9;
-const START_YEAR = 2026;
-// Fee accounting: lock legacy history into an opening balance, then start auto-calculation from this month.
-const FEE_SYSTEM_START_YEAR = 2026;
-const FEE_SYSTEM_START_MONTH = 5; // 2026/05
 const OPENING_BALANCE_AS_OF_YEAR = FEE_OPENING_BALANCE_AS_OF_YEAR;
 const OPENING_BALANCE_AS_OF_MONTH = FEE_OPENING_BALANCE_AS_OF_MONTH; // balance as of end of 2026/04
 const STICKY_ID_WIDTH = 88;
@@ -75,7 +78,6 @@ const STICKY_NAME_WIDTH = 76;
 const STICKY_GRADE_WIDTH = 84;
 const STICKY_PHONE_WIDTH = 132;
 const WEEKDAY_COL_WIDTH = 86;
-const SESSION_COL_WIDTH = 104;
 const TUITION_COL_WIDTH = 96;
 const AMOUNT_OWING_COL_WIDTH = 92;
 const OPENING_COL_WIDTH = 112;
@@ -85,7 +87,7 @@ const SEND_FEE_COL_WIDTH = 88;
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** English copy for opening-balance column / tooltips (calendar month-end). */
 const OPENING_BALANCE_AS_OF_EN_PHRASE = `end of ${MONTH_SHORT[OPENING_BALANCE_AS_OF_MONTH - 1]} ${OPENING_BALANCE_AS_OF_YEAR}`;
-const FEE_SYSTEM_START_EN_PHRASE = `${MONTH_SHORT[FEE_SYSTEM_START_MONTH - 1]} ${FEE_SYSTEM_START_YEAR}`;
+const FEE_SYSTEM_START_EN_PHRASE = `${MONTH_SHORT[LESSON_SYSTEM_START_MONTH - 1]} ${LESSON_SYSTEM_START_YEAR}`;
 const WEEKDAY_ORDER: Record<string, number> = {
   一: 1,
   二: 2,
@@ -105,15 +107,65 @@ const HK_WEEKDAY_CN_TO_EN: Record<string, string> = {
   日: "Sun",
 };
 
-const HK_WEEKDAY_SHORT_TO_CN: Record<string, string> = {
-  Mon: "一",
-  Tue: "二",
-  Wed: "三",
-  Thu: "四",
-  Fri: "五",
-  Sat: "六",
-  Sun: "日",
-};
+function feeRecordToHkIsoDateFromMs(msOrIso: number | string | Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(msOrIso));
+
+  const { y, m, d } = readYmdParts(parts);
+  return `${y}-${m}-${d}`;
+}
+
+function getActiveWeekdaysForFeeRecord(records: LessonRecord[], dateIso: string) {
+  if (!records.length) return [] as string[];
+  const normalized = records
+    .map((r) => {
+      const rr = r as unknown as Record<string, unknown>;
+      const weekday = String(rr.weekday ?? rr.week_day ?? rr.weekDay ?? rr.Weekday ?? "") || "";
+
+      const effectiveDate =
+        (typeof rr.effectiveDate === "string"
+          ? rr.effectiveDate
+          : typeof rr.effective_date === "string"
+            ? rr.effective_date
+            : undefined) ??
+        feeRecordToHkIsoDateFromMs(
+          typeof rr.createdAt === "number"
+            ? rr.createdAt
+            : typeof rr.created_at === "number"
+              ? rr.created_at
+              : Date.now(),
+        );
+
+      const createdAtNum =
+        typeof rr.createdAt === "number"
+          ? rr.createdAt
+          : typeof rr.created_at === "number"
+            ? rr.created_at
+            : Number(rr.createdAt ?? rr.created_at ?? 0);
+
+      return {
+        weekday,
+        effectiveDate: String(effectiveDate),
+        createdAt: Number.isFinite(createdAtNum) ? createdAtNum : 0,
+      };
+    })
+    .filter((x) => x.weekday);
+
+  normalized.sort((a, b) => {
+    const ed = a.effectiveDate.localeCompare(b.effectiveDate);
+    if (ed !== 0) return ed;
+    return a.createdAt - b.createdAt;
+  });
+
+  const activeRules = getActiveScheduleRulesForDate(normalized, dateIso);
+  const weekdays = [...new Set(activeRules.map((r) => r.weekday).filter(Boolean))];
+  weekdays.sort((a, b) => (WEEKDAY_ORDER[a] ?? 99) - (WEEKDAY_ORDER[b] ?? 99));
+  return weekdays;
+}
 
 function hkMonthNow(): number {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -235,8 +287,9 @@ function buildMonthlyArrearsRows(params: {
   currentRecord: RecordState;
   historicalMonthFee: Partial<Record<number, { lessonUnitPrice: number; feePricingGrade: string }>>;
   submittedByMonth: Partial<Record<number, number>>;
-  weekdays: string[];
-  extraEntries: Array<{ id: string; date: string }>;
+  lessonRecords: unknown;
+  yearState: StudentLesson2026State | undefined;
+  legacyWeekdays: string[];
   feeTierSettings: StudentFeeTierSettings;
 }): MonthlyArrearsRow[] {
   const {
@@ -247,10 +300,13 @@ function buildMonthlyArrearsRows(params: {
     currentRecord,
     historicalMonthFee,
     submittedByMonth,
-    weekdays,
-    extraEntries,
+    lessonRecords,
+    yearState,
+    legacyWeekdays,
     feeTierSettings,
   } = params;
+  const records = normalizeFeeLessonRecords(lessonRecords);
+  const state = toYearLessonStateFromClient(yearState);
   const rows: MonthlyArrearsRow[] = [];
   if (sheetYear === OPENING_BALANCE_AS_OF_YEAR && Math.abs(openingBalance) >= 0.005) {
     rows.push({
@@ -265,11 +321,12 @@ function buildMonthlyArrearsRows(params: {
   }
   const feeStart = feeSystemStartMonth1to12(sheetYear);
   for (let m = feeStart; m <= sheetMonth; m += 1) {
-    const dates = collectSortedUniqueLessonDatesForMonth({
+    const dates = collectBillableLessonDatesForMonth({
+      records,
+      state,
       year: sheetYear,
       month1to12: m,
-      weekdays,
-      extraEntries,
+      legacyWeekdays,
     });
     const lessonCount = countDatedLessonSlots(dates);
     const hist = historicalMonthFee[m];
@@ -460,62 +517,7 @@ function FeeArrearsDetailTable({
 }
 
 function feeSystemStartMonth1to12(sheetYear: number): number {
-  return sheetYear === FEE_SYSTEM_START_YEAR ? FEE_SYSTEM_START_MONTH : 1;
-}
-
-function buildBaseLessonDatesByWeekdayForMonth(year: number, month1to12: number): Record<string, string[]> {
-  const out: Record<string, string[]> = {
-    一: [],
-    二: [],
-    三: [],
-    四: [],
-    五: [],
-    六: [],
-    日: [],
-  };
-  const daysInMonth = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
-  const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Hong_Kong",
-    weekday: "short",
-  });
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12));
-    const short = weekdayFormatter.format(dt);
-    const cn = HK_WEEKDAY_SHORT_TO_CN[short];
-    if (cn) out[cn].push(`${month1to12}/${d}`);
-  }
-  return out;
-}
-
-function collectSortedUniqueLessonDatesForMonth(params: {
-  year: number;
-  month1to12: number;
-  weekdays: string[];
-  extraEntries: Array<{ id: string; date: string }>;
-}): string[] {
-  const { year, month1to12, weekdays, extraEntries } = params;
-  const baseMap = buildBaseLessonDatesByWeekdayForMonth(year, month1to12);
-  const base: string[] = [];
-  for (const wd of weekdays) {
-    base.push(...(baseMap[wd] ?? []));
-  }
-  for (const e of extraEntries) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
-    if (!m) continue;
-    const y = Number(m[1]);
-    const mo = Number(m[2]);
-    const d = Number(m[3]);
-    if (y === year && mo === month1to12) {
-      base.push(`${mo}/${d}`);
-    }
-  }
-  base.sort((a, b) => {
-    const [am, ad] = a.split("/").map((v) => Number(v));
-    const [bm, bd] = b.split("/").map((v) => Number(v));
-    if (am !== bm) return am - bm;
-    return ad - bd;
-  });
-  return Array.from(new Set(base));
+  return sheetYear === LESSON_SYSTEM_START_YEAR ? LESSON_SYSTEM_START_MONTH : 1;
 }
 
 function sumSlotTuitionHkd(params: {
@@ -544,53 +546,6 @@ function gradeForFeePricing(
   return /^F[1-6]$/.test(fgRaw) ? fgRaw : inferGradeAtSheetEnd(student.grade, sheetYear, sheetMonth);
 }
 
-/** 統計「所選月份」內已打勾嘅堂數（與 2026 課表頁 attendance key 一致） */
-function countAttendedLessonsInMonth(params: {
-  attendance: Record<string, boolean>;
-  year: number;
-  month1to12: number;
-  extras: Array<{ id: string; date: string }>;
-  reschedules: Array<{ id: string; toDate: string }>;
-}): number {
-  const { attendance, year, month1to12, extras, reschedules } = params;
-  const prefix = `${year}-${String(month1to12).padStart(2, "0")}`;
-  const extraById = new Map(extras.map((e) => [e.id, e]));
-  const rescheduleById = new Map(reschedules.map((r) => [r.id, r]));
-  let n = 0;
-  for (const [key, v] of Object.entries(attendance)) {
-    if (!v) continue;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
-      if (key.startsWith(prefix)) n += 1;
-      continue;
-    }
-    if (key.startsWith("extra:")) {
-      const ex = extraById.get(key.slice("extra:".length));
-      if (ex?.date?.startsWith(prefix)) n += 1;
-      continue;
-    }
-    if (key.startsWith("reschedule:")) {
-      const r = rescheduleById.get(key.slice("reschedule:".length));
-      if (r?.toDate?.startsWith(prefix)) n += 1;
-    }
-  }
-  return n;
-}
-
-function hkTodayYmd() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const { y: ys, m: ms, d: ds } = readYmdParts(parts, { y: "2026", m: "01", d: "01" });
-  return { y: Number(ys) || 2026, m: Number(ms) || 1, d: Number(ds) || 1 };
-}
-
-function monthEndIso(year: number, month1to12: number) {
-  const day = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
-  return `${year}-${String(month1to12).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
 const defaultRecordState = (): RecordState => ({
   weekday: "",
   expected: 0,
@@ -634,17 +589,8 @@ type SortConfig = { key: SortKey; direction: SortDirection } | null;
 export default function StudentsLessonTimeFeeRecordPage() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [sheetMonth, setSheetMonth] = useState(() => hkMonthNow());
-  const availableYears = useMemo(() => {
-    const now = hkTodayYmd();
-    const openNextYear = now.m === 12 && now.d >= 1;
-    const maxYear = openNextYear ? now.y + 1 : now.y;
-    if (maxYear < START_YEAR) return [START_YEAR];
-    return Array.from({ length: maxYear - START_YEAR + 1 }, (_, i) => START_YEAR + i);
-  }, []);
-  const [sheetYear, setSheetYear] = useState(() => {
-    const now = hkTodayYmd();
-    return Math.max(START_YEAR, now.y);
-  });
+  const availableYears = useMemo(() => availableLessonYears(), []);
+  const [sheetYear, setSheetYear] = useState(() => defaultLessonYear());
   const [recordsByStudentId, setRecordsByStudentId] = useState<Record<string, RecordState>>({});
   const [submittedByStudentMonth, setSubmittedByStudentMonth] = useState<
     Record<string, Partial<Record<number, number>>>
@@ -658,15 +604,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
   >({});
   const [lessonRecordsByStudentId, setLessonRecordsByStudentId] = useState<
     Record<string, LessonRecord[]>
-  >({});
-  const [extraEntriesByStudentId, setExtraEntriesByStudentId] = useState<
-    Record<string, { id: string; date: string }[]>
-  >({});
-  const [attendanceByStudentId, setAttendanceByStudentId] = useState<
-    Record<string, Record<string, boolean>>
-  >({});
-  const [rescheduleEntriesByStudentId, setRescheduleEntriesByStudentId] = useState<
-    Record<string, { id: string; fromDate: string; toDate: string }[]>
   >({});
   const [remedialCountByStudentId, setRemedialCountByStudentId] = useState<Record<string, number>>(
     {},
@@ -687,14 +624,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
   const [syncingZoho, setSyncingZoho] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const bottomTrackRef = useRef<HTMLDivElement | null>(null);
-  const sideTrackRef = useRef<HTMLDivElement | null>(null);
-  const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
-  const [bottomScrollClientWidth, setBottomScrollClientWidth] = useState(0);
-  const [sideScrollHeight, setSideScrollHeight] = useState(0);
-  const [sideScrollClientHeight, setSideScrollClientHeight] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
-  const [scrollTop, setScrollTop] = useState(0);
   const [feeTierSettings, setFeeTierSettings] = useState<StudentFeeTierSettings>({
     ...DEFAULT_FEE_TIER_SETTINGS,
   });
@@ -739,58 +668,182 @@ export default function StudentsLessonTimeFeeRecordPage() {
   useEffect(() => {
     let mounted = true;
     void (async () => {
-      const { data } = await supabase
-        .from("students")
-        .select("id, name_zh, name_en, nickname_en, grade, student_phone")
-        .order("id");
-      const studentIdsForVisibility = (data ?? []).map((r) => String(r.id ?? "")).filter(Boolean);
-      let visibilityRows: Array<{ student_id?: string; mode?: string; effective_date?: string }> = [];
-      if (studentIdsForVisibility.length) {
-        const vis = await fetchRowsInChunks({
-          ids: studentIdsForVisibility,
-          query: (chunk) =>
-            supabase
-              .from("student_visibility_modes")
-              .select("student_id, mode, effective_date")
-              .in("student_id", chunk),
-        });
-        visibilityRows = vis.data;
-      }
-      if (!mounted) return;
-      const cutoff = monthEndIso(sheetYear, Number(sheetMonth));
-      const manualInactiveEffectiveById = new Map<string, string>();
-      for (const row of visibilityRows ?? []) {
-        const mode = String((row as any).mode ?? "active").toLowerCase();
-        if (mode !== "inactive") continue;
-        const sid = String((row as any).student_id ?? "");
-        const eff = String((row as any).effective_date ?? "");
-        if (sid && eff) manualInactiveEffectiveById.set(sid, eff);
-      }
-      const mapped: StudentRow[] = (data ?? []).map((r) => ({
-        id: r.id,
-        name_zh: String(r.name_zh ?? ""),
-        name_en: String(r.name_en ?? ""),
-        nickname_en: String(r.nickname_en ?? ""),
-        grade: String(r.grade ?? ""),
-        student_phone: String((r as { student_phone?: string | null }).student_phone ?? ""),
-      }))
-      .filter((s) => {
-        const eff = resolveStudentInactiveEffectiveDate({
-          grade: s.grade,
-          manualInactiveEffective: manualInactiveEffectiveById.get(s.id) ?? null,
-          year: sheetYear,
-        });
-        return !(eff && eff <= cutoff);
-      });
-      setStudents(mapped);
+      try {
+        const res = await fetch(
+          `/api/students-lesson-fee-record/bootstrap?year=${sheetYear}&month=${sheetMonth}`,
+          { credentials: "same-origin" },
+        );
+        if (!res.ok) throw new Error("bootstrap failed");
+        const body = (await res.json()) as {
+          ok?: boolean;
+          students?: StudentRow[];
+          metricsRows?: Array<{ student_id?: string; remedial_count?: number | null }>;
+          feeRows?: Array<{
+            student_id: string;
+            year: number;
+            month: number;
+            submitted_amount: number;
+            lesson_unit_price: number | null;
+            fee_pricing_grade: string | null;
+            remarks: string;
+            makeup_remarks: string;
+            balance_due_remarks: string;
+            send_fee: boolean;
+          }>;
+          recordsMap?: Record<string, unknown[]>;
+          yearStatesMap?: Record<string, StudentLesson2026State>;
+          openingResult?: {
+            balances: Record<string, number>;
+            error?: string;
+            tableMissing?: boolean;
+          };
+          feeStartMonth?: number;
+          endMonthForPricing?: number;
+        };
+        if (!mounted || !body.ok) return;
 
-      setRecordsByStudentId((prev) => {
-        const next = { ...prev };
-        for (const st of mapped) {
-          if (!next[st.id]) next[st.id] = defaultRecordState();
+        const mapped = body.students ?? [];
+        setStudents(mapped);
+        setRecordsByStudentId((prev) => {
+          const next = { ...prev };
+          for (const st of mapped) {
+            if (!next[st.id]) next[st.id] = defaultRecordState();
+          }
+          return next;
+        });
+
+        if (mapped.length === 0) {
+          setRemedialCountByStudentId({});
+          setSubmittedByStudentMonth({});
+          setHistoricalMonthFeeByStudentId({});
+          setOpeningBalanceByStudentId({});
+          setLessonRecordsByStudentId({});
+          setLessonYearStateByStudentId({});
+          return;
         }
-        return next;
-      });
+
+        const currentMonth = Number(sheetMonth);
+        const feeStartMonth = body.feeStartMonth ?? feeSystemStartMonth1to12(sheetYear);
+        const endMonthForPricing = body.endMonthForPricing ?? currentMonth - 1;
+        const feeRows = body.feeRows ?? [];
+        const recordsMap = body.recordsMap ?? {};
+        const yearStatesMap = body.yearStatesMap ?? {};
+
+        const nextRemedial: Record<string, number> = {};
+        for (const row of body.metricsRows ?? []) {
+          nextRemedial[String(row.student_id ?? "")] = Number(row.remedial_count ?? 0) || 0;
+        }
+        setRemedialCountByStudentId(nextRemedial);
+
+        const submittedNext: Record<string, Partial<Record<number, number>>> = {};
+        const historicalNext: Record<
+          string,
+          Partial<Record<number, { lessonUnitPrice: number; feePricingGrade: string }>>
+        > = {};
+
+        if (endMonthForPricing >= feeStartMonth) {
+          for (const row of feeRows) {
+            const mo = row.month;
+            if (mo < feeStartMonth || mo > endMonthForPricing) continue;
+            const sid = row.student_id;
+            if (!sid || !mo) continue;
+            if (!historicalNext[sid]) historicalNext[sid] = {};
+            const rawG = String(row.fee_pricing_grade ?? "").trim();
+            const c = normalizeGradeCode(rawG);
+            historicalNext[sid][mo] = {
+              lessonUnitPrice: Number(row.lesson_unit_price ?? 0) || 0,
+              feePricingGrade: /^F[1-6]$/.test(c) ? c : "",
+            };
+          }
+        }
+
+        for (const row of feeRows) {
+          const sid = row.student_id;
+          const mo = row.month;
+          if (!sid || !mo || mo < feeStartMonth || mo > currentMonth) continue;
+          if (!submittedNext[sid]) submittedNext[sid] = {};
+          submittedNext[sid][mo] = Number(row.submitted_amount ?? 0) || 0;
+        }
+
+        setSubmittedByStudentMonth(submittedNext);
+        setHistoricalMonthFeeByStudentId(endMonthForPricing >= feeStartMonth ? historicalNext : {});
+
+        setRecordsByStudentId((prev) => {
+          const next = { ...prev };
+          for (const r of feeRows) {
+            if (r.month !== currentMonth) continue;
+            const id = r.student_id;
+            if (!next[id]) next[id] = defaultRecordState();
+            next[id] = {
+              ...next[id],
+              submitted: Number(r.submitted_amount ?? 0) || 0,
+              lessonUnitPrice: Number(r.lesson_unit_price ?? 0) || 0,
+              feePricingGrade: (() => {
+                const raw = String(r.fee_pricing_grade ?? "").trim();
+                const c = normalizeGradeCode(raw);
+                return /^F[1-6]$/.test(c) ? c : "";
+              })(),
+              remarks: String(r.remarks ?? ""),
+              makeupRemarks: String(r.makeup_remarks ?? ""),
+              balanceDueRemarks: String(r.balance_due_remarks ?? ""),
+              sendFee: Boolean(r.send_fee),
+            };
+          }
+          return next;
+        });
+
+        if (sheetYear === OPENING_BALANCE_AS_OF_YEAR) {
+          const openingResult = body.openingResult ?? { balances: {} };
+          const local = readFeeOpeningBalancesFromLocal();
+          const merged = { ...local, ...openingResult.balances };
+          setOpeningBalanceByStudentId(merged);
+          setOpeningBalanceTableMissing(Boolean(openingResult.tableMissing));
+          if (openingResult.error) {
+            setOpeningBalanceSaveMsg(
+              openingResult.tableMissing
+                ? "期初結餘表未建立：請在 Supabase 執行 supabase/supabase_student_fee_opening_balances.sql（已暫存本機）"
+                : `期初結餘讀取失敗：${openingResult.error}（已用本機備份）`,
+            );
+          } else {
+            setOpeningBalanceSaveMsg("");
+            setOpeningBalanceTableMissing(false);
+          }
+        } else {
+          setOpeningBalanceByStudentId({});
+          setOpeningBalanceTableMissing(false);
+          setOpeningBalanceSaveMsg("");
+        }
+
+        const nextRecords: Record<string, LessonRecord[]> = {};
+        const nextYearState: Record<string, StudentLesson2026State> = {};
+        for (const st of mapped) {
+          const id = st.id;
+          let records: LessonRecord[] = [];
+          const rawCloudRecords = recordsMap[id];
+          if (Array.isArray(rawCloudRecords) && rawCloudRecords.length > 0) {
+            records = rawCloudRecords as LessonRecord[];
+          } else {
+            try {
+              const key = `lesson_schedule_records:${id}`;
+              const raw = window.localStorage.getItem(key);
+              if (raw) {
+                const parsed = JSON.parse(raw) as unknown;
+                if (Array.isArray(parsed)) records = parsed as LessonRecord[];
+              }
+            } catch {
+              // ignore
+            }
+          }
+          nextRecords[id] = records;
+
+          nextYearState[id] = yearStatesMap[id] ?? emptyLessonYearState();
+        }
+        setLessonRecordsByStudentId(nextRecords);
+        setLessonYearStateByStudentId(nextYearState);
+      } catch {
+        if (!mounted) return;
+        setStudents([]);
+      }
     })();
 
     return () => {
@@ -812,211 +865,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return out;
   }, [students, sheetMonth, submittedByStudentMonth]);
 
-  /** Single network round-trip: metrics + fee history + lessons + opening (parallel). */
-  useEffect(() => {
-    if (students.length === 0) {
-      setRemedialCountByStudentId({});
-      setSubmittedByStudentMonth({});
-      setHistoricalMonthFeeByStudentId({});
-      setOpeningBalanceByStudentId({});
-      setLessonRecordsByStudentId({});
-      setExtraEntriesByStudentId({});
-      setAttendanceByStudentId({});
-      setRescheduleEntriesByStudentId({});
-      setLessonYearStateByStudentId({});
-      return;
-    }
-
-    let mounted = true;
-    const ids = students.map((s) => s.id);
-    const currentMonth = Number(sheetMonth);
-    const feeStartMonth = feeSystemStartMonth1to12(sheetYear);
-    const endMonthForPricing = currentMonth - 1;
-
-    void (async () => {
-      const feeRangePromise = loadStudentMonthlyFeeRecordsInMonthRange({
-        studentIds: ids,
-        year: sheetYear,
-        monthFrom: feeStartMonth,
-        monthTo: currentMonth,
-      });
-
-      const openingPromise =
-        sheetYear === OPENING_BALANCE_AS_OF_YEAR
-          ? loadStudentFeeOpeningBalances(ids)
-          : Promise.resolve({
-              balances: {} as Record<string, number>,
-              error: undefined as string | undefined,
-              tableMissing: false,
-            });
-
-      const [
-        metricsResult,
-        feeRows,
-        [recordsMap, yearStatesMap],
-        openingResult,
-      ] = await Promise.all([
-        fetchRowsInChunks({
-          ids,
-          query: (chunk) =>
-            supabase
-              .from("student_lessons_2026_metrics")
-              .select("student_id, remedial_count")
-              .in("student_id", chunk),
-        }).then((r) => ({ data: r.data, error: r.error ? { message: r.error } : null })),
-        feeRangePromise,
-        Promise.all([loadLessonScheduleRecordsBatch(ids), loadLessonYearStatesBatch(ids, sheetYear)]),
-        openingPromise,
-      ]);
-
-      if (!mounted) return;
-
-      if (!metricsResult.error) {
-        const next: Record<string, number> = {};
-        for (const row of metricsResult.data ?? []) {
-          next[String((row as { student_id?: string }).student_id)] =
-            Number((row as { remedial_count?: number | null }).remedial_count ?? 0) || 0;
-        }
-        setRemedialCountByStudentId(next);
-      }
-
-      const submittedNext: Record<string, Partial<Record<number, number>>> = {};
-      const historicalNext: Record<
-        string,
-        Partial<Record<number, { lessonUnitPrice: number; feePricingGrade: string }>>
-      > = {};
-
-      if (endMonthForPricing >= feeStartMonth) {
-        for (const row of feeRows) {
-          const mo = row.month;
-          if (mo < feeStartMonth || mo > endMonthForPricing) continue;
-          const sid = row.student_id;
-          if (!sid || !mo) continue;
-          if (!historicalNext[sid]) historicalNext[sid] = {};
-          const rawG = String(row.fee_pricing_grade ?? "").trim();
-          const c = normalizeGradeCode(rawG);
-          historicalNext[sid][mo] = {
-            lessonUnitPrice: Number(row.lesson_unit_price ?? 0) || 0,
-            feePricingGrade: /^F[1-6]$/.test(c) ? c : "",
-          };
-        }
-      }
-
-      for (const row of feeRows) {
-        const sid = row.student_id;
-        const mo = row.month;
-        if (!sid || !mo || mo < feeStartMonth || mo > currentMonth) continue;
-        if (!submittedNext[sid]) submittedNext[sid] = {};
-        submittedNext[sid][mo] = Number(row.submitted_amount ?? 0) || 0;
-      }
-
-      setSubmittedByStudentMonth(submittedNext);
-      setHistoricalMonthFeeByStudentId(endMonthForPricing >= feeStartMonth ? historicalNext : {});
-
-      setRecordsByStudentId((prev) => {
-        const next = { ...prev };
-        for (const r of feeRows) {
-          if (r.month !== currentMonth) continue;
-          const id = r.student_id;
-          if (!next[id]) next[id] = defaultRecordState();
-          next[id] = {
-            ...next[id],
-            submitted: Number(r.submitted_amount ?? 0) || 0,
-            lessonUnitPrice: Number(r.lesson_unit_price ?? 0) || 0,
-            feePricingGrade: (() => {
-              const raw = String(r.fee_pricing_grade ?? "").trim();
-              const c = normalizeGradeCode(raw);
-              return /^F[1-6]$/.test(c) ? c : "";
-            })(),
-            remarks: String(r.remarks ?? ""),
-            makeupRemarks: String(r.makeup_remarks ?? ""),
-            balanceDueRemarks: String(r.balance_due_remarks ?? ""),
-            sendFee: Boolean(r.send_fee),
-          };
-        }
-        return next;
-      });
-
-      if (sheetYear === OPENING_BALANCE_AS_OF_YEAR) {
-        const { balances, error, tableMissing } = openingResult as {
-          balances: Record<string, number>;
-          error?: string;
-          tableMissing?: boolean;
-        };
-        setOpeningBalanceByStudentId(balances);
-        setOpeningBalanceTableMissing(Boolean(tableMissing));
-        if (error) {
-          setOpeningBalanceSaveMsg(
-            tableMissing
-              ? "期初結餘表未建立：請在 Supabase 執行 supabase/supabase_student_fee_opening_balances.sql（已暫存本機）"
-              : `期初結餘讀取失敗：${error}（已用本機備份）`,
-          );
-        } else {
-          setOpeningBalanceSaveMsg("");
-          setOpeningBalanceTableMissing(false);
-        }
-      } else {
-        setOpeningBalanceByStudentId({});
-        setOpeningBalanceTableMissing(false);
-        setOpeningBalanceSaveMsg("");
-      }
-
-      const nextRecords: Record<string, LessonRecord[]> = {};
-      const nextExtra: Record<string, { id: string; date: string }[]> = {};
-      const nextAttendance: Record<string, Record<string, boolean>> = {};
-      const nextReschedule: Record<string, { id: string; fromDate: string; toDate: string }[]> = {};
-      const nextYearState: Record<string, StudentLesson2026State> = {};
-      for (const st of students) {
-        const id = st.id;
-        let records: LessonRecord[] = [];
-        const rawCloudRecords = recordsMap[id];
-        if (Array.isArray(rawCloudRecords) && rawCloudRecords.length > 0) {
-          records = rawCloudRecords as LessonRecord[];
-        } else {
-          try {
-            const key = `lesson_schedule_records:${id}`;
-            const raw = window.localStorage.getItem(key);
-            if (raw) {
-              const parsed = JSON.parse(raw) as unknown;
-              if (Array.isArray(parsed)) records = parsed as LessonRecord[];
-            }
-          } catch {
-            // ignore
-          }
-        }
-        nextRecords[id] = records;
-
-        const yearState = yearStatesMap[id];
-        const extraEntriesRaw =
-          (yearState?.extraEntries as Array<{ id: string; date: string; time: string; room: string }>) ?? [];
-        nextExtra[id] = extraEntriesRaw.map((e) => ({ id: String(e.id ?? ""), date: String(e.date ?? "") }));
-
-        nextAttendance[id] =
-          yearState?.attendance && typeof yearState.attendance === "object"
-            ? (yearState.attendance as Record<string, boolean>)
-            : {};
-
-        const rescheduleRaw =
-          (yearState?.rescheduleEntries as Array<{ id: string; fromDate: string; toDate: string }>) ?? [];
-        nextReschedule[id] = rescheduleRaw.map((e) => ({
-          id: String(e.id ?? ""),
-          fromDate: String(e.fromDate ?? ""),
-          toDate: String(e.toDate ?? ""),
-        }));
-        nextYearState[id] = yearStatesMap[id] ?? emptyLessonYearState();
-      }
-      setLessonRecordsByStudentId(nextRecords);
-      setExtraEntriesByStudentId(nextExtra);
-      setAttendanceByStudentId(nextAttendance);
-      setRescheduleEntriesByStudentId(nextReschedule);
-      setLessonYearStateByStudentId(nextYearState);
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [students, sheetMonth, sheetYear]);
-
   const flushPendingOpeningBalances = useCallback(() => {
     for (const [studentId, value] of pendingOpeningBalanceRef.current) {
       const key = `${studentId}:${OPENING_BALANCE_AS_OF_YEAR}:${OPENING_BALANCE_AS_OF_MONTH}`;
@@ -1028,7 +876,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     pendingOpeningBalanceRef.current.clear();
   }, [openingBalanceSaveTimersRef]);
 
-  function scheduleSaveOpeningBalance(studentId: string, nextValue: number) {
+  const scheduleSaveOpeningBalance = useCallback((studentId: string, nextValue: number) => {
     pendingOpeningBalanceRef.current.set(studentId, nextValue);
     const key = `${studentId}:${OPENING_BALANCE_AS_OF_YEAR}:${OPENING_BALANCE_AS_OF_MONTH}`;
     const existing = openingBalanceSaveTimersRef.get(key);
@@ -1051,13 +899,13 @@ export default function StudentsLessonTimeFeeRecordPage() {
       });
     }, 600);
     openingBalanceSaveTimersRef.set(key, t);
-  }
+  }, [openingBalanceSaveTimersRef]);
 
   const onOpeningBalanceChange = useCallback((studentId: string, nextValue: number) => {
     writeFeeOpeningBalanceToLocal(studentId, nextValue);
     setOpeningBalanceByStudentId((prev) => ({ ...prev, [studentId]: nextValue }));
     scheduleSaveOpeningBalance(studentId, nextValue);
-  }, []);
+  }, [scheduleSaveOpeningBalance]);
 
   useEffect(() => {
     const onLeave = () => flushPendingOpeningBalances();
@@ -1070,7 +918,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     };
   }, [flushPendingOpeningBalances]);
 
-  function scheduleSave(studentId: string, patch: Partial<RecordState>) {
+  const scheduleSave = useCallback((studentId: string, patch: Partial<RecordState>) => {
     const key = `${studentId}:${sheetYear}:${sheetMonth}`;
     const existing = saveTimersRef.get(key);
     if (existing) window.clearTimeout(existing);
@@ -1092,7 +940,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
       });
     }, 600);
     saveTimersRef.set(key, t);
-  }
+  }, [recordsByStudentId, saveTimersRef, sheetMonth, sheetYear]);
 
   const sortedStudents = useMemo(() => {
     const getRec = (id: string) => recordsByStudentId[id];
@@ -1153,12 +1001,13 @@ export default function StudentsLessonTimeFeeRecordPage() {
     const out: Record<string, number> = {};
     const m = Number(sheetMonth);
     for (const st of students) {
-      out[st.id] = countAttendedLessonsInMonth({
-        attendance: attendanceByStudentId[st.id] ?? {},
+      const records = normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []);
+      const state = toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]);
+      out[st.id] = countAttendedBillableLessonsInMonth({
+        records,
+        state,
         year: sheetYear,
         month1to12: m,
-        extras: extraEntriesByStudentId[st.id] ?? [],
-        reschedules: rescheduleEntriesByStudentId[st.id] ?? [],
       });
     }
     return out;
@@ -1166,9 +1015,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     students,
     sheetYear,
     sheetMonth,
-    attendanceByStudentId,
-    extraEntriesByStudentId,
-    rescheduleEntriesByStudentId,
+    lessonRecordsByStudentId,
+    lessonYearStateByStudentId,
   ]);
 
   const filteredSortedStudents = useMemo(() => {
@@ -1224,6 +1072,27 @@ export default function StudentsLessonTimeFeeRecordPage() {
     weekdayTokensByStudentId,
     attendedLessonsInMonthByStudentId,
   ]);
+
+  const {
+    tableScrollId,
+    bottomTrackRef,
+    sideTrackRef,
+    bottomThumb,
+    sideThumb,
+    bottomScrollWidth,
+    bottomScrollClientWidth,
+    sideScrollHeight,
+    sideScrollClientHeight,
+    bottomTrackA11yProps,
+    sideTrackA11yProps,
+    onBottomTrackMouseDown,
+    onSideTrackMouseDown,
+    startDragBottomThumb,
+    startDragSideThumb,
+  } = useCustomScrollbars({
+    tableScrollRef,
+    contentKey: `${filteredSortedStudents.length}:${sheetYear}:${sheetMonth}`,
+  });
 
   const updateStudentRecord = (studentId: string, patch: Partial<RecordState>) => {
     setRecordsByStudentId((prev) => ({
@@ -1345,8 +1214,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
             : ""
         }.`,
       );
-    } catch (e: any) {
-      const msg = String(e?.message ?? e);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("aborted")) {
         setSyncNotice("Sync timed out (>90s). Please try again. The system now syncs in batches, and the next attempt is usually faster.");
       } else {
@@ -1359,175 +1228,28 @@ export default function StudentsLessonTimeFeeRecordPage() {
     [sheetMonth, sheetYear],
   );
 
-  function toHkIsoDateFromMs(msOrIso: number | string | Date) {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Hong_Kong",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(new Date(msOrIso));
-
-    const { y, m, d } = readYmdParts(parts);
-    return `${y}-${m}-${d}`;
-  }
-
-  function getActiveWeekdays(records: LessonRecord[], dateIso: string) {
-    if (!records.length) return [] as string[];
-    const normalized = records
-      .map((r) => {
-        const rr = r as unknown as Record<string, unknown>;
-        const weekday =
-          String(rr.weekday ?? rr.week_day ?? rr.weekDay ?? rr.Weekday ?? "") || "";
-
-        const effectiveDate =
-          (typeof rr.effectiveDate === "string"
-            ? rr.effectiveDate
-            : typeof rr.effective_date === "string"
-              ? rr.effective_date
-              : undefined) ?? toHkIsoDateFromMs((rr.createdAt ?? rr.created_at) as any);
-
-        const createdAtNum =
-          typeof rr.createdAt === "number"
-            ? rr.createdAt
-            : typeof rr.created_at === "number"
-              ? rr.created_at
-              : Number(rr.createdAt ?? rr.created_at ?? 0);
-
-        return {
-          weekday,
-          effectiveDate: String(effectiveDate),
-          createdAt: Number.isFinite(createdAtNum) ? createdAtNum : 0,
-        };
-      })
-      .filter((x) => x.weekday);
-
-    normalized.sort((a, b) => {
-      const ed = a.effectiveDate.localeCompare(b.effectiveDate);
-      if (ed !== 0) return ed;
-      return a.createdAt - b.createdAt;
-    });
-
-    const activeRules = getActiveScheduleRulesForDate(normalized, dateIso);
-    const weekdays = [...new Set(activeRules.map((r) => r.weekday).filter(Boolean))];
-    weekdays.sort((a, b) => (WEEKDAY_ORDER[a] ?? 99) - (WEEKDAY_ORDER[b] ?? 99));
-    return weekdays;
-  }
-
-  function countHkWeekdaysInMonth(year: number, month1to12: number) {
-    const counts: Record<string, number> = {
-      一: 0,
-      二: 0,
-      三: 0,
-      四: 0,
-      五: 0,
-      六: 0,
-      日: 0,
-    };
-
-    // Use UTC for day count to avoid local timezone drift.
-    const daysInMonth = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
-
-    // Compute weekdays in HK timezone to avoid server/client timezone mismatch.
-    const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Hong_Kong",
-      weekday: "short",
-    });
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12)); // midday to avoid date-boundary drift
-      const short = weekdayFormatter.format(dt);
-      const cn = HK_WEEKDAY_SHORT_TO_CN[short];
-      if (cn) counts[cn] += 1;
-    }
-
-    return counts;
-  }
-
-  const weekdayCountsInSelectedMonth = useMemo(() => {
-    return countHkWeekdaysInMonth(sheetYear, Number(sheetMonth));
-  }, [sheetMonth, sheetYear]);
-
-  const baseLessonDatesByWeekday = useMemo(() => {
-    const out: Record<string, string[]> = {
-      一: [],
-      二: [],
-      三: [],
-      四: [],
-      五: [],
-      六: [],
-      日: [],
-    };
-    const daysInMonth = new Date(Date.UTC(sheetYear, Number(sheetMonth), 0)).getUTCDate();
-    const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Hong_Kong",
-      weekday: "short",
-    });
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dt = new Date(Date.UTC(sheetYear, Number(sheetMonth) - 1, d, 12));
-      const short = weekdayFormatter.format(dt);
-      const cn = HK_WEEKDAY_SHORT_TO_CN[short];
-      if (cn) out[cn].push(`${Number(sheetMonth)}/${d}`);
-    }
-    return out;
-  }, [sheetYear, sheetMonth]);
-
-  const extraEntryCountsByStudentId = useMemo(() => {
-    const out: Record<string, { before: number; current: number }> = {};
-    const currentMonth = Number(sheetMonth);
-    const feeStartMonth =
-      sheetYear === FEE_SYSTEM_START_YEAR ? FEE_SYSTEM_START_MONTH : 1;
-    for (const st of students) {
-      out[st.id] = { before: 0, current: 0 };
-      const extraEntries = extraEntriesByStudentId[st.id] ?? [];
-      for (const e of extraEntries) {
-        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
-        if (!m) continue;
-        const y = Number(m[1]);
-        const mo = Number(m[2]);
-        if (y !== sheetYear) continue;
-        if (mo === currentMonth) out[st.id].current += 1;
-        else if (mo < currentMonth && mo >= feeStartMonth) out[st.id].before += 1;
-      }
-    }
-    return out;
-  }, [students, extraEntriesByStudentId, sheetYear, sheetMonth]);
-
   const { lessonDatesByStudentId, fullLessonDatesByStudentId } = useMemo(() => {
     const capped: Record<string, string[]> = {};
     const full: Record<string, string[]> = {};
+    const currentMonth = Number(sheetMonth);
     for (const st of students) {
-      const weekdays = weekdayTokensByStudentId[st.id] ?? [];
-      const base: string[] = [];
-      for (const wd of weekdays) {
-        base.push(...(baseLessonDatesByWeekday[wd] ?? []));
-      }
-      const extraEntries = extraEntriesByStudentId[st.id] ?? [];
-      for (const e of extraEntries) {
-        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
-        if (!m) continue;
-        const y = Number(m[1]);
-        const mo = Number(m[2]);
-        const d = Number(m[3]);
-        if (y === sheetYear && mo === Number(sheetMonth)) {
-          base.push(`${mo}/${d}`);
-        }
-      }
-      base.sort((a, b) => {
-        const [am, ad] = a.split("/").map((v) => Number(v));
-        const [bm, bd] = b.split("/").map((v) => Number(v));
-        if (am !== bm) return am - bm;
-        return ad - bd;
+      const legacyWeekdays = weekdayTokensByStudentId[st.id] ?? [];
+      const dates = collectBillableLessonDatesForMonth({
+        records: normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []),
+        state: toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]),
+        year: sheetYear,
+        month1to12: currentMonth,
+        legacyWeekdays,
       });
-      const sorted = Array.from(new Set(base));
-      full[st.id] = sorted;
-      capped[st.id] = sorted.slice(0, L_COUNT);
+      full[st.id] = dates;
+      capped[st.id] = dates.slice(0, L_COUNT);
     }
     return { lessonDatesByStudentId: capped, fullLessonDatesByStudentId: full };
   }, [
     students,
     weekdayTokensByStudentId,
-    extraEntriesByStudentId,
-    baseLessonDatesByWeekday,
+    lessonRecordsByStudentId,
+    lessonYearStateByStudentId,
     sheetYear,
     sheetMonth,
   ]);
@@ -1587,14 +1309,16 @@ export default function StudentsLessonTimeFeeRecordPage() {
     const feeStartMonth = feeSystemStartMonth1to12(sheetYear);
     for (const st of students) {
       let sum = 0;
-      const weekdays = weekdayTokensByStudentId[st.id] ?? [];
-      const extras = extraEntriesByStudentId[st.id] ?? [];
+      const legacyWeekdays = weekdayTokensByStudentId[st.id] ?? [];
+      const records = normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []);
+      const state = toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]);
       for (let m = feeStartMonth; m < currentMonth; m += 1) {
-        const dates = collectSortedUniqueLessonDatesForMonth({
+        const dates = collectBillableLessonDatesForMonth({
+          records,
+          state,
           year: sheetYear,
           month1to12: m,
-          weekdays,
-          extraEntries: extras,
+          legacyWeekdays,
         });
         const hist = historicalMonthFeeByStudentId[st.id]?.[m];
         const flat = effectiveFlatLessonUnit(Number(hist?.lessonUnitPrice) || 0);
@@ -1609,7 +1333,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     sheetYear,
     sheetMonth,
     weekdayTokensByStudentId,
-    extraEntriesByStudentId,
+    lessonRecordsByStudentId,
+    lessonYearStateByStudentId,
     feeTierSettings,
     historicalMonthFeeByStudentId,
   ]);
@@ -1662,8 +1387,9 @@ export default function StudentsLessonTimeFeeRecordPage() {
       currentRecord: recordsByStudentId[st.id] ?? defaultRecordState(),
       historicalMonthFee: historicalMonthFeeByStudentId[st.id] ?? {},
       submittedByMonth: submittedByStudentMonth[st.id] ?? {},
-      weekdays: weekdayTokensByStudentId[st.id] ?? [],
-      extraEntries: extraEntriesByStudentId[st.id] ?? [],
+      lessonRecords: lessonRecordsByStudentId[st.id] ?? [],
+      yearState: lessonYearStateByStudentId[st.id],
+      legacyWeekdays: weekdayTokensByStudentId[st.id] ?? [],
       feeTierSettings,
     });
   }, [
@@ -1676,7 +1402,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     historicalMonthFeeByStudentId,
     submittedByStudentMonth,
     weekdayTokensByStudentId,
-    extraEntriesByStudentId,
+    lessonRecordsByStudentId,
+    lessonYearStateByStudentId,
     feeTierSettings,
   ]);
 
@@ -1707,14 +1434,14 @@ export default function StudentsLessonTimeFeeRecordPage() {
     if (Object.keys(lessonRecordsByStudentId).length === 0) return;
 
     // Weekday uses student's current active rule (as of today).
-    const todayIso = toHkIsoDateFromMs(Date.now());
+    const todayIso = feeRecordToHkIsoDateFromMs(Date.now());
 
     setRecordsByStudentId((prev) => {
       const next = { ...prev };
       for (const st of students) {
         if (!next[st.id]) next[st.id] = defaultRecordState();
         const records = lessonRecordsByStudentId[st.id] ?? [];
-        const weekdays = getActiveWeekdays(records, todayIso);
+        const weekdays = getActiveWeekdaysForFeeRecord(records, todayIso);
         const finalWeekday =
           weekdays.length > 0
             ? weekdays.join("/")
@@ -1723,17 +1450,18 @@ export default function StudentsLessonTimeFeeRecordPage() {
           .split("/")
           .map((v) => v.trim())
           .filter(Boolean);
-        const extraCount = extraEntryCountsByStudentId[st.id]?.current ?? 0;
+        const billableDates = collectBillableLessonDatesForMonth({
+          records: normalizeFeeLessonRecords(records),
+          state: toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]),
+          year: sheetYear,
+          month1to12: Number(sheetMonth),
+          legacyWeekdays: effectiveWeekdays,
+        });
 
-        const baseExpected = effectiveWeekdays.reduce(
-          (sum, wd) => sum + (weekdayCountsInSelectedMonth[wd] ?? 0),
-          0,
-        );
         next[st.id] = {
           ...next[st.id],
           weekday: finalWeekday,
-          // Expected = regular lessons + extra lessons in this month.
-          expected: baseExpected + extraCount,
+          expected: billableDates.length,
         };
       }
       return next;
@@ -1741,146 +1469,10 @@ export default function StudentsLessonTimeFeeRecordPage() {
   }, [
     students,
     lessonRecordsByStudentId,
-    weekdayCountsInSelectedMonth,
+    lessonYearStateByStudentId,
     sheetMonth,
     sheetYear,
-    extraEntryCountsByStudentId,
   ]);
-
-  useEffect(() => {
-    const tableEl = tableScrollRef.current;
-    if (!tableEl) return;
-
-    const updateMetrics = () => {
-      setBottomScrollWidth(tableEl.scrollWidth);
-      setBottomScrollClientWidth(tableEl.clientWidth);
-      setSideScrollHeight(tableEl.scrollHeight);
-      setSideScrollClientHeight(tableEl.clientHeight);
-    };
-
-    const onTableScroll = () => {
-      setScrollLeft(tableEl.scrollLeft);
-      setScrollTop(tableEl.scrollTop);
-    };
-
-    updateMetrics();
-    setScrollLeft(tableEl.scrollLeft);
-    setScrollTop(tableEl.scrollTop);
-    tableEl.addEventListener("scroll", onTableScroll, { passive: true });
-    const ro = new ResizeObserver(() => updateMetrics());
-    ro.observe(tableEl);
-
-    return () => {
-      tableEl.removeEventListener("scroll", onTableScroll);
-      ro.disconnect();
-    };
-  }, [sortedStudents.length, sheetYear, sheetMonth]);
-
-  const bottomThumb = useMemo(() => {
-    const trackEl = bottomTrackRef.current;
-    const trackWidth = trackEl?.clientWidth ?? 0;
-    if (!trackWidth || !bottomScrollWidth || !bottomScrollClientWidth) return { size: 0, offset: 0 };
-    const ratio = bottomScrollClientWidth / bottomScrollWidth;
-    const size = Math.max(28, Math.floor(trackWidth * ratio));
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-    const offset = Math.round((scrollLeft / maxScroll) * maxOffset);
-    return { size, offset };
-  }, [bottomScrollClientWidth, bottomScrollWidth, scrollLeft]);
-
-  const sideThumb = useMemo(() => {
-    const trackEl = sideTrackRef.current;
-    const trackHeight = trackEl?.clientHeight ?? 0;
-    if (!trackHeight || !sideScrollHeight || !sideScrollClientHeight) return { size: 0, offset: 0 };
-    const ratio = sideScrollClientHeight / sideScrollHeight;
-    const size = Math.max(28, Math.floor(trackHeight * ratio));
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-    const offset = Math.round((scrollTop / maxScroll) * maxOffset);
-    return { size, offset };
-  }, [sideScrollClientHeight, sideScrollHeight, scrollTop]);
-
-  const onBottomTrackMouseDown = (e: React.MouseEvent) => {
-    const track = bottomTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const { size } = bottomThumb;
-    const trackWidth = rect.width;
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-    const targetOffset = Math.min(maxOffset, Math.max(0, x - size / 2));
-    tableEl.scrollLeft = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
-  };
-
-  const onSideTrackMouseDown = (e: React.MouseEvent) => {
-    const track = sideTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const { size } = sideThumb;
-    const trackHeight = rect.height;
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-    const targetOffset = Math.min(maxOffset, Math.max(0, y - size / 2));
-    tableEl.scrollTop = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
-  };
-
-  const startDragBottomThumb = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const track = bottomTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const startX = e.clientX;
-    const startOffset = bottomThumb.offset;
-    const size = bottomThumb.size;
-    const trackWidth = rect.width;
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-
-    const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - startX;
-      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dx));
-      tableEl.scrollLeft = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  const startDragSideThumb = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const track = sideTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const startY = e.clientY;
-    const startOffset = sideThumb.offset;
-    const size = sideThumb.size;
-    const trackHeight = rect.height;
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-
-    const onMove = (ev: MouseEvent) => {
-      const dy = ev.clientY - startY;
-      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dy));
-      tableEl.scrollTop = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">
@@ -2142,6 +1734,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                 <div className="flex">
                   <div
                     ref={tableScrollRef}
+                    id={tableScrollId}
                     className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                   >
                     <table
@@ -2285,7 +1878,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
                               lessonDatesSerialized={lessonDatesSerialized}
                               thisMonthDatedSlotCount={thisMonthDatedSlotCount}
                               makeupLiveCount={remedialCountByStudentId[st.id] ?? 0}
-                              makeupDbOnly={false}
                               remedialCountDb={remedialCountByStudentId[st.id] ?? 0}
                               showGradeSeparatorTop={showGradeSeparatorTop}
                               showOpeningEditor={sheetYear === OPENING_BALANCE_AS_OF_YEAR}
@@ -2308,8 +1900,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                     <div className="border-l border-slate-200 bg-slate-50 px-2 py-2">
                       <div
                         ref={sideTrackRef}
-                        role="scrollbar"
-                        aria-label="Vertical scrollbar"
+                        {...sideTrackA11yProps}
                         className="relative w-2.5 select-none rounded bg-white ring-1 ring-slate-200"
                         style={{ height: "calc(70vh - 16px)" }}
                         onMouseDown={onSideTrackMouseDown}
@@ -2328,8 +1919,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                   <div className="border-t border-slate-200 bg-slate-50 px-4 py-2">
                     <div
                       ref={bottomTrackRef}
-                      role="scrollbar"
-                      aria-label="Horizontal scrollbar"
+                      {...bottomTrackA11yProps}
                       className="relative h-2.5 select-none rounded bg-white ring-1 ring-slate-200"
                       onMouseDown={onBottomTrackMouseDown}
                     >
@@ -2552,7 +2142,6 @@ type StudentFeeRowProps = {
   balanceCarryForward: number;
   lessonDatesSerialized: string;
   makeupLiveCount: number;
-  makeupDbOnly: boolean;
   remedialCountDb: number;
   /** Add a stronger top border when grade changes from previous row. */
   showGradeSeparatorTop: boolean;
@@ -2579,7 +2168,6 @@ const StudentFeeRow = memo(function StudentFeeRow({
   balanceCarryForward,
   lessonDatesSerialized,
   makeupLiveCount,
-  makeupDbOnly,
   remedialCountDb,
   showGradeSeparatorTop,
   showOpeningEditor,

@@ -2,6 +2,22 @@
 
 import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
 import {
+  DEFAULT_LESSON_YEAR_STATE,
+  parseLessonYearStateDbRow,
+  type LessonYearStateField,
+  type StudentLesson2026State,
+  ALL_LESSON_YEAR_STATE_FIELDS,
+} from "@/lib/lessonYearStateShared";
+import {
+  LEGACY_2026_STATE_SELECT,
+  LEGACY_LESSON_STATE_YEAR,
+  isMissingLessonMetricsTableError,
+  mergeYearStateWithLegacyFallback,
+  mergeYearStatesBatchWithLegacyFallback,
+  parseLegacy2026StateRows,
+  studentIdsNeedingLegacyStateFallback,
+} from "@/lib/lessonYearStateLegacy";
+import {
   FEE_RECORD_SELECT_BASE,
   FEE_RECORD_SELECT_WITH_SPLIT_REMARKS,
   isMissingFeeRecordColumnError,
@@ -9,47 +25,48 @@ import {
 } from "@/lib/studentMonthlyFeeRecordsCompat";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { supabase } from "@/lib/supabase";
+import { canonicalScheduleRoomLabel } from "@/lib/dayTimetableShared";
+import {
+  attendanceRecordDelta,
+  buildAttendancePatchFromKeys,
+  buildLessonYearStateUpsertRow,
+  isMissingAttendancePatchRpcError,
+} from "@/lib/lessonYearStatePatchCore";
 
-export type StudentLesson2026State = {
-  attendance: Record<string, boolean>;
-  hiddenDates: Record<string, boolean>;
-  overrides: Record<string, unknown>;
-  rescheduleEntries: unknown[];
-  extraEntries: unknown[];
+export type { StudentLesson2026State } from "@/lib/lessonYearStateShared";
+export { parseLessonYearStateDbRow } from "@/lib/lessonYearStateShared";
+
+/** Supabase row shapes used before generated types exist for every column. */
+type ExamDateDbRow = {
+  student_id?: string | null;
+  exam_date?: string | null;
+  exam_content?: string | null;
 };
+
+type LessonRecordsDbRow = {
+  student_id?: string | null;
+  records?: unknown[] | null;
+};
+
+type VisibilityModeDbRow = {
+  student_id?: string | null;
+  mode?: string | null;
+  effective_date?: string | null;
+};
+
+function readExamDateRow(row: ExamDateDbRow | null | undefined) {
+  return {
+    examDate: String(row?.exam_date ?? ""),
+    examContent: row?.exam_content ? String(row.exam_content) : "",
+  };
+}
 
 export type StudentExamInfo = {
   examDate: string;
   examContent: string;
 };
 
-const DEFAULT_2026_STATE: StudentLesson2026State = {
-  attendance: {},
-  hiddenDates: {},
-  overrides: {},
-  rescheduleEntries: [],
-  extraEntries: [],
-};
-
-/** 由 `student_lessons_year_state` 列轉成前端 state（Realtime / REST 共用） */
-export function parseLessonYearStateDbRow(row: Record<string, unknown>): StudentLesson2026State {
-  return {
-    attendance:
-      row.attendance && typeof row.attendance === "object"
-        ? (row.attendance as Record<string, boolean>)
-        : {},
-    hiddenDates:
-      row.hidden_dates && typeof row.hidden_dates === "object"
-        ? (row.hidden_dates as Record<string, boolean>)
-        : {},
-    overrides:
-      row.overrides && typeof row.overrides === "object"
-        ? (row.overrides as Record<string, unknown>)
-        : {},
-    rescheduleEntries: Array.isArray(row.reschedule_entries) ? row.reschedule_entries : [],
-    extraEntries: Array.isArray(row.extra_entries) ? row.extra_entries : [],
-  };
-}
+const DEFAULT_2026_STATE = DEFAULT_LESSON_YEAR_STATE;
 
 export async function loadExamInfo(studentId: string): Promise<StudentExamInfo> {
   const { data, error } = await supabase
@@ -71,10 +88,7 @@ export async function loadExamInfo(studentId: string): Promise<StudentExamInfo> 
     };
   }
 
-  return {
-    examDate: (data?.exam_date as string | null) ?? "",
-    examContent: (data as any)?.exam_content ? String((data as any).exam_content) : "",
-  };
+  return readExamDateRow(data as ExamDateDbRow | null);
 }
 
 export async function loadExamDate(studentId: string) {
@@ -90,7 +104,8 @@ export async function loadExamDatesBatch(studentIds: string[]) {
     .in("student_id", studentIds);
   const out: Record<string, string> = {};
   for (const row of data ?? []) {
-    out[String((row as any).student_id)] = String((row as any).exam_date ?? "");
+    const typed = row as ExamDateDbRow;
+    out[String(typed.student_id ?? "")] = String(typed.exam_date ?? "");
   }
   return out;
 }
@@ -110,10 +125,11 @@ export async function loadExamInfoBatch(studentIds: string[]) {
       .select("student_id, exam_date")
       .in("student_id", studentIds);
     for (const row of fallback ?? []) {
-      const sid = String((row as any).student_id ?? "");
+      const typed = row as ExamDateDbRow;
+      const sid = String(typed.student_id ?? "");
       if (!sid) continue;
       out[sid] = {
-        examDate: String((row as any).exam_date ?? ""),
+        examDate: String(typed.exam_date ?? ""),
         examContent: "",
       };
     }
@@ -121,12 +137,10 @@ export async function loadExamInfoBatch(studentIds: string[]) {
   }
 
   for (const row of data ?? []) {
-    const sid = String((row as any).student_id ?? "");
+    const typed = row as ExamDateDbRow;
+    const sid = String(typed.student_id ?? "");
     if (!sid) continue;
-    out[sid] = {
-      examDate: String((row as any).exam_date ?? ""),
-      examContent: String((row as any).exam_content ?? ""),
-    };
+    out[sid] = readExamDateRow(typed);
   }
   return out;
 }
@@ -202,62 +216,53 @@ export async function loadLessonScheduleRecordsBatch(studentIds: string[]) {
   if (error) throw new Error(error);
   const out: Record<string, unknown[]> = {};
   for (const row of data) {
-    out[String((row as any).student_id)] = Array.isArray((row as any).records)
-      ? ((row as any).records as unknown[])
+    const typed = row as LessonRecordsDbRow;
+    out[String(typed.student_id ?? "")] = Array.isArray(typed.records)
+      ? typed.records
       : [];
   }
   return out;
 }
 
+function normalizeLessonRecordsForStorage(records: unknown[]): unknown[] {
+  return records.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const row = item as Record<string, unknown>;
+    if (typeof row.room !== "string") return item;
+    const room = canonicalScheduleRoomLabel(row.room);
+    return room === row.room.trim() ? item : { ...row, room };
+  });
+}
+
 export async function saveLessonScheduleRecords(studentId: string, records: unknown[]) {
-  await supabase.from("student_lesson_records").upsert(
-    { student_id: studentId, records, updated_at: new Date().toISOString() },
+  const normalized = normalizeLessonRecordsForStorage(records);
+  const { error } = await supabase.from("student_lesson_records").upsert(
+    { student_id: studentId, records: normalized, updated_at: new Date().toISOString() },
     { onConflict: "student_id" },
   );
+  if (error) throw new Error(error.message);
   notifyScheduleCachesStale();
 }
 
+async function loadLegacy2026StatesBatchClient(studentIds: string[]) {
+  if (!studentIds.length) return {} as Record<string, StudentLesson2026State>;
+  const { data, error } = await fetchRowsInChunks({
+    ids: studentIds,
+    query: (chunk) =>
+      supabase.from("student_lessons_2026_state").select(LEGACY_2026_STATE_SELECT).in("student_id", chunk),
+  });
+  if (error) throw new Error(error);
+  return parseLegacy2026StateRows(data as Array<Record<string, unknown>>);
+}
+
+/** @deprecated Use `loadLessonYearState(studentId, LEGACY_LESSON_STATE_YEAR)` */
 export async function loadLesson2026State(studentId: string) {
-  const { data } = await supabase
-    .from("student_lessons_2026_state")
-    .select("attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-    .eq("student_id", studentId)
-    .maybeSingle();
-
-  if (!data) return DEFAULT_2026_STATE;
-
-  return {
-    attendance:
-      data.attendance && typeof data.attendance === "object"
-        ? (data.attendance as Record<string, boolean>)
-        : {},
-    hiddenDates:
-      data.hidden_dates && typeof data.hidden_dates === "object"
-        ? (data.hidden_dates as Record<string, boolean>)
-        : {},
-    overrides:
-      data.overrides && typeof data.overrides === "object"
-        ? (data.overrides as Record<string, unknown>)
-        : {},
-    rescheduleEntries: Array.isArray(data.reschedule_entries) ? data.reschedule_entries : [],
-    extraEntries: Array.isArray(data.extra_entries) ? data.extra_entries : [],
-  };
+  return loadLessonYearState(studentId, LEGACY_LESSON_STATE_YEAR);
 }
 
+/** @deprecated Use `saveLessonYearState(studentId, LEGACY_LESSON_STATE_YEAR, state)` */
 export async function saveLesson2026State(studentId: string, state: StudentLesson2026State) {
-  await supabase.from("student_lessons_2026_state").upsert(
-    {
-      student_id: studentId,
-      attendance: state.attendance,
-      hidden_dates: state.hiddenDates,
-      overrides: state.overrides,
-      reschedule_entries: state.rescheduleEntries,
-      extra_entries: state.extraEntries,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id" },
-  );
-  notifyScheduleCachesStale();
+  await saveLessonYearState(studentId, LEGACY_LESSON_STATE_YEAR, state);
 }
 
 export async function loadLessonYearState(studentId: string, year: number) {
@@ -268,8 +273,14 @@ export async function loadLessonYearState(studentId: string, year: number) {
     .eq("year", year)
     .maybeSingle();
 
-  if (!data) return DEFAULT_2026_STATE;
-  return parseLessonYearStateDbRow(data as Record<string, unknown>);
+  const yearState = data
+    ? parseLessonYearStateDbRow(data as Record<string, unknown>)
+    : { ...DEFAULT_2026_STATE };
+
+  if (year !== LEGACY_LESSON_STATE_YEAR) return yearState;
+
+  const legacyBatch = await loadLegacy2026StatesBatchClient([studentId]);
+  return mergeYearStateWithLegacyFallback(yearState, legacyBatch[studentId], year);
 }
 
 export async function loadLessonYearStatesBatch(studentIds: string[], year: number) {
@@ -284,11 +295,88 @@ export async function loadLessonYearStatesBatch(studentIds: string[], year: numb
         .in("student_id", chunk),
   });
   if (error) throw new Error(error);
-  const out: Record<string, StudentLesson2026State> = {};
-  for (const row of data) {
-    out[String((row as any).student_id)] = parseLessonYearStateDbRow(row as Record<string, unknown>);
+  const yearStates = parseLegacy2026StateRows(data as Array<Record<string, unknown>>);
+
+  const needLegacy = studentIdsNeedingLegacyStateFallback(studentIds, yearStates, year);
+  if (!needLegacy.length) {
+    return mergeYearStatesBatchWithLegacyFallback(studentIds, year, yearStates, {});
   }
-  return out;
+
+  const legacyStates = await loadLegacy2026StatesBatchClient(needLegacy);
+  return mergeYearStatesBatchWithLegacyFallback(studentIds, year, yearStates, legacyStates);
+}
+
+export type SaveLessonYearStatePatchOptions = {
+  /** Skip aggregate cache revalidation (rare; default revalidates after save). */
+  skipScheduleCacheRevalidate?: boolean;
+  /** When set, attendance is merged via RPC using only these keys (smallest payload). */
+  attendanceKeys?: readonly string[];
+  /** Baseline attendance for delta fallback when RPC is unavailable. */
+  lastSavedAttendance?: Record<string, boolean>;
+};
+
+export async function patchLessonYearAttendance(
+  studentId: string,
+  year: number,
+  patch: Record<string, boolean>,
+  options?: Pick<SaveLessonYearStatePatchOptions, "skipScheduleCacheRevalidate">,
+) {
+  if (!Object.keys(patch).length) return;
+
+  const { error } = await supabase.rpc("patch_lesson_year_attendance", {
+    p_student_id: studentId,
+    p_year: year,
+    p_patch: patch,
+  });
+
+  if (error && isMissingAttendancePatchRpcError(error.message)) {
+    throw new Error(`ATTENDANCE_RPC_MISSING:${error.message}`);
+  }
+  if (error) throw new Error(error.message);
+
+  if (!options?.skipScheduleCacheRevalidate) {
+    notifyScheduleCachesStale();
+  }
+}
+
+export async function saveLessonYearStatePatch(
+  studentId: string,
+  year: number,
+  patch: Partial<StudentLesson2026State>,
+  fields: readonly LessonYearStateField[],
+  options?: SaveLessonYearStatePatchOptions,
+) {
+  const attendanceOnly = fields.length === 1 && fields[0] === "attendance";
+
+  if (attendanceOnly && patch.attendance) {
+    const attendancePatch = options?.attendanceKeys?.length
+      ? buildAttendancePatchFromKeys(patch.attendance, options.attendanceKeys)
+      : attendanceRecordDelta(patch.attendance, options?.lastSavedAttendance);
+
+    if (!Object.keys(attendancePatch).length) return;
+
+    try {
+      await patchLessonYearAttendance(studentId, year, attendancePatch, {
+        skipScheduleCacheRevalidate: options?.skipScheduleCacheRevalidate,
+      });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.startsWith("ATTENDANCE_RPC_MISSING:")) throw error;
+    }
+  }
+
+  const payload = buildLessonYearStateUpsertRow(studentId, year, patch, fields);
+  if (!payload) return;
+
+  const { error } = await supabase
+    .from("student_lessons_year_state")
+    .upsert(payload, { onConflict: "student_id,year" });
+  if (error) throw new Error(error.message);
+
+  if (!options?.skipScheduleCacheRevalidate) {
+    notifyScheduleCachesStale();
+  }
 }
 
 export async function saveLessonYearState(
@@ -296,35 +384,51 @@ export async function saveLessonYearState(
   year: number,
   state: StudentLesson2026State,
 ) {
-  await supabase.from("student_lessons_year_state").upsert(
-    {
-      student_id: studentId,
-      year,
-      attendance: state.attendance,
-      hidden_dates: state.hiddenDates,
-      overrides: state.overrides,
-      reschedule_entries: state.rescheduleEntries,
-      extra_entries: state.extraEntries,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id,year" },
-  );
-  notifyScheduleCachesStale();
+  await saveLessonYearStatePatch(studentId, year, state, ALL_LESSON_YEAR_STATE_FIELDS);
 }
 
+export async function saveLessonYearMetrics(
+  studentId: string,
+  year: number,
+  remedialCount: number,
+  currentMonthAbsentCount: number,
+) {
+  const payload = {
+    student_id: studentId,
+    year,
+    remedial_count: remedialCount,
+    current_month_absent_count: currentMonthAbsentCount,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from("student_lessons_year_metrics")
+    .upsert(payload, { onConflict: "student_id,year" });
+  if (error && isMissingLessonMetricsTableError(error.message) && year === LEGACY_LESSON_STATE_YEAR) {
+    await supabase.from("student_lessons_2026_metrics").upsert(
+      {
+        student_id: studentId,
+        remedial_count: remedialCount,
+        current_month_absent_count: currentMonthAbsentCount,
+        updated_at: payload.updated_at,
+      },
+      { onConflict: "student_id" },
+    );
+    return;
+  }
+  if (error) throw new Error(error.message);
+}
+
+/** @deprecated Use `saveLessonYearMetrics(studentId, LEGACY_LESSON_STATE_YEAR, ...)` */
 export async function saveLesson2026Metrics(
   studentId: string,
   remedialCount: number,
   currentMonthAbsentCount: number,
 ) {
-  await supabase.from("student_lessons_2026_metrics").upsert(
-    {
-      student_id: studentId,
-      remedial_count: remedialCount,
-      current_month_absent_count: currentMonthAbsentCount,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id" },
+  await saveLessonYearMetrics(
+    studentId,
+    LEGACY_LESSON_STATE_YEAR,
+    remedialCount,
+    currentMonthAbsentCount,
   );
 }
 
@@ -475,11 +579,12 @@ export async function loadStudentVisibilityMode(studentId: string): Promise<Stud
     };
   }
 
-  const rawMode = String((data as any).mode ?? "active").toLowerCase();
+  const row = data as VisibilityModeDbRow;
+  const rawMode = String(row.mode ?? "active").toLowerCase();
   return {
-    student_id: String((data as any).student_id ?? studentId),
+    student_id: String(row.student_id ?? studentId),
     mode: rawMode === "inactive" ? "inactive" : "active",
-    effective_date: String((data as any).effective_date ?? new Date().toISOString().slice(0, 10)),
+    effective_date: String(row.effective_date ?? new Date().toISOString().slice(0, 10)),
   };
 }
 

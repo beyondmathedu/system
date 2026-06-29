@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
+  if (process.env.NODE_ENV === "production") {
+    return new NextResponse("Not found", { status: 404 });
+  }
+
   const url = new URL(request.url);
   const code = url.searchParams.get("code") ?? "";
   const error = url.searchParams.get("error") ?? "";

@@ -513,10 +513,6 @@ function getPercentInputClass(): string {
   return "border-slate-300 bg-slate-100 text-slate-700";
 }
 
-function getPercentFeedbackClass(_percent?: number): string {
-  return getPercentInputClass();
-}
-
 const CUT_OFF_SHEET = "Cut Off";
 const CUT_OFF_STORAGE_KEY = "beyondmath-student-progress-cutoff";
 const CUT_OFF_FIXED_LEVELS = ["5**", "5*", "5", "4", "3", "2"] as const;
@@ -1161,8 +1157,9 @@ export default function StudentProgressByIdPage() {
                                                 const cleaned = nextRaw.replace(/[^\d]/g, "");
                                                 setProgressSelections((prev) => {
                                                   if (!cleaned) {
-                                                    const { [selectionKey]: _, ...rest } = prev;
-                                                    return rest;
+                                                    const next = { ...prev };
+                                                    delete next[selectionKey];
+                                                    return next;
                                                   }
                                                   return { ...prev, [selectionKey]: cleaned };
                                                 });
@@ -1187,8 +1184,9 @@ export default function StudentProgressByIdPage() {
                                                 const cleaned = nextRaw.replace(/[^\d]/g, "");
                                                 setProgressSelections((prev) => {
                                                   if (!cleaned) {
-                                                    const { [selectionKey]: _, ...rest } = prev;
-                                                    return rest;
+                                                    const next = { ...prev };
+                                                    delete next[selectionKey];
+                                                    return next;
                                                   }
                                                   return { ...prev, [selectionKey]: cleaned };
                                                 });
@@ -1209,8 +1207,9 @@ export default function StudentProgressByIdPage() {
                                                 const nextValue = e.target.value;
                                                 setProgressSelections((prev) => {
                                                   if (!nextValue) {
-                                                    const { [selectionKey]: _, ...rest } = prev;
-                                                    return rest;
+                                                    const next = { ...prev };
+                                                    delete next[selectionKey];
+                                                    return next;
                                                   }
                                                   return { ...prev, [selectionKey]: nextValue };
                                                 });
@@ -1228,8 +1227,9 @@ export default function StudentProgressByIdPage() {
                                                 const nextValue = e.target.value;
                                                 setProgressSelections((prev) => {
                                                   if (!nextValue.trim()) {
-                                                    const { [selectionKey]: _, ...rest } = prev;
-                                                    return rest;
+                                                    const next = { ...prev };
+                                                    delete next[selectionKey];
+                                                    return next;
                                                   }
                                                   return { ...prev, [selectionKey]: nextValue };
                                                 });
@@ -1248,8 +1248,9 @@ export default function StudentProgressByIdPage() {
                                               const nextValue = e.target.value;
                                               setProgressSelections((prev) => {
                                                 if (!nextValue) {
-                                                  const { [selectionKey]: _, ...rest } = prev;
-                                                  return rest;
+                                                  const next = { ...prev };
+                                                  delete next[selectionKey];
+                                                  return next;
                                                 }
                                                 return { ...prev, [selectionKey]: nextValue };
                                               });

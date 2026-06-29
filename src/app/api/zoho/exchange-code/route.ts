@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+  }
+
   const url = new URL(request.url);
   const code = (url.searchParams.get("code") ?? "").trim();
   if (!code) {
@@ -35,7 +39,17 @@ export async function GET(request: Request) {
     cache: "no-store",
   });
   const text = await resp.text();
-  let parsed: any = null;
+  type ZohoTokenResponse = {
+    ok?: boolean;
+    error?: string;
+    raw?: string;
+    access_token?: string;
+    refresh_token?: string;
+    api_domain?: string;
+    token_type?: string;
+    expires_in?: number | null;
+  };
+  let parsed: ZohoTokenResponse | null = null;
   try {
     parsed = JSON.parse(text);
   } catch {

@@ -1,4 +1,5 @@
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
+import { canonicalScheduleRoomLabel } from "@/lib/dayTimetableShared";
 
 /** 平日規則：同一 effectiveDate 為一版課表；較新生效日取代舊版（非按星期几疊加）。 */
 
@@ -16,7 +17,7 @@ export type LessonScheduleSlotRule = LessonScheduleVersionRule & {
 };
 
 export function scheduleSlotKey(rule: { weekday: string; time: string; room: string }): string {
-  return `${rule.weekday}|${String(rule.time).trim()}|${String(rule.room).trim()}`;
+  return `${rule.weekday}|${String(rule.time).trim()}|${canonicalScheduleRoomLabel(rule.room)}`;
 }
 
 export type DuplicateScheduleRuleGroup<T extends LessonScheduleSlotRule> = {

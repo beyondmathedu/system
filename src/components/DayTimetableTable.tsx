@@ -253,7 +253,7 @@ export default function DayTimetableTable({
       }
     }, 0);
     return () => window.clearTimeout(id);
-  }, [hoverPanel?.studentId, hoverPanel?.anchorRect.left, hoverPanel?.anchorRect.top]);
+  }, [hoverPanel]);
 
   const flushSave = useCallback(async (studentId: string, nextText: string) => {
     setSavingById((prev) => ({ ...prev, [studentId]: true }));
@@ -276,9 +276,10 @@ export default function DayTimetableTable({
   }
 
   useEffect(() => {
+    const timersRef = saveTimersRef;
     return () => {
-      for (const t of saveTimersRef.current.values()) window.clearTimeout(t);
-      saveTimersRef.current.clear();
+      for (const t of timersRef.current.values()) window.clearTimeout(t);
+      timersRef.current.clear();
       if (hideHoverTimerRef.current) window.clearTimeout(hideHoverTimerRef.current);
       hideHoverTimerRef.current = null;
     };

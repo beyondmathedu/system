@@ -5,15 +5,23 @@
 
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { gradeRank } from "@/lib/grade";
-import { isOnOrAfterLessonSystemStart, normalizeCalendarDateIso } from "@/lib/lessonSystemStart";
 import {
+  getLessonSystemStartDate,
+  isOnOrAfterLessonSystemStart,
+  normalizeCalendarDateIso,
+} from "@/lib/lessonSystemStart";
+import { isLessonScheduleHidden } from "@/lib/lessonScheduleHidden";
+import {
+  getActiveDedupedScheduleRulesForDate,
   readLessonDayOverrideField,
+  regularLessonAttendanceKey,
   tutorDisplayForLessonRow,
 } from "@/lib/lessonScheduleVersions";
 import {
   isPendingRescheduleEntry,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
+import { scheduleRoomsMatch } from "@/lib/dayTimetableShared";
 
 export type YearLessonRecord = {
   id?: string;
@@ -57,7 +65,11 @@ export type BuiltScheduleRow = {
   sortTime: string;
 };
 
-type BuildRangeOptions = { month?: number };
+type BuildRangeOptions = {
+  month?: number;
+  rangeStartIso?: string;
+  rangeEndIso?: string;
+};
 
 function numberToWeekday(num: number) {
   switch (num) {
@@ -145,40 +157,57 @@ function buildScheduleRows(
   const baseRows: Row[] = [];
   const month = options?.month;
   const hasMonth = Number.isInteger(month) && Number(month) >= 1 && Number(month) <= 12;
-  const start = hasMonth ? new Date(targetYear, Number(month) - 1, 1) : new Date(targetYear, 0, 1);
-  const end = hasMonth ? new Date(targetYear, Number(month), 0) : new Date(targetYear, 11, 31);
-  let ruleIdx = 0;
-  let activeRule: (typeof normalized)[0] | null = sortedRules.length > 0 ? sortedRules[0] : null;
+  const defaultStart = getLessonSystemStartDate(targetYear);
+  const rangeStart = options?.rangeStartIso?.trim();
+  const rangeEnd = options?.rangeEndIso?.trim();
+  const hasRange = Boolean(rangeStart && rangeEnd);
+  const start = hasRange
+    ? new Date(
+        Math.max(
+          defaultStart.getTime(),
+          new Date(`${rangeStart}T00:00:00+08:00`).getTime(),
+        ),
+      )
+    : hasMonth
+      ? new Date(targetYear, Number(month) - 1, 1)
+      : defaultStart;
+  const end = hasRange
+    ? new Date(`${rangeEnd}T00:00:00+08:00`)
+    : hasMonth
+      ? new Date(targetYear, Number(month), 0)
+      : new Date(targetYear, 11, 31);
   const startIso = toIsoDate(start);
-  while (ruleIdx + 1 < sortedRules.length && sortedRules[ruleIdx + 1].effectiveDate <= startIso) {
-    ruleIdx += 1;
-    activeRule = sortedRules[ruleIdx];
-  }
+  const versionCache = new Map<string, (typeof normalized)[0][]>();
 
   for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
     const hkNum = getHkWeekdayNumber(cur);
     const weekday = numberToWeekday(hkNum);
     const dateIso = toIsoDate(cur);
-    while (ruleIdx + 1 < sortedRules.length && sortedRules[ruleIdx + 1].effectiveDate <= dateIso) {
-      ruleIdx += 1;
-      activeRule = sortedRules[ruleIdx];
-    }
-    const rule = activeRule;
-    if (!rule) continue;
-    if (weekday !== rule.weekday) continue;
-    if (state.hiddenDates[dateIso]) continue;
+    const activeRules = getActiveDedupedScheduleRulesForDate(sortedRules, dateIso, versionCache);
+    for (const rule of activeRules) {
+      if (rule.weekday !== weekday) continue;
+      if (
+        isLessonScheduleHidden({
+          hiddenDates: state.hiddenDates,
+          dateIso,
+          scheduleRuleId: rule.id,
+        })
+      ) {
+        continue;
+      }
 
-    const ov = state.overrides[dateIso];
-    baseRows.push({
-      date: dateIso,
-      time: (ov?.time ?? rule.time).toString(),
-      room: (ov?.room ?? rule.room).toString(),
-      rowKind: "normal",
-      rowId: `${dateIso}-gen`,
-      attendanceKey: dateIso,
-      baseRule: rule,
-      fromExtra: false,
-    });
+      const ov = state.overrides[dateIso];
+      baseRows.push({
+        date: dateIso,
+        time: (ov?.time ?? rule.time).toString(),
+        room: (ov?.room ?? rule.room).toString(),
+        rowKind: "normal",
+        rowId: `${dateIso}-regular-${rule.id ?? `${rule.time}-${rule.room}`}`,
+        attendanceKey: regularLessonAttendanceKey(rule, dateIso),
+        baseRule: rule,
+        fromExtra: false,
+      });
+    }
   }
 
   const rescheduleByFromDate = new Map<string, (typeof state.rescheduleEntries)[number]>();
@@ -188,6 +217,7 @@ function buildScheduleRows(
   const rescheduleById = new Map(state.rescheduleEntries.map((e) => [e.id, e]));
 
   const rows: Row[] = [];
+  const emittedRescheduleIds = new Set<string>();
   for (const orig of baseRows) {
     const e = rescheduleByFromDate.get(orig.date);
     if (!e) {
@@ -208,7 +238,8 @@ function buildScheduleRows(
       baseRule: orig.baseRule,
       fromExtra: false,
     });
-    if (!isPendingRescheduleEntry(e)) {
+    if (!isPendingRescheduleEntry(e) && isOnOrAfterLessonSystemStart(e.toDate, targetYear) && !emittedRescheduleIds.has(e.id)) {
+      emittedRescheduleIds.add(e.id);
       rows.push({
         date: e.toDate,
         time: e.time,
@@ -220,6 +251,27 @@ function buildScheduleRows(
         fromExtra: false,
       });
     }
+  }
+
+  const monthEndIso = toIsoDate(end);
+  for (const e of state.rescheduleEntries) {
+    if (isPendingRescheduleEntry(e)) continue;
+    if (!isOnOrAfterLessonSystemStart(e.toDate, targetYear)) continue;
+    if (emittedRescheduleIds.has(e.id)) continue;
+    const toNorm = normalizeCalendarDateIso(e.toDate);
+    if (!toNorm) continue;
+    if (hasMonth && (toNorm < startIso || toNorm > monthEndIso)) continue;
+    emittedRescheduleIds.add(e.id);
+    rows.push({
+      date: e.toDate,
+      time: e.time,
+      room: e.room,
+      rowKind: "reschedule",
+      rowId: `reschedule-${e.id}`,
+      attendanceKey: `reschedule:${e.id}`,
+      baseRule: null,
+      fromExtra: false,
+    });
   }
 
   for (const ex of state.extraEntries) {
@@ -235,13 +287,13 @@ function buildScheduleRows(
     });
   }
 
-  const monthEndIso = toIsoDate(end);
+  const monthEndIsoFilter = toIsoDate(end);
   let visibleRows = rows.filter((r) => isOnOrAfterLessonSystemStart(r.date, targetYear));
   if (hasMonth) {
     visibleRows = visibleRows.filter((r) => {
       const nd = normalizeCalendarDateIso(r.date);
       if (!nd) return false;
-      return nd >= startIso && nd <= monthEndIso;
+      return nd >= startIso && nd <= monthEndIsoFilter;
     });
   }
 
@@ -256,8 +308,8 @@ function buildScheduleRows(
   return visibleRows.map((r) => {
     let lessonType: BuiltScheduleRow["lessonType"] = "恆常";
     if (r.rowKind === "cancelled_original") {
-      const pendingId = /^cancelled-(.+)-/.exec(r.rowId)?.[1];
-      const pendingEntry = pendingId ? rescheduleById.get(pendingId) : undefined;
+      const cancelledMatch = /^cancelled-(.+)-(\d{4}-\d{2}-\d{2})$/.exec(r.rowId);
+      const pendingEntry = cancelledMatch ? rescheduleById.get(cancelledMatch[1]) : undefined;
       lessonType =
         pendingEntry && isPendingRescheduleEntry(pendingEntry)
           ? PENDING_MAKEUP_TYPE_LABEL
@@ -297,8 +349,9 @@ export function buildYearScheduleRows(
   records: YearLessonRecord[],
   state: YearLessonState,
   targetYear: number,
+  options?: BuildRangeOptions,
 ): BuiltScheduleRow[] {
-  return buildScheduleRows(records, state, targetYear);
+  return buildScheduleRows(records, state, targetYear, options);
 }
 
 export function buildYearScheduleRowsForMonth(
@@ -310,6 +363,16 @@ export function buildYearScheduleRowsForMonth(
   return buildScheduleRows(records, state, targetYear, { month });
 }
 
+export function buildYearScheduleRowsForDateRange(
+  records: YearLessonRecord[],
+  state: YearLessonState,
+  targetYear: number,
+  rangeStartIso: string,
+  rangeEndIso: string,
+): BuiltScheduleRow[] {
+  return buildScheduleRows(records, state, targetYear, { rangeStartIso, rangeEndIso });
+}
+
 export function filterRowsByRoomAndMonth(
   rows: BuiltScheduleRow[],
   roomLabel: string,
@@ -318,7 +381,7 @@ export function filterRowsByRoomAndMonth(
   return rows.filter((r) => {
     if (r.lessonType === "取消") return false;
     // Pending makeup still shows in the original lesson slot
-    if (r.room.trim() !== roomLabel) return false;
+    if (!scheduleRoomsMatch(r.room, roomLabel)) return false;
     const m = Number(r.date.slice(5, 7));
     return m === month;
   });

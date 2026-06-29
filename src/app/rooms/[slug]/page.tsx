@@ -6,10 +6,11 @@ import BackNavButton from "@/components/BackNavButton";
 import { fetchClassroomMeta } from "@/lib/classroomsRegistry";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
-import { fetchRoomScheduleAggregate } from "@/lib/roomScheduleAggregate";
-import { getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
+import { defaultLessonYear, parseLessonYear, studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { readMonthPart, readYmdParts } from "@/lib/intlFormatParts";
 import { normalizeStudentId } from "@/lib/studentId";
+import { fetchRoomScheduleAggregate } from "@/lib/roomScheduleAggregate";
+import { getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
 import RoomScheduleTable from "./RoomScheduleTable";
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -29,7 +30,11 @@ function hkTodayIso(): string {
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(new Date());
-  const { y, m, d } = readYmdParts(parts, { y: "2026", m: "01", d: "01" });
+  const { y, m, d } = readYmdParts(parts, {
+    y: String(defaultLessonYear()),
+    m: "01",
+    d: "01",
+  });
   return `${y}-${m}-${d}`;
 }
 
@@ -68,7 +73,7 @@ function parseYearMonth(sp: { year?: string; month?: string } | undefined): {
   month: number;
 } {
   const monthRaw = sp?.month ? Number(sp.month) : hkMonthNow();
-  const year = 2026;
+  const year = parseLessonYear(sp?.year, defaultLessonYear());
   let month = Number.isFinite(monthRaw) ? Math.floor(monthRaw) : hkMonthNow();
   if (month < 1) month = 1;
   if (month > 12) month = 12;
@@ -110,7 +115,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
     (hasCustomRange ? `&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}` : "");
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
-    redirect(`/students/${encodeURIComponent(normalizeStudentId(viewer.studentId))}/lessons/2026`);
+    redirect(studentLessonsYearPath(normalizeStudentId(viewer.studentId)));
   }
   if (!viewer.isSharedIpadTutor && viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");
@@ -234,7 +239,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                 <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-slate-600">Year:</span>
                   <span className="rounded-lg bg-[#1d76c2] px-2.5 py-1 text-sm font-semibold text-white">
-                    2026
+                    {year}
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">

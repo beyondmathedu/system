@@ -38,7 +38,10 @@ export function useRoomLessonStateRealtime({
   lessonSummaryPendingRef,
 }: Options) {
   const rowsRef = useRef(rows);
-  rowsRef.current = rows;
+
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
 
   const studentIdsKey = useMemo(
     () =>

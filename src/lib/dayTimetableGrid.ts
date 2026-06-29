@@ -2,15 +2,13 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { unstable_cache } from "next/cache";
 import { SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
 import {
-  formatPendingMakeupReminder,
   isPendingRescheduleEntry,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
 import {
   getActiveScheduleRulesForDate,
-  readLessonDayOverrideField,
-  tutorDisplayForLessonRow,
 } from "@/lib/lessonScheduleVersions";
+import { buildDayTimetableRowsForDate } from "@/lib/dayTimetableScheduleRows";
 import {
   LESSON_TYPE_DISPLAY_PRIORITY,
   type YearLessonRecord,
@@ -26,6 +24,7 @@ import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings.s
 import {
   ROOM_GROUPS,
   hkTodayYmd,
+  normalizeScheduleRoom,
   parseDayParams,
   toDayIso,
   type DayTimetableCell,
@@ -87,62 +86,6 @@ const WEEKDAY_ORDER: Record<string, number> = {
   六: 6,
   日: 7,
 };
-
-function canonicalSaturdayTime(raw: string): string {
-  const s = String(raw ?? "").trim();
-  if (!s) return "";
-  const upper = s.toUpperCase();
-  if (upper.includes("AM") || upper.includes("PM")) {
-    // Normalize leading hour to 2 digits for consistent matching.
-    const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(s.trim());
-    if (!m) return s.trim();
-    const hh = String(Number(m[1])).padStart(2, "0");
-    return `${hh}:${m[2]} ${m[3].toUpperCase()}`;
-  }
-  // Accept "10:00" "11:30" "1:00" "2:30" as Saturday presets.
-  if (s === "10:00") return "10:00 AM";
-  if (s === "11:30") return "11:30 AM";
-  if (s === "1:00") return "01:00 PM";
-  if (s === "2:30") return "02:30 PM";
-  return s;
-}
-
-function overrideTutorForMaySaturday(opts: {
-  dateIso: string;
-  normalizedRoom: string;
-  time: string;
-  tutorDisplay: string;
-}): string {
-  const { dateIso, normalizedRoom, time, tutorDisplay } = opts;
-  // Only apply to May 2026 Saturdays.
-  if (!dateIso.startsWith("2026-05-")) return tutorDisplay;
-  if (weekdayCnFromIsoDate(dateIso) !== "六") return tutorDisplay;
-
-  const t = canonicalSaturdayTime(time);
-  if (!t) return tutorDisplay;
-  const room = String(normalizedRoom ?? "").trim();
-
-  const map: Record<string, string> = {
-    // 10:00
-    "10:00 AM::Hope": "Leo",
-    "10:00 AM::B": "Samuel",
-    "10:00 AM::M前": "Howard",
-    // 11:30
-    "11:30 AM::Hope": "Leo",
-    "11:30 AM::B": "Samuel",
-    "11:30 AM::M前": "Howard",
-    // 1:00
-    "01:00 PM::Hope": "Pammi",
-    "01:00 PM::B": "Samuel",
-    "01:00 PM::M前": "Frank",
-    "01:00 PM::M後": "Matthew",
-    // 2:30
-    "02:30 PM::Hope": "Pammi",
-    "02:30 PM::B": "Matthew",
-    "02:30 PM::M前": "Frank",
-  };
-  return map[`${t}::${room}`] ?? tutorDisplay;
-}
 
 function timeSortKey(raw: string): number {
   const s = String(raw ?? "").trim();
@@ -234,149 +177,12 @@ function toHkIsoDateFromMs(ms: number) {
   return `${y}-${m}-${d}`;
 }
 
-type DayBuiltRow = {
-  date: string;
-  time: string;
-  room: string;
-  lessonType: "恆常" | "補堂" | "加堂" | "取消" | typeof PENDING_MAKEUP_TYPE_LABEL;
-  tutorDisplay: string;
-  noteDisplay: string;
-  pendingMakeupLabel?: string;
-};
-
 type DayCandidateIndex = {
   weekdaySet: Set<string>;
   extraDateSet: Set<string>;
   rescheduleToDateSet: Set<string>;
   pendingFromDateSet: Set<string>;
 };
-
-function buildRowsForTargetDate(
-  records: YearLessonRecord[],
-  state: YearLessonState,
-  targetDateIso: string,
-  targetWeekday: string,
-): DayBuiltRow[] {
-  const normalized = records.map((r) => ({
-    ...r,
-    effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
-  }));
-  const sortedRules = [...normalized].sort((a, b) => {
-    const ed = String(a.effectiveDate).localeCompare(String(b.effectiveDate));
-    if (ed !== 0) return ed;
-    return a.createdAt - b.createdAt;
-  });
-  let activeRule: (typeof sortedRules)[0] | null = sortedRules.length > 0 ? sortedRules[0] : null;
-  for (let i = 1; i < sortedRules.length; i++) {
-    if (String(sortedRules[i].effectiveDate) <= targetDateIso) activeRule = sortedRules[i];
-    else break;
-  }
-
-  type Row = {
-    date: string;
-    time: string;
-    room: string;
-    rowKind: "normal" | "cancelled_original" | "reschedule";
-    baseRule: (typeof sortedRules)[0] | null;
-    fromExtra: boolean;
-    rowId: string;
-  };
-  const rows: Row[] = [];
-  const rescheduleByFromDate = new Map<string, YearLessonState["rescheduleEntries"][number]>();
-  for (const e of state.rescheduleEntries) {
-    if (!rescheduleByFromDate.has(e.fromDate)) rescheduleByFromDate.set(e.fromDate, e);
-  }
-
-  const rule = activeRule;
-  if (rule && targetWeekday === rule.weekday && !state.hiddenDates[targetDateIso]) {
-    const ov = state.overrides[targetDateIso];
-    const rescheduled = rescheduleByFromDate.get(targetDateIso);
-    rows.push({
-      date: targetDateIso,
-      time: (ov?.time ?? rule.time).toString(),
-      room: (ov?.room ?? rule.room).toString(),
-      rowKind: rescheduled ? "cancelled_original" : "normal",
-      baseRule: rule,
-      fromExtra: false,
-      rowId: rescheduled ? `cancelled-${rescheduled.id}-${targetDateIso}` : `${targetDateIso}-gen`,
-    });
-  }
-
-  for (const e of state.rescheduleEntries) {
-    if (isPendingRescheduleEntry(e)) continue;
-    if (e.toDate !== targetDateIso) continue;
-    rows.push({
-      date: e.toDate,
-      time: e.time,
-      room: e.room,
-      rowKind: "reschedule",
-      baseRule: null,
-      fromExtra: false,
-      rowId: `reschedule-${e.id}`,
-    });
-  }
-
-  for (const ex of state.extraEntries) {
-    if (ex.date !== targetDateIso) continue;
-    rows.push({
-      date: ex.date,
-      time: ex.time,
-      room: ex.room,
-      rowKind: "normal",
-      baseRule: null,
-      fromExtra: true,
-      rowId: `extra-${ex.id}`,
-    });
-  }
-
-  return rows
-    .filter((r) => r.date === targetDateIso)
-    .sort((a, b) => {
-      const tc = a.time.localeCompare(b.time, "en", { numeric: true });
-      if (tc !== 0) return tc;
-      return a.rowId.localeCompare(b.rowId);
-    })
-    .map((r) => {
-      let lessonType: DayBuiltRow["lessonType"] = "恆常";
-      let pendingMakeupLabel: string | undefined;
-      if (r.rowKind === "cancelled_original") {
-        const rescheduled = rescheduleByFromDate.get(r.date);
-        if (rescheduled && isPendingRescheduleEntry(rescheduled)) {
-          lessonType = PENDING_MAKEUP_TYPE_LABEL;
-          pendingMakeupLabel = formatPendingMakeupReminder(rescheduled.fromDate, targetDateIso);
-        } else {
-          lessonType = "取消";
-        }
-      } else if (r.rowKind === "reschedule") lessonType = "補堂";
-      else if (r.fromExtra) lessonType = "加堂";
-
-      const tutorDisplay = tutorDisplayForLessonRow({
-        overrides: state.overrides,
-        dateIso: r.date,
-        scheduleRuleTutor: r.baseRule?.tutor,
-        pendingLabel: "待定",
-      });
-      const noteDisplay =
-        readLessonDayOverrideField(state.overrides, r.date, "lessonSummary") ||
-        String(r.baseRule?.lessonSummary ?? "").trim();
-
-      return {
-        date: r.date,
-        time: r.time || "待定",
-        room: r.room,
-        lessonType,
-        tutorDisplay: overrideTutorForMaySaturday({
-          dateIso: r.date,
-          // Use the same normalization as the timetable grid.
-          normalizedRoom: normalizeRoom(r.room),
-          time: r.time || "",
-          tutorDisplay,
-        }),
-        noteDisplay,
-        pendingMakeupLabel,
-      };
-    });
-}
 
 function normalizeYearState(raw: unknown): YearLessonState {
   const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -586,7 +392,7 @@ function buildFeePaymentToneByStudentId(
     const weekdays = getActiveWeekdaysForDate(records, dateIso);
     const extraCountByMonth = new Map<number, number>();
     for (const ex of state.extraEntries ?? []) {
-      const iso = String((ex as any)?.date ?? "").trim();
+      const iso = String((ex as { date?: string | null }).date ?? "").trim();
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
       if (!m) continue;
       const y = Number(m[1]);
@@ -647,34 +453,6 @@ function buildFeePaymentToneByStudentId(
   return out;
 }
 
-function normalizeRoom(roomRaw: string) {
-  const raw = (roomRaw ?? "").trim().toLowerCase();
-  if (!raw) return "";
-  const compact = raw
-    .replace(/\s+/g, "")
-    .replace(/[-_]/g, "")
-    .replace(/room/g, "")
-    .replace(/房間/g, "房");
-
-  if (compact === "b" || compact === "b房") return "B";
-  if (compact === "m前" || compact === "m前房" || compact === "mfront" || compact === "m前room") {
-    return "M前";
-  }
-  if (compact === "m後" || compact === "m後房" || compact === "mback" || compact === "m後room") {
-    return "M後";
-  }
-  if (compact === "hope" || compact === "hope房") return "Hope";
-  if (compact === "hope2" || compact === "hope2房") return "Hope 2";
-
-  if (compact.includes("m前") || compact.includes("mfront")) return "M前";
-  if (compact.includes("m後") || compact.includes("mback")) return "M後";
-  if (compact.includes("hope2")) return "Hope 2";
-  if (compact.includes("hope")) return "Hope";
-  if (compact === "broom") return "B";
-
-  return "";
-}
-
 /** 未在 classrooms.regular_period_max 設定時的預設上限 */
 export const DEFAULT_REGULAR_PERIOD_MAX_BY_ROOM: Record<RoomGroup, number> = {
   B: 5,
@@ -689,7 +467,7 @@ export function buildRegularPeriodMaxByRoom(
 ): Record<RoomGroup, number> {
   const out: Record<RoomGroup, number> = { ...DEFAULT_REGULAR_PERIOD_MAX_BY_ROOM };
   for (const row of classroomRows ?? []) {
-    const label = normalizeRoom(String(row.name ?? ""));
+    const label = normalizeScheduleRoom(String(row.name ?? ""));
     if (!label || !ROOM_GROUPS.includes(label as RoomGroup)) continue;
     const m = Number(row.regular_period_max);
     if (Number.isFinite(m) && m > 0) {
@@ -860,8 +638,10 @@ async function fetchDayTimetablePayloadUncached(
       "compact",
     );
 
-    const dayRows = buildRowsForTargetDate(records, state, dateIso, targetWeekday)
-      .map((r) => ({ ...r, normalizedRoom: normalizeRoom(r.room) }))
+    const today = hkTodayYmd();
+    const todayIso = toDayIso(today.y, today.m, today.d);
+    const dayRows = buildDayTimetableRowsForDate(records, state, dateIso, todayIso)
+      .map((r) => ({ ...r, normalizedRoom: normalizeScheduleRoom(r.room) }))
       .filter((r) => {
         if (r.lessonType === "取消") return false;
         if (regularOnly && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL)
@@ -1011,7 +791,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v7"],
+  ["day-timetable-payload-v8"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

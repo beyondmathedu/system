@@ -1,4 +1,5 @@
 import type { ViewerContext } from "@/lib/authz";
+import { defaultLessonYear } from "@/lib/lessonCalendar";
 import { readMonthPart } from "@/lib/intlFormatParts";
 import { FALLBACK_ROOM_NAV_LINKS, type RoomNavItem } from "@/lib/roomConstants";
 
@@ -13,7 +14,7 @@ function hkMonthNow(): number {
 /** 課室課表 URL 查詢字串：共用 iPad 預設 Today，其他導師預設整月 */
 export function defaultRoomScheduleSearchFromFlag(isSharedIpadTutor: boolean): string {
   const month = hkMonthNow();
-  const year = 2026;
+  const year = defaultLessonYear();
   return isSharedIpadTutor
     ? `year=${year}&month=${month}&period=today`
     : `year=${year}&month=${month}&period=month`;

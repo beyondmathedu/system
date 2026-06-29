@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
@@ -127,9 +128,11 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
                   className="inline-flex shrink-0 items-center hover:opacity-90"
                   aria-label={isSharedIpadNav ? "Go to home" : isTutorNav ? "Go to my rooms" : "Go to home"}
                 >
-                  <img
+                  <Image
                     src="/logo.png"
                     alt="Beyond Math logo"
+                    width={32}
+                    height={32}
                     className="h-7 w-7 rounded object-contain sm:h-8 sm:w-8"
                   />
                 </Link>

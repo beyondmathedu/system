@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { supabase } from "@/lib/supabase";
 import AppTopNav from "@/components/AppTopNav";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+import TextbookPublisherPicker from "@/components/TextbookPublisherPicker";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import { gradeToTextbookBand, resolveTextbookSelection } from "@/lib/textbookPublisherCatalog";
+import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 
 type Student = {
   id: string;
@@ -40,22 +41,9 @@ type StudentRow = {
   grade: string | null;
   math_language: string | null;
 };
-type VisibilityRow = {
-  student_id: string | null;
-  mode: string | null;
-  effective_date: string | null;
-};
-
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
-const TEXTBOOK_PUBLISHER_OPTIONS = [
-  "Chung Tai",
-  "Ephhk",
-  "HKEP",
-  "Modern",
-  "Oxford",
-  "Pearson",
-  "Aristo",
-] as const;
+const STUDENTS_PAGE_SIZE = 80;
+const STUDENTS_SEARCH_DEBOUNCE_MS = 300;
 
 type StudentForm = Omit<Student, "id" | "birthTs" | "searchBlob">;
 
@@ -222,11 +210,12 @@ export default function StudentsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreStudents, setHasMoreStudents] = useState(false);
+  const [listTotal, setListTotal] = useState(0);
+  const [suggestedNextId, setSuggestedNextId] = useState("00001");
   const [dataError, setDataError] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
-  const [manualInactiveEffectiveById, setManualInactiveEffectiveById] = useState<Map<string, string>>(
-    new Map(),
-  );
   const [bulkImportText, setBulkImportText] = useState("");
   const [bulkImportError, setBulkImportError] = useState("");
   const [bulkImportNotice, setBulkImportNotice] = useState("");
@@ -234,59 +223,9 @@ export default function StudentsPage() {
   const [savingForm, setSavingForm] = useState(false);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const bottomScrollRef = useRef<HTMLDivElement | null>(null);
-  const bottomTrackRef = useRef<HTMLDivElement | null>(null);
-  const sideScrollRef = useRef<HTMLDivElement | null>(null);
-  const sideTrackRef = useRef<HTMLDivElement | null>(null);
-  const [bottomScrollWidth, setBottomScrollWidth] = useState(0);
-  const [bottomScrollClientWidth, setBottomScrollClientWidth] = useState(0);
-  const [sideScrollHeight, setSideScrollHeight] = useState(0);
-  const [sideScrollClientHeight, setSideScrollClientHeight] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
-  const [scrollTop, setScrollTop] = useState(0);
-
-  const filteredStudents = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
-    const todayHkIso = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Hong_Kong",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
-    const year = Number(todayHkIso.slice(0, 4)) || new Date().getFullYear();
-
-    if (!keyword) {
-      return students.filter((student) => {
-        if (statusFilter === "all") return true;
-        const eff = resolveStudentInactiveEffectiveDate({
-          grade: student.grade,
-          manualInactiveEffective: manualInactiveEffectiveById.get(student.id) ?? null,
-          year,
-        });
-        const isInactive = Boolean(eff && eff <= todayHkIso);
-        return statusFilter === "inactive" ? isInactive : !isInactive;
-      });
-    }
-
-    return students.filter((student) => {
-      const eff = resolveStudentInactiveEffectiveDate({
-        grade: student.grade,
-        manualInactiveEffective: manualInactiveEffectiveById.get(student.id) ?? null,
-        year,
-      });
-      const isInactive = Boolean(eff && eff <= todayHkIso);
-      if (statusFilter === "inactive" && !isInactive) return false;
-      if (statusFilter === "active" && isInactive) return false;
-      return (
-        student.searchBlob.includes(keyword)
-      );
-    });
-  }, [manualInactiveEffectiveById, query, statusFilter, students]);
-
-  const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
   const sortedStudents = useMemo(() => {
-    const copied = [...filteredStudents];
+    const copied = [...students];
 
     if (!sortConfig) {
       copied.sort((a, b) => {
@@ -313,9 +252,30 @@ export default function StudentsPage() {
     });
 
     return copied;
-  }, [filteredStudents, sortConfig]);
+  }, [students, sortConfig]);
 
-  const nextStudentId = useMemo(() => getNextStudentId(students), [students]);
+  const {
+    tableScrollId,
+    bottomTrackRef,
+    sideTrackRef,
+    bottomThumb,
+    sideThumb,
+    bottomScrollWidth,
+    bottomScrollClientWidth,
+    sideScrollHeight,
+    sideScrollClientHeight,
+    bottomTrackA11yProps,
+    sideTrackA11yProps,
+    onBottomTrackMouseDown,
+    onSideTrackMouseDown,
+    startDragBottomThumb,
+    startDragSideThumb,
+  } = useCustomScrollbars({
+    tableScrollRef,
+    contentKey: sortedStudents.length,
+  });
+
+  const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const visibleIdSet = useMemo(
     () => new Set(sortedStudents.map((student) => student.id)),
@@ -325,220 +285,97 @@ export default function StudentsPage() {
     sortedStudents.length > 0 &&
     sortedStudents.every((student) => selectedIdSet.has(student.id));
 
-  async function loadStudents() {
-    setIsLoading(true);
-    setDataError("");
-    const pageSize = 1000;
-    const allRows: StudentRow[] = [];
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from("students")
-        .select(
-          "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language",
-        )
-        .order("id", { ascending: true })
-        .range(from, from + pageSize - 1);
-      if (error) {
-        setDataError("Failed to load student records. Please check your Supabase configuration and tables.");
-        setIsLoading(false);
-        return;
+  const fetchStudentsPage = useCallback(async (options: { offset: number; append: boolean }) => {
+    const { offset, append } = options;
+    if (append) setLoadingMore(true);
+    else {
+      setIsLoading(true);
+      setDataError("");
+    }
+
+    try {
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(STUDENTS_PAGE_SIZE),
+        status: statusFilter,
+      });
+      const q = query.trim();
+      if (q) params.set("q", q);
+
+      const res = await fetch(`/api/students/list?${params.toString()}`, { credentials: "same-origin" });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        students?: StudentRow[];
+        visibility?: Record<string, string>;
+        total?: number;
+        hasMore?: boolean;
+      };
+
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error ?? "Failed to load student records.");
       }
-      const chunk = (data ?? []) as StudentRow[];
-      allRows.push(...chunk);
-      if (chunk.length < pageSize) break;
-      from += pageSize;
-    }
 
-    const studentIds = allRows.map((r) => r.id).filter(Boolean);
-    const { data: visibilityRows, error: visibilityError } = studentIds.length
-      ? await fetchRowsInChunks({
-          ids: studentIds,
-          query: (chunk) =>
-            supabase
-              .from("student_visibility_modes")
-              .select("student_id, mode, effective_date")
-              .in("student_id", chunk),
-        })
-      : { data: [], error: null };
+      const mapped = (body.students ?? []).map(mapRowToStudent);
+      setStudents((prev) => {
+        if (!append) return mapped;
+        const seen = new Set(prev.map((s) => s.id));
+        const merged = [...prev];
+        for (const row of mapped) {
+          if (!seen.has(row.id)) merged.push(row);
+        }
+        return merged;
+      });
+      setSelectedIds((prev) => {
+        const idSet = new Set(mapped.map((s) => s.id));
+        return append ? prev : prev.filter((id) => idSet.has(id));
+      });
 
-    if (visibilityError) {
-      setDataError("Failed to load student records. Please check your Supabase configuration and tables.");
+      setListTotal(body.total ?? mapped.length);
+      setHasMoreStudents(Boolean(body.hasMore));
+    } catch (e) {
+      setDataError(
+        e instanceof Error ? e.message : "Failed to load student records. Please check your configuration.",
+      );
+    } finally {
       setIsLoading(false);
-      return;
+      setLoadingMore(false);
     }
+  }, [query, statusFilter]);
 
-    const mapped = allRows.map(mapRowToStudent);
-    setStudents(mapped);
-    setSelectedIds((prev) => {
-      const mappedIdSet = new Set(mapped.map((student) => student.id));
-      return prev.filter((id) => mappedIdSet.has(id));
-    });
-    const inactiveMap = new Map<string, string>();
-    for (const row of (visibilityRows ?? []) as VisibilityRow[]) {
-      const mode = String(row.mode ?? "").toLowerCase();
-      const sid = String(row.student_id ?? "");
-      const eff = String(row.effective_date ?? "");
-      if (mode === "inactive" && sid && eff) inactiveMap.set(sid, eff);
+  async function reloadStudentsList() {
+    await fetchStudentsPage({ offset: 0, append: false });
+    try {
+      setSuggestedNextId(await fetchNextStudentIdFromDb());
+    } catch {
+      /* keep previous suggestion */
     }
-    setManualInactiveEffectiveById(inactiveMap);
-    setIsLoading(false);
+  }
+
+  async function loadMoreStudents() {
+    if (loadingMore || !hasMoreStudents) return;
+    await fetchStudentsPage({ offset: students.length, append: true });
   }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadStudents();
-    }, 0);
+      void fetchStudentsPage({ offset: 0, append: false });
+    }, STUDENTS_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    const tableEl = tableScrollRef.current;
-    const bottomEl = bottomScrollRef.current;
-    const sideEl = sideScrollRef.current;
-    if (!tableEl) return;
-
-    let syncing = false;
-
-    const updateMetrics = () => {
-      setBottomScrollWidth(tableEl.scrollWidth);
-      setBottomScrollClientWidth(tableEl.clientWidth);
-      setSideScrollHeight(tableEl.scrollHeight);
-      setSideScrollClientHeight(tableEl.clientHeight);
-    };
-
-    const onTableScroll = () => {
-      if (syncing) return;
-      syncing = true;
-      setScrollLeft(tableEl.scrollLeft);
-      setScrollTop(tableEl.scrollTop);
-      syncing = false;
-    };
-
-    updateMetrics();
-    setScrollLeft(tableEl.scrollLeft);
-    setScrollTop(tableEl.scrollTop);
-    tableEl.addEventListener("scroll", onTableScroll, { passive: true });
-
-    const ro = new ResizeObserver(() => updateMetrics());
-    ro.observe(tableEl);
-
-    return () => {
-      tableEl.removeEventListener("scroll", onTableScroll);
-      ro.disconnect();
-    };
-  }, [sortedStudents.length]);
-
-  const bottomThumb = useMemo(() => {
-    const trackEl = bottomTrackRef.current;
-    const trackWidth = trackEl?.clientWidth ?? 0;
-    if (!trackWidth || !bottomScrollWidth || !bottomScrollClientWidth) return { size: 0, offset: 0 };
-    const ratio = bottomScrollClientWidth / bottomScrollWidth;
-    const size = Math.max(28, Math.floor(trackWidth * ratio));
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-    const offset = Math.round((scrollLeft / maxScroll) * maxOffset);
-    return { size, offset };
-  }, [bottomScrollClientWidth, bottomScrollWidth, scrollLeft]);
-
-  const sideThumb = useMemo(() => {
-    const trackEl = sideTrackRef.current;
-    const trackHeight = trackEl?.clientHeight ?? 0;
-    if (!trackHeight || !sideScrollHeight || !sideScrollClientHeight) return { size: 0, offset: 0 };
-    const ratio = sideScrollClientHeight / sideScrollHeight;
-    const size = Math.max(28, Math.floor(trackHeight * ratio));
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-    const offset = Math.round((scrollTop / maxScroll) * maxOffset);
-    return { size, offset };
-  }, [sideScrollClientHeight, sideScrollHeight, scrollTop]);
-
-  const onBottomTrackMouseDown = (e: React.MouseEvent) => {
-    const track = bottomTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const { size } = bottomThumb;
-    const trackWidth = rect.width;
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-
-    const targetOffset = Math.min(maxOffset, Math.max(0, x - size / 2));
-    tableEl.scrollLeft = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
-  };
-
-  const onSideTrackMouseDown = (e: React.MouseEvent) => {
-    const track = sideTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const { size } = sideThumb;
-    const trackHeight = rect.height;
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-
-    const targetOffset = Math.min(maxOffset, Math.max(0, y - size / 2));
-    tableEl.scrollTop = Math.round((targetOffset / Math.max(1, maxOffset)) * maxScroll);
-  };
-
-  const startDragBottomThumb = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const track = bottomTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const startX = e.clientX;
-    const startOffset = bottomThumb.offset;
-    const size = bottomThumb.size;
-    const trackWidth = rect.width;
-    const maxOffset = Math.max(0, trackWidth - size);
-    const maxScroll = Math.max(1, bottomScrollWidth - bottomScrollClientWidth);
-
-    const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - startX;
-      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dx));
-      tableEl.scrollLeft = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  const startDragSideThumb = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const track = sideTrackRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!track || !tableEl) return;
-    const rect = track.getBoundingClientRect();
-    const startY = e.clientY;
-    const startOffset = sideThumb.offset;
-    const size = sideThumb.size;
-    const trackHeight = rect.height;
-    const maxOffset = Math.max(0, trackHeight - size);
-    const maxScroll = Math.max(1, sideScrollHeight - sideScrollClientHeight);
-
-    const onMove = (ev: MouseEvent) => {
-      const dy = ev.clientY - startY;
-      const nextOffset = Math.min(maxOffset, Math.max(0, startOffset + dy));
-      tableEl.scrollTop = Math.round((nextOffset / Math.max(1, maxOffset)) * maxScroll);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
+  }, [fetchStudentsPage, query, statusFilter]);
 
   const onFieldChange = (field: keyof StudentForm, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => {
+      if (field !== "grade") return { ...prev, [field]: value };
+      const next = { ...prev, grade: value };
+      const band = gradeToTextbookBand(value);
+      if (!band || !prev.textbookPublisher) return next;
+      const resolved = resolveTextbookSelection(value, prev.textbookPublisher);
+      if (!resolved.publisher || !resolved.book) {
+        next.textbookPublisher = "";
+      }
+      return next;
+    });
   };
 
   const saveStudent = () => {
@@ -562,7 +399,7 @@ export default function StudentsPage() {
           return;
         }
 
-        await loadStudents();
+        await reloadStudentsList();
         setEditingId(null);
         setForm(emptyForm);
         setSelectedIds([]);
@@ -577,7 +414,7 @@ export default function StudentsPage() {
           .insert([{ id: candidateId, ...mapFormToRow(form) }]);
 
         if (!error) {
-          await loadStudents();
+          await reloadStudentsList();
           setForm(emptyForm);
           setFormNotice(`Student record added successfully (ID ${candidateId}).`);
           return;
@@ -631,7 +468,7 @@ export default function StudentsPage() {
       setBulkImportError(`导入失败：${error.message}`);
       return;
     }
-    await loadStudents();
+    await reloadStudentsList();
     setBulkImportNotice(`已导入/更新 ${payload.length} 位学生。`);
     setBulkImportText("");
   };
@@ -659,9 +496,7 @@ export default function StudentsPage() {
       studentPhone: target.studentPhone,
       email: target.email,
       school: target.school,
-      textbookPublisher: TEXTBOOK_PUBLISHER_OPTIONS.includes(target.textbookPublisher as (typeof TEXTBOOK_PUBLISHER_OPTIONS)[number])
-        ? target.textbookPublisher
-        : "",
+      textbookPublisher: target.textbookPublisher,
       grade: formatGradeDisplay(target.grade),
       mathLanguage: target.mathLanguage,
     });
@@ -685,7 +520,7 @@ export default function StudentsPage() {
       return;
     }
 
-    await loadStudents();
+    await reloadStudentsList();
     const deletedCount = selectedIds.length;
     setSelectedIds([]);
     setSelectionError("");
@@ -713,7 +548,7 @@ export default function StudentsPage() {
               Fill in the form below to add a student (single entry).
             </p>
             <p className="mt-1 text-xs text-blue-100/90">
-              System ID: {editingId ?? nextStudentId} (auto-numbered, starting from 00001)
+              System ID: {editingId ?? suggestedNextId} (auto-numbered, starting from 00001)
             </p>
           </div>
 
@@ -757,18 +592,16 @@ export default function StudentsPage() {
                 onChange={(v) => onFieldChange("school", v)}
               />
               <InputField
-                label="Textbook publisher"
-                value={form.textbookPublisher}
-                onChange={(v) => onFieldChange("textbookPublisher", v)}
-                type="select"
-                options={[...TEXTBOOK_PUBLISHER_OPTIONS]}
-              />
-              <InputField
                 label="Grade"
                 value={form.grade}
                 onChange={(v) => onFieldChange("grade", v)}
                 type="select"
                 options={["F.1", "F.2", "F.3", "F.4", "F.5", "F.6"]}
+              />
+              <TextbookPublisherPicker
+                grade={form.grade}
+                value={form.textbookPublisher}
+                onChange={(v) => onFieldChange("textbookPublisher", v)}
               />
               <div className="md:col-span-2 xl:col-span-3 flex flex-col gap-3 md:flex-row md:items-end md:gap-4">
                 <fieldset className="block md:basis-[45%] md:flex-none">
@@ -1017,6 +850,7 @@ export default function StudentsPage() {
           <div className="flex">
             <div
               ref={tableScrollRef}
+              id={tableScrollId}
               className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
               <ClientOnlyAfterMount fallback={<StudentsTableSkeleton />}>
@@ -1152,14 +986,8 @@ export default function StudentsPage() {
             {sideScrollHeight > sideScrollClientHeight ? (
               <div className="border-l border-slate-200 bg-slate-50 px-2 py-2">
                 <div
-                  ref={sideScrollRef}
-                  className="sr-only"
-                  aria-hidden
-                />
-                <div
                   ref={sideTrackRef}
-                  role="scrollbar"
-                  aria-label="Vertical scrollbar"
+                  {...sideTrackA11yProps}
                   className="relative w-2.5 select-none rounded bg-white ring-1 ring-slate-200"
                   style={{ height: "calc(70vh - 16px)" }}
                   onMouseDown={onSideTrackMouseDown}
@@ -1176,11 +1004,9 @@ export default function StudentsPage() {
 
           {bottomScrollWidth > bottomScrollClientWidth ? (
             <div className="border-t border-slate-200 bg-slate-50 px-4 py-2">
-              <div ref={bottomScrollRef} className="sr-only" aria-hidden />
               <div
                 ref={bottomTrackRef}
-                role="scrollbar"
-                aria-label="Horizontal scrollbar"
+                {...bottomTrackA11yProps}
                 className="relative h-2.5 select-none rounded bg-white ring-1 ring-slate-200"
                 onMouseDown={onBottomTrackMouseDown}
               >
@@ -1199,9 +1025,29 @@ export default function StudentsPage() {
             </div>
           ) : sortedStudents.length === 0 ? (
             <div className="border-t border-slate-200 px-6 py-8 text-center text-sm text-slate-500">
-              {students.length === 0
+              {students.length === 0 && !query.trim()
                 ? "No student records yet. Add one using the form above."
                 : `No students found matching "${query}".`}
+            </div>
+          ) : null}
+
+          {!isLoading && sortedStudents.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-4">
+              <p className="text-sm text-slate-600">
+                Showing {sortedStudents.length}
+                {listTotal > sortedStudents.length ? ` of ${listTotal}+` : listTotal ? ` of ${listTotal}` : ""}{" "}
+                students
+              </p>
+              {hasMoreStudents ? (
+                <button
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={() => void loadMoreStudents()}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -1370,54 +1216,20 @@ function SortableHeader({ label, columnKey, sortConfig, setSortConfig, thClassNa
   );
 }
 
-function maxNumericStudentId(students: Student[]): number {
-  return students.reduce((max, student) => {
-    const n = parseNumericStudentIdNumber(student.id);
-    return n == null ? max : Math.max(max, n);
-  }, 0);
-}
-
-function parseNumericStudentIdNumber(rawId: string): number | null {
-  const normalized = normalizeStudentId(String(rawId ?? "").trim());
-  const match = /^(\d{1,5})$/i.exec(normalized);
-  if (!match) return null;
-  const n = Number(match[1]);
-  return Number.isFinite(n) ? n : null;
-}
-
-function formatStudentIdFromNumber(n: number): string {
-  return String(Math.max(1, Math.round(n))).padStart(5, "0");
-}
-
-function getNextStudentId(students: Student[]) {
-  return formatStudentIdFromNumber(maxNumericStudentId(students) + 1);
-}
-
 function isDuplicateStudentIdError(error: { code?: string; message?: string }): boolean {
   const code = String(error.code ?? "");
   const message = String(error.message ?? "").toLowerCase();
   return code === "23505" || message.includes("duplicate key") || message.includes("students_pkey");
 }
 
+
 async function fetchNextStudentIdFromDb(): Promise<string> {
-  const pageSize = 1000;
-  let from = 0;
-  let maxNumber = 0;
-  while (true) {
-    const { data, error } = await supabase
-      .from("students")
-      .select("id")
-      .range(from, from + pageSize - 1);
-    if (error) throw error;
-    const chunk = (data ?? []) as { id: string }[];
-    for (const row of chunk) {
-      const n = parseNumericStudentIdNumber(row.id);
-      if (n != null) maxNumber = Math.max(maxNumber, n);
-    }
-    if (chunk.length < pageSize) break;
-    from += pageSize;
+  const res = await fetch("/api/students/next-id", { credentials: "same-origin" });
+  const body = (await res.json()) as { ok?: boolean; nextId?: string; error?: string };
+  if (!res.ok || !body.ok || !body.nextId) {
+    throw new Error(body.error ?? "Failed to fetch next student id");
   }
-  return formatStudentIdFromNumber(maxNumber + 1);
+  return body.nextId;
 }
 
 function mapRowToStudent(row: StudentRow): Student {

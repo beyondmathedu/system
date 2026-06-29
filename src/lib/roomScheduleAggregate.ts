@@ -22,6 +22,19 @@ import {
   type YearLessonRecord,
   type YearLessonState,
 } from "@/lib/yearScheduleCore";
+import {
+  isEmptyLessonYearState,
+  LEGACY_2026_STATE_SELECT,
+  LEGACY_LESSON_STATE_YEAR,
+} from "@/lib/lessonYearStateLegacy";
+import { scheduleRoomsMatch } from "@/lib/dayTimetableShared";
+import { monthsToLoadForScheduleRange } from "@/lib/roomScheduleMonths";
+import {
+  hasRoomScheduleCandidateFromRecords,
+  hasRoomScheduleCandidateFromStateSignals,
+  isEmptyRoomStateSignals,
+  type RoomStateSignals,
+} from "@/lib/roomScheduleCandidate";
 
 const PERF_LOG_ENABLED = process.env.ENABLE_PERF_LOGS === "1";
 
@@ -192,26 +205,247 @@ function hasTutorNameCandidate(
 }
 
 /** 課表記錄／補堂／加堂／覆寫是否可能出現在目標房間（避免對全體學生展開整月）。 */
-function hasRoomScheduleCandidate(
-  records: YearLessonRecord[],
-  state: YearLessonState,
+function monthsToLoadForRange(startIso: string, endIso: string, fallbackMonth: number): number[] {
+  return monthsToLoadForScheduleRange(startIso, endIso, fallbackMonth);
+}
+
+function emptyStateSignals(): RoomStateSignals {
+  return { overrides: {}, rescheduleEntries: [], extraEntries: [] };
+}
+
+function dbRowToStateSignals(row: {
+  overrides: unknown;
+  reschedule_entries: unknown;
+  extra_entries: unknown;
+}): RoomStateSignals {
+  const full = dbRowToState({
+    attendance: {},
+    hidden_dates: {},
+    overrides: row.overrides,
+    reschedule_entries: row.reschedule_entries,
+    extra_entries: row.extra_entries,
+  });
+  return {
+    overrides: full.overrides,
+    rescheduleEntries: full.rescheduleEntries,
+    extraEntries: full.extraEntries,
+  };
+}
+
+async function loadStateRoomSignalsForYear(
+  studentIds: string[],
+  year: number,
+  supabase: SupabaseClient,
+): Promise<Map<string, RoomStateSignals>> {
+  const map = new Map<string, RoomStateSignals>();
+  for (const id of studentIds) {
+    map.set(id, emptyStateSignals());
+  }
+  if (!studentIds.length) return map;
+
+  const signalSelect = "student_id, overrides, reschedule_entries, extra_entries" as const;
+  const yearResult = await fetchRowsInChunks({
+    ids: studentIds,
+    query: (chunk) =>
+      supabase
+        .from("student_lessons_year_state")
+        .select(signalSelect)
+        .eq("year", year)
+        .in("student_id", chunk),
+  });
+
+  if (yearResult.error) return map;
+
+  type SignalRow = Parameters<typeof dbRowToStateSignals>[0];
+  for (const row of yearResult.data as SignalRow[]) {
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    if (sid) map.set(sid, dbRowToStateSignals(row));
+  }
+
+  if (year === LEGACY_LESSON_STATE_YEAR) {
+    const needLegacy = studentIds.filter((id) => isEmptyRoomStateSignals(map.get(id)));
+    if (needLegacy.length) {
+      const legacyResult = await fetchRowsInChunks({
+        ids: needLegacy,
+        query: (chunk) =>
+          supabase
+            .from("student_lessons_2026_state")
+            .select("student_id, overrides, reschedule_entries, extra_entries")
+            .in("student_id", chunk),
+      });
+      if (!legacyResult.error) {
+        for (const row of legacyResult.data as SignalRow[]) {
+          const sid = String((row as { student_id?: string }).student_id ?? "");
+          if (!sid) continue;
+          const legacy = dbRowToStateSignals(row);
+          if (!isEmptyRoomStateSignals(legacy)) map.set(sid, legacy);
+        }
+      }
+    }
+  }
+
+  return map;
+}
+
+async function loadActiveStudentsScheduleContext(year: number): Promise<{
+  supabase: SupabaseClient;
+  activeStudents: ScheduleStudentRow[];
+  inactiveEffectiveById: Map<string, string>;
+  error: string | null;
+}> {
+  const supabase = getSupabaseAdmin();
+  const { data: students, error: stErr } = await supabase
+    .from("students")
+    .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
+    .order("id");
+
+  if (stErr) {
+    return {
+      supabase,
+      activeStudents: [],
+      inactiveEffectiveById: new Map(),
+      error: stErr.message,
+    };
+  }
+
+  if (!students?.length) {
+    return {
+      supabase,
+      activeStudents: [],
+      inactiveEffectiveById: new Map(),
+      error: null,
+    };
+  }
+
+  const manualInactiveEffectiveById = new Map<string, string>();
+  const allIds = students.map((s) => String(s.id ?? "")).filter(Boolean);
+  const { data: visibilityRows } = await fetchRowsInChunks({
+    ids: allIds,
+    query: (chunk) =>
+      supabase.from("student_visibility_modes").select("student_id, mode, effective_date").in("student_id", chunk),
+  });
+
+  for (const row of visibilityRows ?? []) {
+    const mode = String((row as { mode?: string }).mode ?? "active").toLowerCase();
+    if (mode !== "inactive") continue;
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    const eff = String((row as { effective_date?: string }).effective_date ?? "");
+    if (sid && eff) manualInactiveEffectiveById.set(sid, eff);
+  }
+
+  const activeStudents = filterStudentsWithAnyActivityInYear(
+    students as ScheduleStudentRow[],
+    manualInactiveEffectiveById,
+    year,
+  );
+
+  const inactiveEffectiveById = new Map<string, string>();
+  for (const s of activeStudents) {
+    const sid = String(s.id ?? "");
+    if (!sid) continue;
+    const eff = resolveStudentInactiveEffectiveDate({
+      grade: s.grade,
+      manualInactiveEffective: manualInactiveEffectiveById.get(sid) ?? null,
+      year,
+    });
+    if (eff) inactiveEffectiveById.set(sid, eff);
+  }
+
+  return { supabase, activeStudents, inactiveEffectiveById, error: null };
+}
+
+async function loadLessonRecordsMap(
+  studentIds: string[],
+  supabase: SupabaseClient,
+): Promise<{ recMap: Map<string, unknown>; error: string | null }> {
+  const recMap = new Map<string, unknown>();
+  if (!studentIds.length) return { recMap, error: null };
+
+  const { data: recRows, error: recErr } = await fetchRowsInChunks({
+    ids: studentIds,
+    query: (chunk) =>
+      supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
+  });
+  if (recErr) return { recMap, error: recErr };
+
+  for (const r of recRows ?? []) {
+    recMap.set(String((r as { student_id?: string }).student_id ?? ""), (r as { records?: unknown }).records);
+  }
+  return { recMap, error: null };
+}
+
+async function loadRoomScheduleBundleUncached(
+  year: number,
   roomLabel: string,
-): boolean {
-  const target = roomLabel.trim();
-  if (!target) return false;
-  for (const r of records) {
-    if (String(r.room ?? "").trim() === target) return true;
+): Promise<{ bundle: StudentsScheduleBundle | null; error: string | null; stats?: { active: number; stateLoads: number } }> {
+  const ctx = await loadActiveStudentsScheduleContext(year);
+  if (ctx.error) return { bundle: null, error: ctx.error };
+  if (!ctx.activeStudents.length) {
+    return {
+      bundle: {
+        students: [],
+        recMap: new Map(),
+        stateMap: new Map(),
+        inactiveEffectiveById: ctx.inactiveEffectiveById,
+      },
+      error: null,
+      stats: { active: 0, stateLoads: 0 },
+    };
   }
-  for (const ov of Object.values(state.overrides)) {
-    if (String(ov?.room ?? "").trim() === target) return true;
+
+  const ids = studentIdsOf(ctx.activeStudents);
+  const { recMap, error: recErr } = await loadLessonRecordsMap(ids, ctx.supabase);
+  if (recErr) return { bundle: null, error: recErr };
+
+  const recordCandidateIds = new Set<string>();
+  const needsStateSignalScan: string[] = [];
+  for (const st of ctx.activeStudents) {
+    const sid = String(st.id ?? "");
+    if (!sid) continue;
+    const records = normalizeRecords(recMap.get(sid));
+    if (hasRoomScheduleCandidateFromRecords(records, roomLabel)) {
+      recordCandidateIds.add(sid);
+    } else {
+      needsStateSignalScan.push(sid);
+    }
   }
-  for (const e of state.extraEntries) {
-    if (String(e.room ?? "").trim() === target) return true;
+
+  const finalCandidateIds = new Set(recordCandidateIds);
+  if (needsStateSignalScan.length) {
+    const signalMap = await loadStateRoomSignalsForYear(needsStateSignalScan, year, ctx.supabase);
+    for (const sid of needsStateSignalScan) {
+      const signals = signalMap.get(sid) ?? emptyStateSignals();
+      if (hasRoomScheduleCandidateFromStateSignals(signals, roomLabel)) {
+        finalCandidateIds.add(sid);
+      }
+    }
   }
-  for (const e of state.rescheduleEntries) {
-    if (String(e.room ?? "").trim() === target) return true;
+
+  const candidateIdList = [...finalCandidateIds];
+  const stateMap = await loadStatesForYear(candidateIdList, year, ctx.supabase);
+
+  const candidateStudents = ctx.activeStudents.filter((s) => finalCandidateIds.has(String(s.id ?? "")));
+  const candidateRecMap = new Map<string, unknown>();
+  for (const sid of candidateIdList) {
+    if (recMap.has(sid)) candidateRecMap.set(sid, recMap.get(sid));
   }
-  return false;
+
+  const candidateInactive = new Map<string, string>();
+  for (const sid of candidateIdList) {
+    const eff = ctx.inactiveEffectiveById.get(sid);
+    if (eff) candidateInactive.set(sid, eff);
+  }
+
+  return {
+    bundle: {
+      students: candidateStudents,
+      recMap: candidateRecMap,
+      stateMap,
+      inactiveEffectiveById: candidateInactive,
+    },
+    error: null,
+    stats: { active: ids.length, stateLoads: candidateIdList.length },
+  };
 }
 
 async function loadStatesForYear(
@@ -228,40 +462,43 @@ async function loadStatesForYear(
   const stateSelect =
     "student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries" as const;
 
-  const loadLegacy =
-    year === 2026
-      ? fetchRowsInChunks({
-          ids: studentIds,
-          query: (chunk) =>
-            supabase.from("student_lessons_2026_state").select(stateSelect).in("student_id", chunk),
-        })
-      : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null });
+  const yearResult = await fetchRowsInChunks({
+    ids: studentIds,
+    query: (chunk) =>
+      supabase
+        .from("student_lessons_year_state")
+        .select(stateSelect)
+        .eq("year", year)
+        .in("student_id", chunk),
+  });
 
-  const [legacyResult, yearResult] = await Promise.all([
-    loadLegacy,
-    fetchRowsInChunks({
-      ids: studentIds,
-      query: (chunk) =>
-        supabase
-          .from("student_lessons_year_state")
-          .select(stateSelect)
-          .eq("year", year)
-          .in("student_id", chunk),
-    }),
-  ]);
-
-  if (legacyResult.error || yearResult.error) {
+  if (yearResult.error) {
     return map;
   }
 
   type StateRow = Parameters<typeof dbRowToState>[0];
-  for (const row of legacyResult.data as StateRow[]) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    if (sid) map.set(sid, dbRowToState(row));
-  }
   for (const row of yearResult.data as StateRow[]) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
     if (sid) map.set(sid, dbRowToState(row));
+  }
+
+  if (year === LEGACY_LESSON_STATE_YEAR) {
+    const needLegacy = studentIds.filter((id) => isEmptyLessonYearState(map.get(id) ?? emptyState()));
+    if (needLegacy.length) {
+      const legacyResult = await fetchRowsInChunks({
+        ids: needLegacy,
+        query: (chunk) =>
+          supabase.from("student_lessons_2026_state").select(LEGACY_2026_STATE_SELECT).in("student_id", chunk),
+      });
+      if (!legacyResult.error) {
+        for (const row of legacyResult.data as StateRow[]) {
+          const sid = String((row as { student_id?: string }).student_id ?? "");
+          if (!sid) continue;
+          const legacy = dbRowToState(row);
+          if (!isEmptyLessonYearState(legacy)) map.set(sid, legacy);
+        }
+      }
+    }
   }
 
   return map;
@@ -313,89 +550,23 @@ async function loadStudentsScheduleBundleUncached(year: number): Promise<{
   bundle: StudentsScheduleBundle | null;
   error: string | null;
 }> {
-  const supabase = getSupabaseAdmin();
-  const { data: students, error: stErr } = await supabase
-    .from("students")
-    .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
-    .order("id");
+  const ctx = await loadActiveStudentsScheduleContext(year);
+  if (ctx.error) return { bundle: null, error: ctx.error };
 
-  if (stErr) {
-    return { bundle: null, error: stErr.message };
-  }
-
-  if (!students?.length) {
-    return {
-      bundle: {
-        students: [],
-        recMap: new Map(),
-        stateMap: new Map(),
-        inactiveEffectiveById: new Map(),
-      },
-      error: null,
-    };
-  }
-
-  const manualInactiveEffectiveById = new Map<string, string>();
-  const allIds = students.map((s) => String(s.id ?? "")).filter(Boolean);
-  const { data: visibilityRows } = await fetchRowsInChunks({
-    ids: allIds,
-    query: (chunk) =>
-      supabase.from("student_visibility_modes").select("student_id, mode, effective_date").in("student_id", chunk),
-  });
-
-  for (const row of visibilityRows ?? []) {
-    const mode = String((row as { mode?: string }).mode ?? "active").toLowerCase();
-    if (mode !== "inactive") continue;
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    const eff = String((row as { effective_date?: string }).effective_date ?? "");
-    if (sid && eff) manualInactiveEffectiveById.set(sid, eff);
-  }
-
-  const activeStudents = filterStudentsWithAnyActivityInYear(
-    students as ScheduleStudentRow[],
-    manualInactiveEffectiveById,
-    year,
-  );
-  const ids = studentIdsOf(activeStudents);
-
-  const [{ data: recRows, error: recErr }, stateMap] = await Promise.all([
-    ids.length
-      ? fetchRowsInChunks({
-          ids,
-          query: (chunk) =>
-            supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
-        })
-      : Promise.resolve({ data: [], error: null }),
-    loadStatesForYear(ids, year, supabase),
+  const ids = studentIdsOf(ctx.activeStudents);
+  const [{ recMap, error: recErr }, stateMap] = await Promise.all([
+    loadLessonRecordsMap(ids, ctx.supabase),
+    loadStatesForYear(ids, year, ctx.supabase),
   ]);
 
-  if (recErr) {
-    return { bundle: null, error: recErr };
-  }
-
-  const inactiveEffectiveById = new Map<string, string>();
-  for (const s of activeStudents) {
-    const sid = String(s.id ?? "");
-    if (!sid) continue;
-    const eff = resolveStudentInactiveEffectiveDate({
-      grade: s.grade,
-      manualInactiveEffective: manualInactiveEffectiveById.get(sid) ?? null,
-      year,
-    });
-    if (eff) inactiveEffectiveById.set(sid, eff);
-  }
-
-  const recMap = new Map<string, unknown>();
-  for (const r of recRows ?? []) {
-    recMap.set(r.student_id, r.records);
-  }
+  if (recErr) return { bundle: null, error: recErr };
 
   return {
     bundle: {
-      students: activeStudents,
+      students: ctx.activeStudents,
       recMap,
       stateMap,
-      inactiveEffectiveById,
+      inactiveEffectiveById: ctx.inactiveEffectiveById,
     },
     error: null,
   };
@@ -447,7 +618,7 @@ async function fetchRoomScheduleAggregateUncached(
     return { roomLabel: "", rows: [], loadError: null };
   }
 
-  const { bundle, error } = await loadStudentsScheduleBundle(year);
+  const { bundle, error, stats } = await loadRoomScheduleBundleUncached(year, roomLabel);
   const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
   if (error) {
     return { roomLabel, rows: [], loadError: error };
@@ -458,30 +629,16 @@ async function fetchRoomScheduleAggregateUncached(
 
   const { students, recMap, stateMap, inactiveEffectiveById } = bundle;
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
-  const roomCandidateStudents: ScheduleStudentRow[] = [];
+  const roomCandidateStudents: ScheduleStudentRow[] = students;
   for (const st of students) {
-    const records = normalizeRecords(recMap.get(st.id));
-    normalizedRecordsById.set(st.id, records);
-    const state = stateMap.get(st.id) ?? emptyState();
-    if (hasRoomScheduleCandidate(records, state, roomLabel)) {
-      roomCandidateStudents.push(st);
-    }
+    normalizedRecordsById.set(st.id, normalizeRecords(recMap.get(st.id)));
   }
   const startIso = options?.startIso?.trim() || "";
   const endIso = options?.endIso?.trim() || "";
   const rangeActive = Boolean(startIso && endIso);
-  const monthsToLoad = (() => {
-    if (!rangeActive) return [month];
-    const sm = Number(startIso.slice(5, 7));
-    const em = Number(endIso.slice(5, 7));
-    if (!Number.isFinite(sm) || !Number.isFinite(em)) return [month];
-    if (sm === em) return [Math.min(12, Math.max(1, sm))];
-    const set = new Set<number>([
-      Math.min(12, Math.max(1, sm)),
-      Math.min(12, Math.max(1, em)),
-    ]);
-    return Array.from(set).sort((a, b) => a - b);
-  })();
+  const monthsToLoad = rangeActive
+    ? monthsToLoadForRange(startIso, endIso, month)
+    : [month];
   const out: RoomScheduleRow[] = [];
 
   for (const st of roomCandidateStudents) {
@@ -489,7 +646,7 @@ async function fetchRoomScheduleAggregateUncached(
     const state = stateMap.get(st.id) ?? emptyState();
     const monthRows = monthsToLoad.flatMap((m) => buildYearScheduleRowsForMonth(records, state, year, m));
     const filtered = monthRows
-      .filter((r) => r.lessonType !== "取消" && r.room.trim() === roomLabel)
+      .filter((r) => r.lessonType !== "取消" && scheduleRoomsMatch(r.room, roomLabel))
       .filter((r) => {
         const nd = normalizeCalendarDateIso(r.date);
         if (!nd || !isOnOrAfterLessonSystemStart(nd, year)) return false;
@@ -546,7 +703,7 @@ async function fetchRoomScheduleAggregateUncached(
     const elapsedMs = Date.now() - perfStartedAt;
     const computeMs = Math.max(0, elapsedMs - perfDbElapsedMs);
     console.info(
-      `[perf] fetchRoomScheduleAggregate slug=${slug} room=${roomLabel} y=${year} m=${month} students=${students.length} candidates=${roomCandidateStudents.length} rows=${sortedRows.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
+      `[perf] fetchRoomScheduleAggregate slug=${slug} room=${roomLabel} y=${year} m=${month} active=${stats?.active ?? students.length} stateLoads=${stats?.stateLoads ?? students.length} candidates=${roomCandidateStudents.length} rows=${sortedRows.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
     );
   }
   return { roomLabel, rows: sortedRows, loadError: null };
@@ -564,7 +721,7 @@ export async function fetchRoomScheduleAggregate(
   const slugKey = slug.trim().toLowerCase();
   return unstable_cache(
     async () => fetchRoomScheduleAggregateUncached(slug, year, month, { startIso, endIso }),
-    ["room-schedule-aggregate-v2", slugKey, String(year), String(month), startIso, endIso],
+    ["room-schedule-aggregate-v3", slugKey, String(year), String(month), startIso, endIso],
     // Heavy full-room expand; longer TTL + tag busting keeps UI snappy.
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
