@@ -8,7 +8,8 @@ import { dayTimetablePageIntroStrings } from "@/lib/dayTimetableUiStrings";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
-import { isTutorViewer } from "@/lib/tutorRoomAccess";
+import { buildRoomScheduleQueryForDate, isTutorViewer } from "@/lib/tutorRoomAccess";
+import { redactDayTimetableRemarks } from "@/lib/dayTimetableShared";
 import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { fetchDayTimetablePayload, parseDayParams } from "@/lib/dayTimetableGrid";
 import { normalizeStudentId } from "@/lib/studentId";
@@ -38,6 +39,8 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
     redirect("/login");
   }
   const readOnly = isTutorViewer(viewer);
+  const tablePayload = readOnly ? redactDayTimetableRemarks(payload) : payload;
+  const roomScheduleQuery = buildRoomScheduleQueryForDate(viewer, payload.dateIso);
   const prev = shiftDay(year, month, day, -1);
   const next = shiftDay(year, month, day, 1);
   const base = "/daily-time-table";
@@ -85,13 +88,16 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
               <div className="mb-3 text-sm font-bold text-slate-700">Daily lesson records</div>
               <DayTimetableTable
                 key={payload.dateIso}
-                payload={payload}
+                payload={tablePayload}
                 emptyMessage="No lessons on this day."
                 showPeriodSeparatorOnly
                 repeatRoomHeadersPerTimeSlot
                 readOnly={readOnly}
+                allowStudentNameLinks={readOnly}
+                hideRemarks={readOnly}
+                roomScheduleQuery={roomScheduleQuery}
               />
-              <DayTimetableLegend timetableStyle={payload.timetableStyle} />
+              <DayTimetableLegend timetableStyle={payload.timetableStyle} hideRemarks={readOnly} />
               {readOnly ? (
                 <p className="mt-4 text-xs text-slate-500">View only — tutors cannot edit this timetable.</p>
               ) : (

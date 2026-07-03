@@ -5,11 +5,13 @@ import { dayTimetableLegendStrings } from "@/lib/dayTimetableUiStrings";
 type Props = {
   timetableStyle: DayTimetableStyleSettings;
   showCapacityLegend?: boolean;
+  hideRemarks?: boolean;
 };
 
 export default function DayTimetableLegend({
   timetableStyle,
   showCapacityLegend = false,
+  hideRemarks = false,
 }: Props) {
   const t = dayTimetableLegendStrings;
 
@@ -18,8 +20,8 @@ export default function DayTimetableLegend({
   return (
     <div className="mt-4 space-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs leading-relaxed text-slate-600">
       <p>
-        <span className={titleClass}>{t.examRemarksTitle}: </span>
-        {t.examRemarksBody}
+        <span className={titleClass}>{hideRemarks ? t.examOnlyTitle : t.examRemarksTitle}: </span>
+        {hideRemarks ? t.examOnlyBody : t.examRemarksBody}
       </p>
       <p>
         <span className={titleClass}>{t.coloursTitle}: </span>

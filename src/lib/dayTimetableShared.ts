@@ -92,6 +92,18 @@ export type DayTimetablePayload = {
   timetableStyle: DayTimetableStyleSettings;
 };
 
+export function redactDayTimetableRemarks(payload: DayTimetablePayload): DayTimetablePayload {
+  const byTimeRoom: Record<string, DayTimetableCell[]> = {};
+  for (const [key, cells] of Object.entries(payload.byTimeRoom)) {
+    byTimeRoom[key] = cells.map((cell) => ({ ...cell, scheduleRemarks: "" }));
+  }
+  return {
+    ...payload,
+    timetableRemarksById: {},
+    byTimeRoom,
+  };
+}
+
 export function hkTodayYmd() {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Hong_Kong",

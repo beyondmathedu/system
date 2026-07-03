@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
+import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
 import { supabase } from "@/lib/supabase";
 import {
   loadLessonScheduleRecords,
@@ -72,6 +73,7 @@ export default function StudentLessonsPage() {
   const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [scheduleRecords, setScheduleRecords] = useState<LessonScheduleRecord[] | null>(null);
+  const [isTutorReadOnly, setIsTutorReadOnly] = useState(false);
   const availableYears = useMemo(() => availableLessonYears(), []);
   const hubYear = defaultLessonYear();
 
@@ -82,8 +84,17 @@ export default function StudentLessonsPage() {
       const email = String(auth.user?.email ?? "").trim().toLowerCase();
       if (!mounted) return;
       if (email && email === TUTOR_SHARED_IPAD_EMAIL.trim().toLowerCase()) {
-        // Shared iPad tutor should not access the schedule settings hub.
-        router.replace("/home");
+        router.replace(defaultDailyTimetablePath());
+        return;
+      }
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("role")
+        .eq("user_id", auth.user?.id ?? "")
+        .maybeSingle();
+      if (!mounted) return;
+      if (String(profile?.role ?? "").toLowerCase() === "tutor") {
+        setIsTutorReadOnly(true);
       }
     })();
     return () => {
@@ -172,14 +183,14 @@ export default function StudentLessonsPage() {
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="students" />
+        <AppTopNav highlight={isTutorReadOnly ? "daily-timetable" : "students"} />
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <div className="flex items-center gap-3">
               <Link
-                href="/students"
+                href={isTutorReadOnly ? defaultDailyTimetablePath() : "/students"}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
-                aria-label="Back to students list"
+                aria-label={isTutorReadOnly ? "Back to daily timetable" : "Back to students list"}
               >
                 ←
               </Link>
@@ -241,6 +252,7 @@ export default function StudentLessonsPage() {
                 </div>
               </div>
 
+              {!isTutorReadOnly ? (
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[auto_1fr] md:items-start">
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">Student Mode (Global Visibility)</p>
@@ -320,6 +332,16 @@ export default function StudentLessonsPage() {
                   </div>
                 </div>
               </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex whitespace-nowrap rounded-md bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800">
+                    Makeup Count {upcomingUntickedCount}
+                  </span>
+                  <span className="inline-flex rounded-md bg-sky-100 px-3 py-2 text-sm font-bold text-sky-800">
+                    Unattended This Month {currentMonthUntickedCount}
+                  </span>
+                </div>
+              )}
 
               <div>
                 <p className="text-xs font-semibold tracking-wider text-slate-500">Year</p>
@@ -338,6 +360,7 @@ export default function StudentLessonsPage() {
             </div>
           </div>
 
+          {!isTutorReadOnly ? (
           <div className="p-6">
             <h2 className="mb-4 text-lg font-bold text-slate-900">Lesson Schedule Settings</h2>
             {scheduleRecords ? (
@@ -346,6 +369,7 @@ export default function StudentLessonsPage() {
               <div className="h-48 animate-pulse rounded-xl bg-slate-100" aria-hidden />
             )}
           </div>
+          ) : null}
         </div>
       </div>
     </div>

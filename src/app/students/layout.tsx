@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 import { getViewerContext } from "@/lib/authz";
 import { studentLessonsYearPath } from "@/lib/lessonCalendar";
-import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
-import { isSharedIpadTutorViewer } from "@/lib/tutorRoomAccess";
+import { isSharedIpadTutorViewer, defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
 import { normalizeStudentId } from "@/lib/studentId";
 
 export default async function StudentsSectionLayout({
@@ -23,7 +22,11 @@ export default async function StudentsSectionLayout({
     if (pathStudentId && pathStudentId === ownStudentId) return children;
     redirect(studentLessonsYearPath(ownStudentId));
   }
-  redirectTutorAwayFromAdminPages(viewer);
+  if (viewer.role === "tutor") {
+    const pathStudentId = normalizeStudentId(String(routeParams?.id ?? ""));
+    if (!pathStudentId) redirect(defaultDailyTimetablePath());
+    return children;
+  }
   if (viewer.role !== "admin") redirect("/login");
   return children;
 }

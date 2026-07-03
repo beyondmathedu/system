@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { FALLBACK_ROOM_NAV_LINKS, type RoomNavItem } from "@/lib/roomConstants";
+import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
 import { supabase } from "@/lib/supabase";
 
 export type HighlightKey =
@@ -23,17 +24,18 @@ type MeNavResponse = {
   role?: string | null;
   isSharedIpadTutor?: boolean;
   roomNavLinks?: RoomNavItem[] | null;
+  roomScheduleQuery?: string | null;
 };
 
 export default function AppTopNavContent({ highlight = null }: { highlight?: HighlightKey }) {
   const [roomLinks, setRoomLinks] = useState<RoomNavItem[]>(FALLBACK_ROOM_NAV_LINKS);
+  const [roomScheduleQuery, setRoomScheduleQuery] = useState("");
   const [viewerRole, setViewerRole] = useState<string | null>(null);
-  const [isSharedIpadNav, setIsSharedIpadNav] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const pathname = usePathname();
   const isAdminNav = viewerRole === "admin";
-  const isTutorNav = viewerRole === "tutor" && !isSharedIpadNav;
-  const showRoomsNav = isAdminNav || isTutorNav;
+  const isTutorRole = viewerRole === "tutor";
+  const showTutorMenu = isTutorRole;
 
   async function onLogOut() {
     if (loggingOut) return;
@@ -55,10 +57,9 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
           const body = (await res.json()) as MeNavResponse;
           if (!mounted) return;
           const role = String(body.role ?? "").toLowerCase() || null;
-          const sharedIpad = Boolean(body.isSharedIpadTutor);
           setViewerRole(role);
-          setIsSharedIpadNav(sharedIpad);
-          if (role === "tutor" && !sharedIpad && body.roomNavLinks?.length) {
+          setRoomScheduleQuery(String(body.roomScheduleQuery ?? "").trim());
+          if (role === "tutor" && body.roomNavLinks?.length) {
             setRoomLinks(body.roomNavLinks);
             return;
           }
@@ -112,6 +113,15 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
   };
   const isActive = (key: Exclude<HighlightKey, null>) => activeMap[key] || highlight === key;
 
+  function roomNavHref(item: RoomNavItem) {
+    return roomScheduleQuery ? `${item.href}?${roomScheduleQuery}` : item.href;
+  }
+
+  function isRoomNavActive(item: RoomNavItem) {
+    const path = item.href.split("?")[0] ?? item.href;
+    return pathname === path || pathname.startsWith(`${path}/`);
+  }
+
   return (
     <div className="contents">
       <nav
@@ -124,9 +134,9 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
             <div className="flex items-center gap-2 px-3 py-2 text-white sm:gap-3 sm:px-5 sm:py-2.5">
               <div className="flex min-w-0 shrink-0 items-center gap-2">
                 <Link
-                  href={isTutorNav ? "/rooms" : "/home"}
+                  href={isTutorRole ? defaultDailyTimetablePath() : "/home"}
                   className="inline-flex shrink-0 items-center hover:opacity-90"
-                  aria-label={isSharedIpadNav ? "Go to home" : isTutorNav ? "Go to my rooms" : "Go to home"}
+                  aria-label={isTutorRole ? "Go to daily timetable" : "Go to home"}
                 >
                   <Image
                     src="/logo.png"
@@ -168,21 +178,32 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
                       Student Lesson Time & Fee Records
                     </Link>
                   </>
-                ) : isTutorNav ? (
-                  <Link
-                    href="/daily-time-table"
-                    className={`${base} ${isActive("daily-timetable") ? active : idle}`}
-                  >
-                    Daily Timetable
-                  </Link>
+                ) : showTutorMenu ? (
+                  <>
+                    <Link
+                      href="/daily-time-table"
+                      className={`${base} ${isActive("daily-timetable") ? active : idle}`}
+                    >
+                      Daily Timetable
+                    </Link>
+                    {roomLinks.map((item) => (
+                      <Link
+                        key={item.href}
+                        href={roomNavHref(item)}
+                        className={`${base} ${isRoomNavActive(item) ? active : idle}`}
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </>
                 ) : null}
-                {showRoomsNav ? (
+                {isAdminNav ? (
                   <div className="relative z-[70] shrink-0 group">
                   <Link
                     href="/rooms"
                     className={`${base} ${isActive("room") ? active : idle} inline-flex items-center gap-0.5`}
                   >
-                    {isTutorNav ? "我的教室" : "Rooms"}
+                    Rooms
                     <span className="ml-0.5 text-[10px] opacity-80">▼</span>
                   </Link>
                     <div className="pointer-events-none invisible absolute left-0 top-full z-[70] min-w-[9rem] pt-1 opacity-0 transition group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:visible group-focus-within:opacity-100">

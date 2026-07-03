@@ -1,7 +1,9 @@
 export const dayTimetableLegendStrings = {
   examRemarksTitle: "Exam & remarks",
+  examOnlyTitle: "Exam date",
   examRemarksBody:
     "Exam date synced from Lessons. Hover a name for remarks (not in Grade/Exam).",
+  examOnlyBody: "Exam date synced from Lessons.",
   coloursTitle: "Colours & stripes",
   coloursRegular: "Regular = tutor colour; ",
   coloursResched: "reschedule, ",

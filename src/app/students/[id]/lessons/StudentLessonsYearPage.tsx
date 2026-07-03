@@ -541,7 +541,10 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         return;
       }
       if (role === "tutor") {
-        router.replace("/rooms");
+        if (mounted) {
+          setIsReadOnlyViewer(true);
+          setAccessReady(true);
+        }
         return;
       }
       if (role === "admin") {
@@ -1773,7 +1776,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             </p>
             {isReadOnlyViewer ? (
               <p className="mt-2 inline-flex rounded-md bg-white/20 px-2.5 py-1 text-xs font-semibold text-white">
-                Read-only mode (shared iPad)
+                Read-only mode
               </p>
             ) : null}
           </div>

@@ -10,7 +10,7 @@ import { defaultLessonYear, parseLessonYear, studentLessonsYearPath } from "@/li
 import { readMonthPart, readYmdParts } from "@/lib/intlFormatParts";
 import { normalizeStudentId } from "@/lib/studentId";
 import { fetchRoomScheduleAggregate } from "@/lib/roomScheduleAggregate";
-import { getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
+import { defaultDailyTimetablePath, getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
 import RoomScheduleTable from "./RoomScheduleTable";
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -121,7 +121,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
     redirect("/login");
   }
   if (!tutorCanAccessRoomSlug(viewer, key)) {
-    redirect(getTutorLandingPath(viewer) ?? "/rooms");
+    redirect(getTutorLandingPath(viewer) ?? defaultDailyTimetablePath());
   }
   const todayIso = hkTodayIso();
   const range = (() => {

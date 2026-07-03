@@ -8,7 +8,6 @@ import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
 import { PENDING_MAKEUP_BUTTON_LABEL_ZH, PENDING_MAKEUP_WITHIN_DAYS } from "@/lib/pendingMakeup";
 import HomeReminderPanel from "./HomeReminderPanel";
 import UpcomingBirthdayReminder from "./UpcomingBirthdayReminder";
-import SharedIpadHomePortal from "./SharedIpadHomePortal";
 
 const CANTONESE_POSITIVE_LINES = [
   "今日都會順順利利。",
@@ -140,9 +139,6 @@ function dailyPositiveLine(seed: string) {
 export default async function HomeLandingPage() {
   const viewer = await getViewerContext();
   if (!viewer.userId) redirect("/login");
-  if (viewer.isSharedIpadTutor) {
-    return <SharedIpadHomePortal viewer={viewer} />;
-  }
   redirectTutorAwayFromAdminPages(viewer);
   const dashboard = await fetchHomeDashboardData();
   const {

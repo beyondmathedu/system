@@ -16,6 +16,7 @@ import type {
 import { deleteTimetableDayRemark, upsertTimetableDayRemark } from "@/lib/studentLessonStorage";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { normalizeStudentId } from "@/lib/studentId";
+import { buildRoomPageHref } from "@/lib/roomConstants";
 
 function feeToneForStudent(
   feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>,
@@ -163,6 +164,12 @@ type Props = {
   repeatRoomHeadersPerTimeSlot?: boolean;
   /** 導師：只可查看，不可改備註、樣式或跳轉學生頁 */
   readOnly?: boolean;
+  /** readOnly 時仍允許 Name 連到 /students/{id}/lessons */
+  allowStudentNameLinks?: boolean;
+  /** 不顯示備註（導師 Daily Timetable） */
+  hideRemarks?: boolean;
+  /** Link room headers to `/rooms/{slug}` with this query string */
+  roomScheduleQuery?: string;
   /** `en`：Regular timetable page */
 };
 
@@ -186,6 +193,9 @@ export default function DayTimetableTable({
   showPeriodSeparatorOnly = false,
   repeatRoomHeadersPerTimeSlot = false,
   readOnly = false,
+  allowStudentNameLinks = false,
+  hideRemarks = false,
+  roomScheduleQuery,
 }: Props) {
   const t = dayTimetableTableStrings;
   const {
@@ -231,15 +241,17 @@ export default function DayTimetableTable({
   } | null>(null);
   const hoverPanelRef = useRef<HTMLDivElement | null>(null);
   const [hoverPanelSize, setHoverPanelSize] = useState<{ w: number; h: number }>({ w: 288, h: 240 });
-  const [remarksById, setRemarksById] = useState<Record<string, string>>(payload.timetableRemarksById ?? {});
+  const [remarksById, setRemarksById] = useState<Record<string, string>>(
+    hideRemarks ? {} : (payload.timetableRemarksById ?? {}),
+  );
   const [savingById, setSavingById] = useState<Record<string, boolean>>({});
   const saveTimersRef = useRef<Map<string, number>>(new Map());
   const hideHoverTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setRemarksById(payload.timetableRemarksById ?? {});
+    setRemarksById(hideRemarks ? {} : (payload.timetableRemarksById ?? {}));
     setHoverPanel(null);
-  }, [payload.timetableRemarksById, payload.dateIso]);
+  }, [hideRemarks, payload.timetableRemarksById, payload.dateIso]);
 
   useEffect(() => {
     if (!hoverPanel) return;
@@ -294,6 +306,7 @@ export default function DayTimetableTable({
     roomIdx: number;
     anchorRect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
   }) {
+    if (hideRemarks) return;
     if (hideHoverTimerRef.current) {
       window.clearTimeout(hideHoverTimerRef.current);
       hideHoverTimerRef.current = null;
@@ -337,7 +350,7 @@ export default function DayTimetableTable({
       item.name
     );
     const remarkDot =
-      (remarksById[item.studentId] ?? "").trim() ? (
+      hideRemarks ? null : (remarksById[item.studentId] ?? "").trim() ? (
         <span
           className={`ml-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
             nameSurf.isDarkBg ? "bg-white/70" : "bg-slate-400"
@@ -346,17 +359,16 @@ export default function DayTimetableTable({
           aria-hidden
         />
       ) : null;
-    const className = `${
-      readOnly
-        ? nameSurf.isDarkBg
-          ? "text-white"
-          : "text-slate-800"
-        : nameSurf.isDarkBg
-          ? "text-white"
-          : "text-[#1d76c2]"
-    } ${readOnly ? "" : "hover:underline"} ${dailyCompactColumns ? "block leading-tight" : ""}`;
+    const isClickableName = !readOnly || allowStudentNameLinks;
+    const className = isClickableName
+      ? nameSurf.isDarkBg
+        ? `text-sky-200 underline hover:text-white ${dailyCompactColumns ? "block leading-tight" : ""}`
+        : `text-[#1d76c2] underline hover:opacity-90 ${dailyCompactColumns ? "block leading-tight" : ""}`
+      : `${
+          nameSurf.isDarkBg ? "text-white" : "text-slate-800"
+        } ${dailyCompactColumns ? "block leading-tight" : ""}`;
 
-    if (readOnly) {
+    if (readOnly && !allowStudentNameLinks) {
       return (
         <span id={anchorId} className={className}>
           {nameBody}
@@ -369,6 +381,25 @@ export default function DayTimetableTable({
       <Link id={anchorId} href={`/students/${encodeURIComponent(normalizeStudentId(item.studentId))}/lessons`} className={className}>
         {nameBody}
         {remarkDot}
+      </Link>
+    );
+  }
+
+  function effectiveRoomScheduleQuery(): string {
+    if (roomScheduleQuery) return roomScheduleQuery;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
+    if (!m) return "";
+    const year = m[1];
+    const month = String(Number(m[2]));
+    return `year=${year}&month=${month}&period=custom&from=${dateIso}&to=${dateIso}`;
+  }
+
+  function renderRoomHeader(room: RoomGroup) {
+    const href = buildRoomPageHref(room, effectiveRoomScheduleQuery());
+    if (!href) return room;
+    return (
+      <Link href={href} className="text-[#1d76c2] hover:underline">
+        {room}
       </Link>
     );
   }
@@ -427,7 +458,7 @@ export default function DayTimetableTable({
                   colSpan={COLS_PER_ROOM}
                   className={TH_ROOM_ROW1}
                 >
-                  {room}
+                  {renderRoomHeader(room)}
                 </th>
               ))}
             </tr>
@@ -487,7 +518,7 @@ export default function DayTimetableTable({
                           scope="colgroup"
                           className={TH_ROOM_ROW1}
                         >
-                          {room}
+                          {renderRoomHeader(room)}
                         </th>
                       ))}
                     </tr>
@@ -538,6 +569,20 @@ export default function DayTimetableTable({
                               style={nameSurf.style}
                             >
                               {item ? (
+                                hideRemarks ? (
+                                  <>
+                                    {renderStudentNameLabel(
+                                      item,
+                                      nameSurf,
+                                      `tt-hover-${frame.time}-${idx}-${room}-${item.studentId}`,
+                                    )}
+                                    {item.pendingMakeupLabel ? (
+                                      <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-900">
+                                        {item.pendingMakeupLabel}
+                                      </p>
+                                    ) : null}
+                                  </>
+                                ) : (
                                 <div
                                   className="relative"
                                   onMouseEnter={() =>
@@ -581,12 +626,11 @@ export default function DayTimetableTable({
                                     </p>
                                   ) : null}
                                   {hoverPanel?.studentId === item.studentId ? (
-                                    <div />
+                                    <span className="sr-only">{t.remarkClickOpen}</span>
                                   ) : null}
                                 </div>
-                              ) : (
-                                ""
-                              )}
+                                )
+                              ) : null}
                             </td>
                             <td className={`${gradeSurf.className} w-16 ${noGridCls}`} style={gradeSurf.style}>
                               {formatGradeDisplay(item?.grade ?? "")}
@@ -639,7 +683,7 @@ export default function DayTimetableTable({
         </tbody>
       </table>
       </div>
-      {hoverPanel ? (
+      {hoverPanel && !hideRemarks ? (
         <div
           role="dialog"
           aria-label={t.remarks}

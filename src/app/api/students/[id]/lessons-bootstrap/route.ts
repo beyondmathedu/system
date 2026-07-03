@@ -35,9 +35,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const isSharedIpad = viewer.isSharedIpadTutor;
   const role = viewer.role;
 
-  if (role === "tutor" && !isSharedIpad) {
-    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
-  }
   if (role === "student") {
     const ownId = normalizeStudentId(String(viewer.studentId ?? ""));
     if (ownId && ownId !== studentId) {
@@ -66,6 +63,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   const readOnly =
     isSharedIpad ||
+    role === "tutor" ||
     String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
 
   return NextResponse.json({

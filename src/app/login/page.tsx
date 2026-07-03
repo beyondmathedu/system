@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
-import { defaultRoomScheduleSearchFromFlag } from "@/lib/tutorRoomAccess";
+import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
 function LoginFormFieldsFallback() {
@@ -72,16 +72,7 @@ function LoginForm() {
             isSharedIpadTutor?: boolean;
           };
           if (String(me.role ?? "").toLowerCase() === "tutor") {
-            if (me.isSharedIpadTutor) {
-              target = "/home";
-            } else {
-              const slugs = (me.allowedRoomSlugs ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean);
-              if (slugs.length === 1) {
-                target = `/rooms/${encodeURIComponent(slugs[0]!)}?${defaultRoomScheduleSearchFromFlag(false)}`;
-              } else {
-                target = "/rooms";
-              }
-            }
+            target = defaultDailyTimetablePath();
           }
         }
       } catch {

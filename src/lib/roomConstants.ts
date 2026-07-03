@@ -7,6 +7,17 @@ export const FALLBACK_SLUG_TO_SCHEDULE_LABEL: Record<string, string> = {
   "hope-2": "Hope 2",
 };
 
+export const SCHEDULE_LABEL_TO_ROOM_SLUG: Record<string, string> = Object.fromEntries(
+  Object.entries(FALLBACK_SLUG_TO_SCHEDULE_LABEL).map(([slug, label]) => [label, slug]),
+);
+
+export function buildRoomPageHref(scheduleLabel: string, query = ""): string | null {
+  const slug = SCHEDULE_LABEL_TO_ROOM_SLUG[scheduleLabel.trim()];
+  if (!slug) return null;
+  const base = `/rooms/${encodeURIComponent(slug)}`;
+  return query ? `${base}?${query}` : base;
+}
+
 export const FALLBACK_ROOM_PAGE_META: Record<string, { label: string; description: string }> = {
   b: { label: "B", description: "Room B 排課與使用資訊" },
   "m-qian": { label: "M前", description: "M 前座 Room 資訊" },

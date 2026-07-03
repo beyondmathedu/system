@@ -1,6 +1,7 @@
 import type { ViewerContext } from "@/lib/authz";
 import { defaultLessonYear } from "@/lib/lessonCalendar";
 import { readMonthPart } from "@/lib/intlFormatParts";
+import { hkTodayYmd } from "@/lib/dayTimetableShared";
 import { FALLBACK_ROOM_NAV_LINKS, type RoomNavItem } from "@/lib/roomConstants";
 
 function hkMonthNow(): number {
@@ -49,12 +50,26 @@ export function tutorCanAccessRoomSlug(viewer: ViewerContext, slug: string): boo
   return tutorAllowedSlugSet(viewer).has(normalizeRoomSlug(slug));
 }
 
+export function defaultDailyTimetablePath(): string {
+  const { y, m, d } = hkTodayYmd();
+  return `/daily-time-table?year=${y}&month=${m}&day=${d}`;
+}
+
+/** Room page query when linking from Daily Timetable on a given date. */
+export function buildRoomScheduleQueryForDate(viewer: ViewerContext, dateIso: string): string {
+  if (isTutorViewer(viewer) && !isSharedIpadTutorViewer(viewer)) {
+    return defaultRoomScheduleSearch(viewer);
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
+  if (!m) return defaultRoomScheduleSearch(viewer);
+  const year = m[1];
+  const month = String(Number(m[2]));
+  return `year=${year}&month=${month}&period=custom&from=${dateIso}&to=${dateIso}`;
+}
+
 /** 導師登入後／無權限時的預設落點 */
-export function getTutorLandingPath(viewer: ViewerContext): string | null {
-  const allowed = viewer.allowedRoomSlugs.map(normalizeRoomSlug).filter(Boolean);
-  if (allowed.length === 0) return null;
-  const first = allowed[0];
-  return `/rooms/${encodeURIComponent(first)}?${defaultRoomScheduleSearch(viewer)}`;
+export function getTutorLandingPath(_viewer: ViewerContext): string | null {
+  return defaultDailyTimetablePath();
 }
 
 export function buildTutorRoomNavLinks(allowedSlugs: string[]): RoomNavItem[] {
@@ -80,5 +95,7 @@ export function isPathBlockedForTutor(pathname: string): boolean {
   const p = pathname.split("?")[0] ?? "";
   if (p === "/rooms") return false;
   if (p.startsWith("/rooms/")) return false;
+  if (p === "/daily-time-table" || p.startsWith("/daily-time-table/")) return false;
+  if (/^\/students\/[^/]+\/lessons(\/|$)/.test(p)) return false;
   return TUTOR_BLOCKED_PREFIXES.some((prefix) => p === prefix || p.startsWith(`${prefix}/`));
 }
