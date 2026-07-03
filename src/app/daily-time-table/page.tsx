@@ -8,8 +8,8 @@ import { dayTimetablePageIntroStrings } from "@/lib/dayTimetableUiStrings";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
+import { isTutorViewer } from "@/lib/tutorRoomAccess";
 import { studentLessonsYearPath } from "@/lib/lessonCalendar";
-import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchDayTimetablePayload, parseDayParams } from "@/lib/dayTimetableGrid";
 import { normalizeStudentId } from "@/lib/studentId";
 
@@ -37,7 +37,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
   if (viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");
   }
-  redirectTutorAwayFromAdminPages(viewer);
+  const readOnly = isTutorViewer(viewer);
   const prev = shiftDay(year, month, day, -1);
   const next = shiftDay(year, month, day, 1);
   const base = "/daily-time-table";
@@ -89,11 +89,16 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
                 emptyMessage="No lessons on this day."
                 showPeriodSeparatorOnly
                 repeatRoomHeadersPerTimeSlot
+                readOnly={readOnly}
               />
               <DayTimetableLegend timetableStyle={payload.timetableStyle} />
-              <div className="mt-6">
-                <DayTimetableStyleEditorLazy initial={payload.timetableStyle} />
-              </div>
+              {readOnly ? (
+                <p className="mt-4 text-xs text-slate-500">View only — tutors cannot edit this timetable.</p>
+              ) : (
+                <div className="mt-6">
+                  <DayTimetableStyleEditorLazy initial={payload.timetableStyle} />
+                </div>
+              )}
             </div>
           </div>
         </div>

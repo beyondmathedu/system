@@ -168,6 +168,13 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
                       Student Lesson Time & Fee Records
                     </Link>
                   </>
+                ) : isTutorNav ? (
+                  <Link
+                    href="/daily-time-table"
+                    className={`${base} ${isActive("daily-timetable") ? active : idle}`}
+                  >
+                    Daily Timetable
+                  </Link>
                 ) : null}
                 {showRoomsNav ? (
                   <div className="relative z-[70] shrink-0 group">

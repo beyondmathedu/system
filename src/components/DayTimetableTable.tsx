@@ -161,6 +161,8 @@ type Props = {
   showPeriodSeparatorOnly?: boolean;
   /** Daily：每個時段前重複 B／M前／… 房名與 Name／Grade／Exam 小標題 */
   repeatRoomHeadersPerTimeSlot?: boolean;
+  /** 導師：只可查看，不可改備註、樣式或跳轉學生頁 */
+  readOnly?: boolean;
   /** `en`：Regular timetable page */
 };
 
@@ -183,6 +185,7 @@ export default function DayTimetableTable({
   showRegularCapacitySummary = false,
   showPeriodSeparatorOnly = false,
   repeatRoomHeadersPerTimeSlot = false,
+  readOnly = false,
 }: Props) {
   const t = dayTimetableTableStrings;
   const {
@@ -253,6 +256,7 @@ export default function DayTimetableTable({
   }, [hoverPanel]);
 
   const flushSave = useCallback(async (studentId: string, nextText: string) => {
+    if (readOnly) return;
     setSavingById((prev) => ({ ...prev, [studentId]: true }));
     try {
       if (nextText.trim()) await upsertTimetableDayRemark(studentId, dateIso, nextText.trim());
@@ -260,9 +264,10 @@ export default function DayTimetableTable({
     } finally {
       setSavingById((prev) => ({ ...prev, [studentId]: false }));
     }
-  }, [dateIso]);
+  }, [dateIso, readOnly]);
 
   function scheduleSave(studentId: string, nextText: string) {
+    if (readOnly) return;
     const old = saveTimersRef.current.get(studentId);
     if (old) window.clearTimeout(old);
     const t = window.setTimeout(() => {
@@ -309,6 +314,63 @@ export default function DayTimetableTable({
       window.clearTimeout(hideHoverTimerRef.current);
       hideHoverTimerRef.current = null;
     }
+  }
+
+  function renderStudentNameLabel(
+    item: DayTimetableCell,
+    nameSurf: { isDarkBg: boolean },
+    anchorId: string,
+  ) {
+    const nameBody = dailyCompactColumns ? (
+      (() => {
+        const { line1, line2 } = splitTimetableDisplayName(item.name);
+        return line2 ? (
+          <>
+            <span className="block text-[13px] leading-snug">{line1}</span>
+            <span className="block text-[11px] leading-snug">{line2}</span>
+          </>
+        ) : (
+          <span className="block text-[13px] leading-snug">{line1}</span>
+        );
+      })()
+    ) : (
+      item.name
+    );
+    const remarkDot =
+      (remarksById[item.studentId] ?? "").trim() ? (
+        <span
+          className={`ml-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
+            nameSurf.isDarkBg ? "bg-white/70" : "bg-slate-400"
+          }`}
+          title={t.remarkHasNote}
+          aria-hidden
+        />
+      ) : null;
+    const className = `${
+      readOnly
+        ? nameSurf.isDarkBg
+          ? "text-white"
+          : "text-slate-800"
+        : nameSurf.isDarkBg
+          ? "text-white"
+          : "text-[#1d76c2]"
+    } ${readOnly ? "" : "hover:underline"} ${dailyCompactColumns ? "block leading-tight" : ""}`;
+
+    if (readOnly) {
+      return (
+        <span id={anchorId} className={className}>
+          {nameBody}
+          {remarkDot}
+        </span>
+      );
+    }
+
+    return (
+      <Link id={anchorId} href={`/students/${encodeURIComponent(normalizeStudentId(item.studentId))}/lessons`} className={className}>
+        {nameBody}
+        {remarkDot}
+      </Link>
+    );
   }
 
   return (
@@ -508,38 +570,11 @@ export default function DayTimetableTable({
                                   }
                                   onMouseLeave={() => closeHoverLater(item.studentId)}
                                 >
-                                  <Link
-                                    id={`tt-hover-${frame.time}-${idx}-${room}-${item.studentId}`}
-                                    href={`/students/${encodeURIComponent(normalizeStudentId(item.studentId))}/lessons`}
-                                    className={`${nameSurf.isDarkBg ? "text-white" : "text-[#1d76c2]"} hover:underline ${
-                                      dailyCompactColumns ? "block leading-tight" : ""
-                                    }`}
-                                  >
-                                    {dailyCompactColumns ? (
-                                      (() => {
-                                        const { line1, line2 } = splitTimetableDisplayName(item.name);
-                                        return line2 ? (
-                                          <>
-                                            <span className="block text-[13px] leading-snug">{line1}</span>
-                                            <span className="block text-[11px] leading-snug">{line2}</span>
-                                          </>
-                                        ) : (
-                                          <span className="block text-[13px] leading-snug">{line1}</span>
-                                        );
-                                      })()
-                                    ) : (
-                                      item.name
-                                    )}
-                                    {(remarksById[item.studentId] ?? "").trim() ? (
-                                      <span
-                                        className={`ml-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
-                                          nameSurf.isDarkBg ? "bg-white/70" : "bg-slate-400"
-                                        }`}
-                                        title={t.remarkHasNote}
-                                        aria-hidden
-                                      />
-                                    ) : null}
-                                  </Link>
+                                  {renderStudentNameLabel(
+                                    item,
+                                    nameSurf,
+                                    `tt-hover-${frame.time}-${idx}-${room}-${item.studentId}`,
+                                  )}
                                   {item.pendingMakeupLabel ? (
                                     <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-900">
                                       {item.pendingMakeupLabel}
@@ -635,7 +670,9 @@ export default function DayTimetableTable({
           <p className="text-xs font-semibold text-slate-800">{hoverPanel.name}</p>
           <p className="mb-1 mt-0.5 text-[11px] font-semibold tracking-wide text-slate-500">
             {t.remarks}
-            <span className="ml-1 font-normal text-slate-400">({t.remarkHoverHint})</span>
+            <span className="ml-1 font-normal text-slate-400">
+              ({readOnly ? "View only" : t.remarkHoverHint})
+            </span>
           </p>
           {hoverPanel.scheduleRemarks.trim() ? (
             <p className="mb-2 rounded-md bg-slate-50 px-2 py-1 text-[11px] leading-relaxed text-slate-600">
@@ -643,23 +680,35 @@ export default function DayTimetableTable({
               {hoverPanel.scheduleRemarks.trim()}
             </p>
           ) : null}
-          <textarea
-            value={remarksById[hoverPanel.studentId] ?? ""}
-            onChange={(e) => {
-              const v = e.target.value;
-              setRemarksById((prev) => ({
-                ...prev,
-                [hoverPanel.studentId]: v,
-              }));
-              scheduleSave(hoverPanel.studentId, v);
-            }}
-            placeholder={t.remarkPlaceholder}
-            rows={3}
-            className="w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-800 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
-          />
-          <p className="mt-1 text-[11px] text-slate-500">
-            {savingById[hoverPanel.studentId] ? t.saving : t.autoSaved}
-          </p>
+          {readOnly ? (
+            (remarksById[hoverPanel.studentId] ?? "").trim() ? (
+              <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs leading-relaxed text-slate-700">
+                {(remarksById[hoverPanel.studentId] ?? "").trim()}
+              </p>
+            ) : (
+              <p className="text-[11px] text-slate-500">—</p>
+            )
+          ) : (
+            <>
+              <textarea
+                value={remarksById[hoverPanel.studentId] ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setRemarksById((prev) => ({
+                    ...prev,
+                    [hoverPanel.studentId]: v,
+                  }));
+                  scheduleSave(hoverPanel.studentId, v);
+                }}
+                placeholder={t.remarkPlaceholder}
+                rows={3}
+                className="w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-800 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                {savingById[hoverPanel.studentId] ? t.saving : t.autoSaved}
+              </p>
+            </>
+          )}
         </div>
       ) : null}
     </div>

@@ -19,6 +19,7 @@ type StudentSummary = {
   grade: string;
   school: string;
   textbookPublisher: string;
+  mathLanguage: string;
 };
 
 type ProgressSheet = {
@@ -524,8 +525,118 @@ const CUT_OFF_YEAR_HEADER_INPUT_CLASS =
 const CUT_OFF_TABLE_BODY_SCROLL_CLASS =
   "min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable_both-edges] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400";
 
+const F6_BY_TOPICS_SHEET = "F6 By Topics";
 const F6_BY_YEARS_SHEET = "F6 By Years";
 const F6_YEARS_FROZEN_COL0_CLASS = "min-w-[4.5rem] max-w-[4.5rem]";
+
+type F6TopicColorKey = "lq-a1" | "lq-a2" | "lq-b" | "lq-a2-b";
+
+function normalizeTopicText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[\s,，、.()（）&]/g, "")
+    .trim();
+}
+
+const F6_TOPIC_COLOR_BY_TEXT: Record<string, F6TopicColorKey> = {
+  // LQ A1 — pink
+  [normalizeTopicText("Factorization,Basic Equation Solving")]: "lq-a1",
+  [normalizeTopicText("Percentage")]: "lq-a1",
+  [normalizeTopicText("Rate and Ratio")]: "lq-a1",
+  [normalizeTopicText("Number System, Complex Number, Appro.& Error")]: "lq-a1",
+  [normalizeTopicText("Inequality")]: "lq-a1",
+  [normalizeTopicText("因式分解，基本解方程")]: "lq-a1",
+  [normalizeTopicText("百分比")]: "lq-a1",
+  [normalizeTopicText("率與比")]: "lq-a1",
+  [normalizeTopicText("數系進制,複數,估算與誤差")]: "lq-a1",
+  [normalizeTopicText("不等式")]: "lq-a1",
+  // LQ A2 — yellow
+  [normalizeTopicText("Mensuration")]: "lq-a2",
+  [normalizeTopicText("Variations")]: "lq-a2",
+  [normalizeTopicText("More about Polynomials")]: "lq-a2",
+  [normalizeTopicText("Properties of Circle")]: "lq-a2",
+  [normalizeTopicText("Statistics")]: "lq-a2",
+  [normalizeTopicText("Geometry")]: "lq-a2",
+  [normalizeTopicText("求積法")]: "lq-a2",
+  [normalizeTopicText("變分")]: "lq-a2",
+  [normalizeTopicText("續多項式")]: "lq-a2",
+  [normalizeTopicText("圓的性質")]: "lq-a2",
+  [normalizeTopicText("統計學")]: "lq-a2",
+  [normalizeTopicText("幾何")]: "lq-a2",
+  // LQ B — green
+  [normalizeTopicText("Exponendral and Logarithmise")]: "lq-b",
+  [normalizeTopicText("Permutation, Combination, Probability")]: "lq-b",
+  [normalizeTopicText("Quadratic Equations")]: "lq-b",
+  [normalizeTopicText("Graphs of Functions")]: "lq-b",
+  [normalizeTopicText("Linear Programming")]: "lq-b",
+  [normalizeTopicText("Arithmetic,Geometric Sequence")]: "lq-b",
+  [normalizeTopicText("3D Trigonometry")]: "lq-b",
+  [normalizeTopicText("指數及對數函數")]: "lq-b",
+  [normalizeTopicText("排列，組合，概率")]: "lq-b",
+  [normalizeTopicText("一元二次方程")]: "lq-b",
+  [normalizeTopicText("函數圖像")]: "lq-b",
+  [normalizeTopicText("線性規劃")]: "lq-b",
+  [normalizeTopicText("等差/等比序列")]: "lq-b",
+  [normalizeTopicText("3D 三角學")]: "lq-b",
+  // LQ A2 B — purple
+  [normalizeTopicText("Coordinate Geometry")]: "lq-a2-b",
+  [normalizeTopicText("座標幾何")]: "lq-a2-b",
+};
+
+function getF6TopicColorKey(row: string[], columns: SheetColumn[]): F6TopicColorKey | null {
+  const textCol = columns.find((c) => c.kind === "textbookCombined");
+  if (!textCol || textCol.kind !== "textbookCombined") return null;
+  const en = normalizeTopicText(row[textCol.colIndexEn] || "");
+  const zh = normalizeTopicText(row[textCol.colIndexZh] || "");
+  return F6_TOPIC_COLOR_BY_TEXT[en] ?? F6_TOPIC_COLOR_BY_TEXT[zh] ?? null;
+}
+
+function getF6TextbookCellClass(key: F6TopicColorKey): string {
+  if (key === "lq-a1") return "bg-[#f4b5b5] text-slate-900";
+  if (key === "lq-a2") return "bg-[#ffff00] text-slate-900";
+  if (key === "lq-b") return "bg-[#92d050] text-slate-900";
+  return "bg-[#b4a7d6] text-slate-900";
+}
+
+const F6_LQ_LABELS: Record<F6TopicColorKey, string> = {
+  "lq-a1": "LQ A1",
+  "lq-a2": "LQ A2",
+  "lq-b": "LQ B",
+  "lq-a2-b": "LQ A2 B",
+};
+
+type F6Col0Display = {
+  primary: string;
+  secondary: string | null;
+  lqKey: F6TopicColorKey | null;
+};
+
+function getF6Col0Label(
+  rowIndex: number,
+  row: string[],
+  rows: string[][],
+  columns: SheetColumn[],
+): F6Col0Display {
+  const col0 = (row[0] || "").trim();
+  const category = getF6TopicColorKey(row, columns);
+
+  if (col0 === "F.6") {
+    if (category === "lq-a1") {
+      return { primary: "F.6", secondary: F6_LQ_LABELS["lq-a1"], lqKey: "lq-a1" };
+    }
+    return { primary: "F.6", secondary: null, lqKey: null };
+  }
+
+  if (!category) return { primary: col0 || " ", secondary: null, lqKey: null };
+
+  const prevRow = rowIndex > 0 ? rows[rowIndex - 1] : null;
+  const prevCategory =
+    prevRow && !isLegendDataRow(prevRow) ? getF6TopicColorKey(prevRow, columns) : null;
+  if (category !== prevCategory) {
+    return { primary: F6_LQ_LABELS[category], secondary: null, lqKey: category };
+  }
+  return { primary: " ", secondary: null, lqKey: null };
+}
 
 function isF6ByYearsSheet(sheetName: string): boolean {
   return sheetName === F6_BY_YEARS_SHEET;
@@ -550,6 +661,7 @@ export default function StudentProgressByIdPage() {
     grade: "",
     school: "",
     textbookPublisher: "",
+    mathLanguage: "English",
   });
   const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>({
     examDate: "",
@@ -627,7 +739,7 @@ export default function StudentProgressByIdPage() {
       const [studentRes, exam] = await Promise.all([
         supabase
           .from("students")
-          .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
+          .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language")
           .eq("id", studentId)
           .maybeSingle(),
         loadExamInfo(studentId),
@@ -646,6 +758,7 @@ export default function StudentProgressByIdPage() {
           grade: "",
           school: "",
           textbookPublisher: "",
+          mathLanguage: "English",
         });
         setStudentNotFound(true);
         setStudentLoaded(true);
@@ -660,6 +773,7 @@ export default function StudentProgressByIdPage() {
         grade: data.grade ?? "",
         school: data.school ?? "",
         textbookPublisher: data.textbook_publisher ?? "",
+        mathLanguage: data.math_language ?? "English",
       });
       setStudentNotFound(false);
       setStudentLoaded(true);
@@ -1033,6 +1147,10 @@ export default function StudentProgressByIdPage() {
                         {activeSheet.rows.map((row, rowIndex) => {
                           if (isLegendDataRow(row)) return null;
                           const rowLevelValue = row[0] || "";
+                          const isF6TopicsSheet = sheet.name === F6_BY_TOPICS_SHEET;
+                          const f6Col0Info = isF6TopicsSheet
+                            ? getF6Col0Label(rowIndex, row, activeSheet.rows, columns)
+                            : null;
                           return (
                             <tr
                               key={`${sheet.name}-row-${rowIndex}`}
@@ -1042,15 +1160,18 @@ export default function StudentProgressByIdPage() {
                                   if (col.kind === "textbookCombined") {
                                     const en = row[col.colIndexEn] || "";
                                     const zh = row[col.colIndexZh] || "";
+                                    const useChinese = studentSummary.mathLanguage === "Chinese";
+                                    const textbookText = useChinese ? zh : en;
+                                    const f6TopicKey = isF6TopicsSheet ? getF6TopicColorKey(row, columns) : null;
+                                    const textbookCellClass = f6TopicKey
+                                      ? getF6TextbookCellClass(f6TopicKey)
+                                      : `${getProgressLevelStickyBgClass(rowLevelValue)} ${getProgressLevelCellClass(rowLevelValue)}`;
                                     return (
                                       <td
                                         key={`${sheet.name}-row-${rowIndex}-textbook-${col.colIndexEn}`}
-                                        className={`sticky left-0 z-10 min-w-[270px] whitespace-normal px-3 py-2 shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${getProgressLevelStickyBgClass(
-                                          rowLevelValue,
-                                        )} ${getProgressLevelCellClass(rowLevelValue)}`}
+                                        className={`sticky left-0 z-10 min-w-[270px] whitespace-normal px-3 py-2 shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${textbookCellClass}`}
                                       >
-                                        <span className="block leading-5">{en || " "}</span>
-                                        <span className="block leading-5 text-slate-600">{zh || " "}</span>
+                                        <span className="block leading-5">{textbookText || " "}</span>
                                       </td>
                                     );
                                   }
@@ -1058,14 +1179,17 @@ export default function StudentProgressByIdPage() {
                                   const headerName = normalizeHeaderName(col.header || "");
                                   const isRemarks = headerName === "remarks";
                                   const colIndex = col.colIndex;
+                                  const isF6Col0 = isF6TopicsSheet && colIndex === 0;
                                   const frozenCol0 = isF6ByYearsFrozenCol0(sheet.name, colIndex);
                                   const frozenDse = isF6ByYearsFrozenDse(sheet.name, headerName);
+                                  const col0CellClass =
+                                    isF6Col0 && f6Col0Info?.lqKey
+                                      ? getF6TextbookCellClass(f6Col0Info.lqKey)
+                                      : getProgressLevelCellClass(rowLevelValue);
                                   return (
                                     <td
                                       key={`${sheet.name}-row-${rowIndex}-col-${colIndex}`}
-                                      className={`${isRemarks ? "whitespace-normal" : "whitespace-nowrap"} px-3 py-2 ${getProgressLevelCellClass(
-                                        rowLevelValue,
-                                      )} ${
+                                      className={`${isRemarks ? "whitespace-normal" : "whitespace-nowrap"} px-3 py-2 ${col0CellClass} ${
                                         frozenCol0
                                           ? `sticky left-0 z-10 ${F6_YEARS_FROZEN_COL0_CLASS} shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${getProgressLevelStickyBgClass(
                                               rowLevelValue,
@@ -1079,6 +1203,17 @@ export default function StudentProgressByIdPage() {
                                     >
                                       {(() => {
                                         const selectionKey = buildSelectionCellKey(sheet.name, rowIndex, colIndex);
+                                        if (isF6Col0 && f6Col0Info) {
+                                          if (f6Col0Info.secondary) {
+                                            return (
+                                              <>
+                                                <span className="block font-semibold leading-5">{f6Col0Info.primary}</span>
+                                                <span className="block leading-5">{f6Col0Info.secondary}</span>
+                                              </>
+                                            );
+                                          }
+                                          return f6Col0Info.primary;
+                                        }
                                         if (headerName === "%") {
                                           const percentage = computeRowPercent(
                                             sheet.name,

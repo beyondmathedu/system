@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
@@ -174,6 +174,13 @@ export default function RoomScheduleTable({
   function slotKey(r: Pick<RoomScheduleRow, "dateIso" | "time" | "room">) {
     return `${r.dateIso}__${r.time}__${r.room}`.toLowerCase();
   }
+
+  function lessonSlotKey(r: Pick<RoomScheduleRow, "dateIso" | "sortTime">) {
+    return `${r.dateIso}__${r.sortTime}`;
+  }
+
+  const tableColumnCount = hideStudentId ? 14 : 15;
+  const showLessonSlotDividers = !sortConfig;
 
   function normalizeTutorLabel(raw: string) {
     const v = String(raw ?? "").trim();
@@ -757,8 +764,20 @@ export default function RoomScheduleTable({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {sortedLocalRows.map((r, idx) => (
-                  <tr key={`${r.rowKey}:${idx}`} className="group bg-white hover:bg-slate-50">
+                {sortedLocalRows.map((r, idx) => {
+                  const prev = idx > 0 ? sortedLocalRows[idx - 1] : null;
+                  const showSlotDivider =
+                    showLessonSlotDividers &&
+                    idx > 0 &&
+                    lessonSlotKey(r) !== lessonSlotKey(prev!);
+                  return (
+                    <Fragment key={`${r.rowKey}:${idx}`}>
+                      {showSlotDivider ? (
+                        <tr aria-hidden>
+                          <td colSpan={tableColumnCount} className="h-0 border-t-2 border-slate-400 p-0" />
+                        </tr>
+                      ) : null}
+                      <tr className="group bg-white hover:bg-slate-50">
                 {hideStudentId ? null : (
                   <td
                     className="sticky left-0 z-40 whitespace-nowrap bg-white px-3 py-2 font-mono text-xs text-slate-800 group-hover:bg-slate-50"
@@ -926,8 +945,10 @@ export default function RoomScheduleTable({
                     {lessonTypeLabel(r.lessonType)}
                   </span>
                 </td>
-                  </tr>
-                ))}
+                      </tr>
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

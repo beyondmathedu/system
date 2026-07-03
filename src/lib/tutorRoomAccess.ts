@@ -70,7 +70,6 @@ const TUTOR_BLOCKED_PREFIXES = [
   "/home",
   "/students",
   "/students-lesson-time-fee-record",
-  "/daily-time-table",
   "/regular-class-timetable",
   "/tutor",
   "/teacher",
