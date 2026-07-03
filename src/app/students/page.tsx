@@ -60,121 +60,6 @@ const emptyForm: StudentForm = {
   mathLanguage: "English",
 };
 
-type BulkImportRow = {
-  id: string;
-  nameZh: string;
-  nameEn: string;
-  nicknameEn: string;
-  birthDate: string;
-  studentPhone: string;
-  email: string;
-  school: string;
-  textbookPublisher: string;
-  grade: string;
-  mathLanguage: string;
-};
-
-function normalizeBirthDateZh(raw: string): string {
-  const s = String(raw ?? "").trim();
-  if (!s) return "";
-  const m1 = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
-  if (m1) return `${m1[1]}-${m1[2].padStart(2, "0")}-${m1[3].padStart(2, "0")}`;
-  const m2 = /^(\d{4})年(\d{1,2})月(\d{1,2})日$/.exec(s);
-  if (m2) return `${m2[1]}-${m2[2].padStart(2, "0")}-${m2[3].padStart(2, "0")}`;
-  return s;
-}
-
-function gradeFromZh(raw: string): string {
-  const s = String(raw ?? "").trim();
-  if (!s) return "";
-  const map: Record<string, string> = {
-    中一: "F.1",
-    中二: "F.2",
-    中三: "F.3",
-    中四: "F.4",
-    中五: "F.5",
-    中六: "F.6",
-  };
-  return map[s] ?? s;
-}
-
-function looksLikeGrade(raw: string): boolean {
-  const s = String(raw ?? "").trim();
-  if (!s) return false;
-  if (/^中[一二三四五六]$/.test(s)) return true;
-  if (/^F\.?\s*[1-6]$/i.test(s)) return true;
-  return false;
-}
-
-function mathLangFromZh(raw: string): string {
-  const s = String(raw ?? "").trim();
-  if (!s) return "English";
-  if (s === "英文" || s.toLowerCase() === "english") return "English";
-  if (s === "中文" || s.toLowerCase() === "chinese") return "Chinese";
-  return s;
-}
-
-function parseBulkStudentsTsv(tsv: string): { rows: BulkImportRow[]; errors: string[] } {
-  const text = String(tsv ?? "").trim();
-  if (!text) return { rows: [], errors: ["没有内容"] };
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const rows: BulkImportRow[] = [];
-  const errors: string[] = [];
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const cols = line.split("\t").map((c) => c.trim());
-    if (cols.length < 2) {
-      errors.push(`第 ${i + 1} 行至少需要 2 欄（資料 + 最後一欄 student_id）：${line.slice(0, 80)}`);
-      continue;
-    }
-    const nameZh = cols[0] ?? "";
-    const nameEn = cols[1] ?? "";
-    const nicknameEn = cols[2] ?? "";
-    const birthDateRaw = cols[3] ?? "";
-    const phone = cols[4] ?? "";
-    const email = cols[5] ?? "";
-    const school = cols[6] ?? "";
-    let textbookPublisher = "";
-    let gradeZh = cols[7] ?? "";
-    let mathLangZh = cols[8] ?? "";
-    // Support both formats:
-    // A) ... school, grade, math_language
-    // B) ... school, textbook_publisher, grade, math_language
-    if (!looksLikeGrade(gradeZh) && looksLikeGrade(cols[8] ?? "")) {
-      textbookPublisher = gradeZh;
-      gradeZh = cols[8] ?? "";
-      mathLangZh = cols[9] ?? "";
-    }
-    const id = cols[cols.length - 1];
-    const normalizedId = normalizeStudentId(id);
-    if (!normalizedId) {
-      errors.push(`第 ${i + 1} 行缺少学生 ID：${line.slice(0, 80)}`);
-      continue;
-    }
-    const birthDate = normalizeBirthDateZh(birthDateRaw);
-    const grade = gradeFromZh(gradeZh);
-    const mathLanguage = mathLangFromZh(mathLangZh);
-    rows.push({
-      id: normalizedId,
-      nameZh,
-      nameEn,
-      nicknameEn,
-      birthDate,
-      studentPhone: phone,
-      email,
-      school,
-      textbookPublisher,
-      grade,
-      mathLanguage,
-    });
-  }
-  return { rows, errors };
-}
-
 function buildStudentSearchBlob(student: {
   id: string;
   nameZh: string;
@@ -216,10 +101,6 @@ export default function StudentsPage() {
   const [suggestedNextId, setSuggestedNextId] = useState("00001");
   const [dataError, setDataError] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
-  const [bulkImportText, setBulkImportText] = useState("");
-  const [bulkImportError, setBulkImportError] = useState("");
-  const [bulkImportNotice, setBulkImportNotice] = useState("");
-  const [bulkImporting, setBulkImporting] = useState(false);
   const [savingForm, setSavingForm] = useState(false);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
@@ -434,45 +315,6 @@ export default function StudentsPage() {
     }
   };
 
-  const importBulkStudents = async () => {
-    setBulkImportError("");
-    setBulkImportNotice("");
-    const parsed = parseBulkStudentsTsv(bulkImportText);
-    if (parsed.errors.length) {
-      setBulkImportError(parsed.errors.slice(0, 4).join("；"));
-      return;
-    }
-    if (parsed.rows.length === 0) {
-      setBulkImportError("没有可导入的学生。");
-      return;
-    }
-    setBulkImporting(true);
-    const payload = parsed.rows.map((r) => ({
-      id: r.id,
-      ...mapFormToRow({
-        nameZh: r.nameZh,
-        nameEn: r.nameEn,
-        nicknameEn: r.nicknameEn,
-        birthDate: r.birthDate,
-        studentPhone: r.studentPhone,
-        email: r.email,
-        school: r.school,
-        textbookPublisher: r.textbookPublisher,
-        grade: r.grade,
-        mathLanguage: r.mathLanguage,
-      }),
-    }));
-    const { error } = await supabase.from("students").upsert(payload, { onConflict: "id" });
-    setBulkImporting(false);
-    if (error) {
-      setBulkImportError(`导入失败：${error.message}`);
-      return;
-    }
-    await reloadStudentsList();
-    setBulkImportNotice(`已导入/更新 ${payload.length} 位学生。`);
-    setBulkImportText("");
-  };
-
   const startEditSelected = () => {
     if (selectedIds.length !== 1) {
       setSelectionError("Please select exactly 1 student to edit.");
@@ -682,58 +524,6 @@ export default function StudentsPage() {
             {formError && (
               <p className="mt-2 text-sm font-medium text-red-600">{formError}</p>
             )}
-
-            <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-bold text-slate-900">Bulk import (paste table rows)</p>
-              <p className="mt-1 text-xs text-slate-600">
-                Paste tab-separated rows copied from your spreadsheet. The last column is used as Student ID
-                (for example, 00287). Existing IDs will be updated. All other columns are optional/flexible.
-              </p>
-              <p className="mt-2 rounded-md border border-slate-200 bg-white px-2.5 py-2 font-mono text-[11px] leading-relaxed text-slate-600">
-                TSV columns (left to right):
-                {"\n"}
-                1) Chinese name, 2) English name, 3) Nickname, 4) Birth date, 5) Phone, 6) Email, 7) School, 8)
-                Textbook publisher (optional), 9) Grade, 10) Maths language, ... , last column = Student ID
-                {"\n"}
-                Notes:
-                {"\n"}
-                - Only the last column (student_id) is required. All other columns are flexible.
-                {"\n"}
-                - Any middle extra columns are ignored.
-                {"\n"}
-                - Birth date supports YYYY-MM-DD or YYYY年M月D日.
-                {"\n"}
-                - Grade supports 中一~中六 or F.1~F.6.
-                {"\n"}
-                Example row:
-                {"\n"}
-                陳靄玟[TAB]Chan Oi Moon[TAB]Anna[TAB]2011年9月8日[TAB]94054378[TAB]110908anna@gmail.com[TAB]ELCHK Lutheran Academy[TAB]中三[TAB]英文[TAB]00287
-              </p>
-              <textarea
-                value={bulkImportText}
-                onChange={(e) => setBulkImportText(e.target.value)}
-                rows={6}
-                placeholder="Paste TSV rows here (one student per line)"
-                suppressHydrationWarning
-                className="mt-3 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-800 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
-              />
-              {bulkImportError ? (
-                <p className="mt-2 text-xs font-semibold text-red-600">{bulkImportError}</p>
-              ) : null}
-              {bulkImportNotice ? (
-                <p className="mt-2 text-xs font-semibold text-emerald-700">{bulkImportNotice}</p>
-              ) : null}
-              <div className="mt-3 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => void importBulkStudents()}
-                  disabled={bulkImporting}
-                  className="rounded-lg bg-[#1d76c2] px-4 py-2 text-sm font-semibold text-white hover:bg-[#165f9d] disabled:opacity-60"
-                >
-                  {bulkImporting ? "Importing..." : "Import to Students"}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
 
