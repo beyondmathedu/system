@@ -20,6 +20,12 @@ import { formatGradeDisplay } from "@/lib/grade";
 import { useRoomLessonStateRealtime } from "@/lib/useRoomLessonStateRealtime";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+import {
+  responsiveTableClass,
+  stickyColumnStyle,
+  useResponsiveStickyLayout,
+  type StickyColumnDef,
+} from "@/lib/responsiveTable";
 
 function RoomScheduleTableSkeleton() {
   return (
@@ -93,13 +99,17 @@ export default function RoomScheduleTable({
     [studentLessonsHrefMode, year, returnTo],
   );
 
-  const STICKY_ID_WIDTH = 92;
-  const STICKY_NAME_WIDTH = 190;
-  const STICKY_GRADE_WIDTH = 90;
-  const STICKY_ATTENDANCE_WIDTH = 110;
-  const stickyNameLeft = hideStudentId ? 0 : STICKY_ID_WIDTH;
-  const stickyGradeLeft = stickyNameLeft + STICKY_NAME_WIDTH;
-  const stickyAttendanceLeft = stickyGradeLeft + STICKY_GRADE_WIDTH;
+  const stickyColumns = useMemo((): StickyColumnDef[] => {
+    const cols: StickyColumnDef[] = [];
+    if (!hideStudentId) cols.push({ id: "id", desktopWidth: 92 });
+    cols.push(
+      { id: "name", desktopWidth: 190 },
+      { id: "grade", desktopWidth: 90 },
+      { id: "attendance", desktopWidth: 110 },
+    );
+    return cols;
+  }, [hideStudentId]);
+  const sticky = useResponsiveStickyLayout(stickyColumns);
 
   function rowAriaStudentLabel(r: Pick<RoomScheduleRow, "studentId" | "studentName">) {
     return hideStudentId ? r.studentName : normalizeStudentId(r.studentId);
@@ -699,50 +709,35 @@ export default function RoomScheduleTable({
             id={tableScrollId}
             className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
-            <table className="min-w-[1200px] w-full border-collapse text-left text-sm">
+            <table className={`${responsiveTableClass(1200)} text-left`}>
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold tracking-wider text-slate-600">
               {hideStudentId ? null : (
                 <th
-                  className="sticky left-0 top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
-                  style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
+                  className="sticky left-0 top-0 z-50 whitespace-nowrap bg-slate-50 px-1.5 py-2 sm:px-2 lg:px-3"
+                  style={stickyColumnStyle(sticky, "id")}
                 >
                   ID
                 </th>
               )}
               <th
                 className={[
-                  "sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2",
+                  "sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-1.5 py-2 sm:px-2 lg:px-3",
                   hideStudentId ? "left-0" : "",
                 ].join(" ")}
-                style={{
-                  left: stickyNameLeft,
-                  width: STICKY_NAME_WIDTH,
-                  minWidth: STICKY_NAME_WIDTH,
-                  maxWidth: STICKY_NAME_WIDTH,
-                }}
+                style={stickyColumnStyle(sticky, "name")}
               >
                 Name
               </th>
               <th
-                className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2"
-                style={{
-                  left: stickyGradeLeft,
-                  width: STICKY_GRADE_WIDTH,
-                  minWidth: STICKY_GRADE_WIDTH,
-                  maxWidth: STICKY_GRADE_WIDTH,
-                }}
+                className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-1.5 py-2 sm:px-2 lg:px-3"
+                style={stickyColumnStyle(sticky, "grade")}
               >
                 Grade
               </th>
               <th
-                className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-3 py-2 text-center"
-                style={{
-                  left: stickyAttendanceLeft,
-                  width: STICKY_ATTENDANCE_WIDTH,
-                  minWidth: STICKY_ATTENDANCE_WIDTH,
-                  maxWidth: STICKY_ATTENDANCE_WIDTH,
-                }}
+                className="sticky top-0 z-50 whitespace-nowrap bg-slate-50 px-1.5 py-2 text-center sm:px-2 lg:px-3"
+                style={stickyColumnStyle(sticky, "attendance")}
               >
                 Attendance
               </th>
@@ -780,8 +775,8 @@ export default function RoomScheduleTable({
                       <tr className="group bg-white hover:bg-slate-50">
                 {hideStudentId ? null : (
                   <td
-                    className="sticky left-0 z-40 whitespace-nowrap bg-white px-3 py-2 font-mono text-xs text-slate-800 group-hover:bg-slate-50"
-                    style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
+                    className="sticky left-0 z-40 whitespace-nowrap bg-white px-1.5 py-2 font-mono text-xs text-slate-800 group-hover:bg-slate-50 sm:px-2 lg:px-3"
+                    style={stickyColumnStyle(sticky, "id")}
                   >
                     {(() => {
                       const studentIdDisplay = normalizeStudentId(r.studentId);
@@ -800,15 +795,10 @@ export default function RoomScheduleTable({
                 )}
                 <td
                   className={[
-                    "sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-800 group-hover:bg-slate-50",
+                    "sticky z-40 whitespace-nowrap bg-white px-1.5 py-2 text-slate-800 group-hover:bg-slate-50 sm:px-2 lg:px-3",
                     hideStudentId ? "left-0" : "",
                   ].join(" ")}
-                  style={{
-                    left: stickyNameLeft,
-                    width: STICKY_NAME_WIDTH,
-                    minWidth: STICKY_NAME_WIDTH,
-                    maxWidth: STICKY_NAME_WIDTH,
-                  }}
+                  style={stickyColumnStyle(sticky, "name")}
                 >
                   {(() => {
                     return canOpenStudentLink ? (
@@ -824,24 +814,14 @@ export default function RoomScheduleTable({
                   })()}
                 </td>
                 <td
-                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-700 group-hover:bg-slate-50"
-                  style={{
-                    left: stickyGradeLeft,
-                    width: STICKY_GRADE_WIDTH,
-                    minWidth: STICKY_GRADE_WIDTH,
-                    maxWidth: STICKY_GRADE_WIDTH,
-                  }}
+                  className="sticky z-40 whitespace-nowrap bg-white px-1.5 py-2 text-slate-700 group-hover:bg-slate-50 sm:px-2 lg:px-3"
+                  style={stickyColumnStyle(sticky, "grade")}
                 >
                   {formatGradeDisplay(r.grade) || "—"}
                 </td>
                 <td
-                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-center text-slate-800 group-hover:bg-slate-50"
-                  style={{
-                    left: stickyAttendanceLeft,
-                    width: STICKY_ATTENDANCE_WIDTH,
-                    minWidth: STICKY_ATTENDANCE_WIDTH,
-                    maxWidth: STICKY_ATTENDANCE_WIDTH,
-                  }}
+                  className="sticky z-40 whitespace-nowrap bg-white px-1.5 py-2 text-center text-slate-800 group-hover:bg-slate-50 sm:px-2 lg:px-3"
+                  style={stickyColumnStyle(sticky, "attendance")}
                 >
                   <input
                     type="checkbox"

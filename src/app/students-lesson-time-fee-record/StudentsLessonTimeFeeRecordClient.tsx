@@ -59,6 +59,15 @@ import {
   LESSON_SYSTEM_START_YEAR,
 } from "@/lib/lessonSystemStart";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
+import {
+  responsiveColStyle,
+  responsiveTableClass,
+  stickyColumnStyle,
+  stickyHeaderStyle,
+  useResponsiveStickyLayout,
+  type ResponsiveStickyLayout,
+  type StickyColumnDef,
+} from "@/lib/responsiveTable";
 
 type StudentRow = {
   id: string;
@@ -72,11 +81,12 @@ type StudentRow = {
 const L_COUNT = 9;
 const OPENING_BALANCE_AS_OF_YEAR = FEE_OPENING_BALANCE_AS_OF_YEAR;
 const OPENING_BALANCE_AS_OF_MONTH = FEE_OPENING_BALANCE_AS_OF_MONTH; // balance as of end of 2026/04
-const STICKY_ID_WIDTH = 88;
-/** Narrow sticky column; long names wrap to 2 lines (see StudentFeeRow). */
-const STICKY_NAME_WIDTH = 76;
-const STICKY_GRADE_WIDTH = 84;
-const STICKY_PHONE_WIDTH = 132;
+const FEE_STICKY_COLUMNS: StickyColumnDef[] = [
+  { id: "id", desktopWidth: 88 },
+  { id: "name", desktopWidth: 76 },
+  { id: "grade", desktopWidth: 84 },
+  { id: "phone", desktopWidth: 132 },
+];
 const WEEKDAY_COL_WIDTH = 86;
 const TUITION_COL_WIDTH = 96;
 const AMOUNT_OWING_COL_WIDTH = 92;
@@ -459,7 +469,7 @@ function FeeArrearsDetailTable({
   return (
     <div className="space-y-4">
       <div className="overflow-x-auto rounded-lg border border-slate-200">
-        <table className="w-full min-w-[20rem] border-collapse text-left text-xs">
+        <table className={`${responsiveTableClass(320)} text-left text-xs`}>
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-700">
               <th className="px-2.5 py-2">月份</th>
@@ -587,6 +597,7 @@ type SortKey = "id" | "name" | "grade" | "weekday" | "expected" | "submitted";
 type SortConfig = { key: SortKey; direction: SortDirection } | null;
 
 export default function StudentsLessonTimeFeeRecordPage() {
+  const sticky = useResponsiveStickyLayout(FEE_STICKY_COLUMNS);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [sheetMonth, setSheetMonth] = useState(() => hkMonthNow());
   const availableYears = useMemo(() => availableLessonYears(), []);
@@ -1738,9 +1749,9 @@ export default function StudentsLessonTimeFeeRecordPage() {
                     className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                   >
                     <table
-                      className={`w-full border-collapse text-left text-sm ${
-                        sheetYear === OPENING_BALANCE_AS_OF_YEAR ? "min-w-[2388px]" : "min-w-[2276px]"
-                      }`}
+                      className={`${responsiveTableClass(
+                        sheetYear === OPENING_BALANCE_AS_OF_YEAR ? 2388 : 2276,
+                      )} text-left`}
                     >
                       <thead className="bg-slate-50">
                         <tr className="border-b border-slate-200 text-xs font-bold tracking-wider text-slate-700">
@@ -1750,7 +1761,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                             sortConfig={sortConfig}
                             setSortConfig={setSortConfig}
                             thClassName="left-0 z-40"
-                            thStyle={{ left: 0, minWidth: STICKY_ID_WIDTH }}
+                            thStyle={stickyHeaderStyle(sticky, "id")}
                           />
                           <SortableHeader
                             label="Name"
@@ -1758,7 +1769,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                             sortConfig={sortConfig}
                             setSortConfig={setSortConfig}
                             thClassName="z-40 align-middle"
-                            thStyle={{ left: STICKY_ID_WIDTH, minWidth: STICKY_NAME_WIDTH }}
+                            thStyle={stickyHeaderStyle(sticky, "name")}
                             stackVertically
                           />
                           <SortableHeader
@@ -1767,17 +1778,11 @@ export default function StudentsLessonTimeFeeRecordPage() {
                             sortConfig={sortConfig}
                             setSortConfig={setSortConfig}
                             thClassName="z-40"
-                            thStyle={{
-                              left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH,
-                              minWidth: STICKY_GRADE_WIDTH,
-                            }}
+                            thStyle={stickyHeaderStyle(sticky, "grade")}
                           />
                           <th
-                            className="sticky top-0 z-40 whitespace-nowrap border-r border-slate-200 bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700"
-                            style={{
-                              left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH + STICKY_GRADE_WIDTH,
-                              minWidth: STICKY_PHONE_WIDTH,
-                            }}
+                            className="sticky top-0 z-40 whitespace-nowrap border-r border-slate-200 bg-slate-50 px-2 py-3 text-left text-xs font-bold tracking-wider text-slate-700 sm:px-4"
+                            style={stickyHeaderStyle(sticky, "phone")}
                           >
                             Phone Number
                           </th>
@@ -1786,18 +1791,18 @@ export default function StudentsLessonTimeFeeRecordPage() {
                             columnKey="weekday"
                             sortConfig={sortConfig}
                             setSortConfig={setSortConfig}
-                            thStyle={{ minWidth: WEEKDAY_COL_WIDTH }}
+                            thStyle={responsiveColStyle(WEEKDAY_COL_WIDTH, sticky.viewportWidth)}
                           />
                           <SortableHeader
                             label="Tuition Paid"
                             columnKey="submitted"
                             sortConfig={sortConfig}
                             setSortConfig={setSortConfig}
-                            thStyle={{ minWidth: TUITION_COL_WIDTH }}
+                            thStyle={responsiveColStyle(TUITION_COL_WIDTH, sticky.viewportWidth)}
                           />
                           <th
-                            className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-2 py-3 text-left text-xs font-bold tracking-wider text-slate-700"
-                            style={{ minWidth: AMOUNT_OWING_COL_WIDTH }}
+                            className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-1 py-2 text-left text-xs font-bold tracking-wider text-slate-700 sm:px-2 sm:py-3"
+                            style={responsiveColStyle(AMOUNT_OWING_COL_WIDTH, sticky.viewportWidth)}
                             title="Balance due = Total Due − Tuition Paid. Positive = still owes; negative = overpaid. Click a cell for details."
                           >
                             <span className="block">Balance Due</span>
@@ -1807,14 +1812,14 @@ export default function StudentsLessonTimeFeeRecordPage() {
                             <th
                               key={i}
                               className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-2 py-3 text-center text-[11px]"
-                              style={{ minWidth: L_COL_WIDTH }}
+                              style={responsiveColStyle(L_COL_WIDTH, sticky.viewportWidth)}
                             >
                               L{i + 1}
                             </th>
                           ))}
                           <th
                             className="sticky top-0 z-30 bg-slate-50 px-2 py-3 text-left"
-                            style={{ minWidth: MAKEUP_COL_WIDTH }}
+                            style={responsiveColStyle(MAKEUP_COL_WIDTH, sticky.viewportWidth)}
                             title="與課表 Makeup Count 相同；只計上一個曆月未打勾補堂（例：5 月只計 4 月）"
                           >
                             <span className="block text-xs font-bold tracking-wider text-slate-700">Makeup</span>
@@ -1828,12 +1833,12 @@ export default function StudentsLessonTimeFeeRecordPage() {
                             columnKey="expected"
                             sortConfig={sortConfig}
                             setSortConfig={setSortConfig}
-                            thStyle={{ minWidth: TUITION_COL_WIDTH }}
+                            thStyle={responsiveColStyle(TUITION_COL_WIDTH, sticky.viewportWidth)}
                           />
                           {sheetYear === OPENING_BALANCE_AS_OF_YEAR ? (
                             <th
-                              className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-2 py-3 text-left text-xs font-bold tracking-wider text-slate-700"
-                              style={{ minWidth: OPENING_COL_WIDTH }}
+                              className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-1 py-2 text-left text-xs font-bold tracking-wider text-slate-700 sm:px-2 sm:py-3"
+                              style={responsiveColStyle(OPENING_COL_WIDTH, sticky.viewportWidth)}
                               title={`Balance as of ${OPENING_BALANCE_AS_OF_EN_PHRASE}: positive = still owing; negative = overpaid (credit). Legacy Excel period is locked into this column (no month-by-month back-fill).`}
                             >
                               <span className="block whitespace-nowrap">Opening balance</span>
@@ -1889,6 +1894,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                               currentMonthExpectedMoney={currentMonthExpectedTuitionByStudentId[st.id] ?? 0}
                               feeTierSettings={feeTierSettings}
                               onFeeDetailOpen={onFeeDetailOpen}
+                              sticky={sticky}
                             />
                           );
                         })}
@@ -2157,6 +2163,7 @@ type StudentFeeRowProps = {
   thisMonthDatedSlotCount: number;
   feeTierSettings: StudentFeeTierSettings;
   onFeeDetailOpen: (dialog: { kind: "arrears"; studentId: string; title: string } | { kind: "makeup"; studentId: string }) => void;
+  sticky: ResponsiveStickyLayout;
 };
 
 const StudentFeeRow = memo(function StudentFeeRow({
@@ -2180,6 +2187,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
   thisMonthDatedSlotCount,
   feeTierSettings,
   onFeeDetailOpen,
+  sticky,
 }: StudentFeeRowProps) {
   const lessonDates = lessonDatesSerialized ? lessonDatesSerialized.split("|") : [];
   const studentIdDisplay = normalizeStudentId(student.id);
@@ -2225,8 +2233,8 @@ const StudentFeeRow = memo(function StudentFeeRow({
       } ${showGradeSeparatorTop ? "border-t-2 border-slate-400" : ""}`}
     >
       <td
-        className="sticky left-0 z-30 whitespace-nowrap bg-inherit px-4 py-4 text-sm text-slate-700"
-        style={{ left: 0, minWidth: STICKY_ID_WIDTH }}
+        className="sticky left-0 z-30 whitespace-nowrap bg-inherit px-1.5 py-2 text-sm text-slate-700 sm:px-4 sm:py-4"
+        style={stickyColumnStyle(sticky, "id", { includeLeft: false })}
       >
         <Link
           href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons`}
@@ -2236,8 +2244,8 @@ const StudentFeeRow = memo(function StudentFeeRow({
         </Link>
       </td>
       <td
-        className="sticky z-30 min-w-0 bg-inherit px-1.5 py-3 text-left text-xs text-slate-700 align-middle"
-        style={{ left: STICKY_ID_WIDTH, minWidth: STICKY_NAME_WIDTH, maxWidth: STICKY_NAME_WIDTH }}
+        className="sticky z-30 min-w-0 bg-inherit px-1 py-2 text-left text-xs text-slate-700 align-middle sm:px-1.5 sm:py-3"
+        style={stickyColumnStyle(sticky, "name")}
       >
         {!hasAnyName ? (
           "—"
@@ -2259,17 +2267,14 @@ const StudentFeeRow = memo(function StudentFeeRow({
         )}
       </td>
       <td
-        className="sticky z-30 whitespace-nowrap bg-inherit px-4 py-4 text-sm text-slate-700"
-        style={{ left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH, minWidth: STICKY_GRADE_WIDTH }}
+        className="sticky z-30 whitespace-nowrap bg-inherit px-1.5 py-2 text-sm text-slate-700 sm:px-4 sm:py-4"
+        style={stickyColumnStyle(sticky, "grade")}
       >
         {formatGradeDisplay(student.grade) || "—"}
       </td>
       <td
-        className="sticky z-30 whitespace-nowrap border-r border-slate-200 bg-inherit px-4 py-4 text-sm text-slate-700"
-        style={{
-          left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH + STICKY_GRADE_WIDTH,
-          minWidth: STICKY_PHONE_WIDTH,
-        }}
+        className="sticky z-30 whitespace-nowrap border-r border-slate-200 bg-inherit px-1.5 py-2 text-sm text-slate-700 sm:px-4 sm:py-4"
+        style={stickyColumnStyle(sticky, "phone")}
       >
         {student.student_phone ? (
           <span className="inline-block whitespace-pre-line break-all leading-5 [display:-webkit-box] [WebkitBoxOrient:vertical] [WebkitLineClamp:2]">

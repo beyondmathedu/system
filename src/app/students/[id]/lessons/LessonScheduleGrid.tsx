@@ -13,6 +13,7 @@ import {
   canonicalScheduleRoomLabel,
   ROOM_GROUPS,
 } from "@/lib/dayTimetableShared";
+import { responsiveTableClass } from "@/lib/responsiveTable";
 
 function LessonScheduleGridFallback() {
   return (
@@ -654,7 +655,7 @@ export default function LessonScheduleGrid({
                 No records match current filters.
               </p>
             ) : (
-              <table className="w-full min-w-[520px] border-collapse text-sm">
+              <table className={responsiveTableClass(520)}>
                 <thead>
                   <tr className="divide-x divide-slate-200 border-b border-slate-200 bg-slate-50 text-left text-xs font-bold text-slate-700">
                     <th className="whitespace-nowrap px-3 py-2">Effective Date (M/D)</th>

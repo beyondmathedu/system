@@ -17,6 +17,7 @@ import { deleteTimetableDayRemark, upsertTimetableDayRemark } from "@/lib/studen
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { normalizeStudentId } from "@/lib/studentId";
 import { buildRoomPageHref } from "@/lib/roomConstants";
+import { responsiveTableClass } from "@/lib/responsiveTable";
 
 function feeToneForStudent(
   feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>,
@@ -177,12 +178,28 @@ const COLS_PER_ROOM = 3;
 
 const TH_TIME =
   "w-14 border border-slate-300 bg-slate-50 px-2 py-2 text-left text-base font-semibold text-slate-800";
+/** Daily compact: narrow on small screens, fixed widths from lg up. */
+const TH_TIME_DAILY =
+  "border border-slate-300 bg-slate-50 align-middle text-center font-semibold text-slate-800 w-9 min-w-0 px-0.5 py-1.5 text-[10px] leading-tight sm:w-12 sm:px-1 sm:py-2 sm:text-xs lg:w-14 lg:px-2 lg:py-2 lg:text-sm";
 const TH_ROOM_ROW1 =
   "border border-slate-300 bg-slate-50 px-2 py-2 text-center text-sm font-semibold text-slate-900";
+const TH_ROOM_ROW1_DAILY =
+  "border border-slate-300 bg-slate-50 px-0.5 py-1.5 text-center text-[10px] font-semibold text-slate-900 sm:px-1 sm:py-2 sm:text-xs lg:px-2 lg:py-2 lg:text-sm";
 const TH_SUB =
   "border border-slate-300 bg-slate-50 py-2 text-left text-sm font-semibold text-slate-900";
+const TH_SUB_DAILY_NAME =
+  `${TH_SUB} min-w-0 px-0.5 py-1.5 text-[10px] sm:px-1 sm:py-2 sm:text-xs lg:w-[5.75rem] lg:max-w-[5.75rem] lg:min-w-[5.75rem] lg:text-sm`;
+const TH_SUB_DAILY_GRADE =
+  `${TH_SUB} w-7 min-w-0 px-0.5 py-1.5 text-center text-[10px] sm:w-10 sm:px-1 sm:py-2 sm:text-xs lg:w-16 lg:px-2 lg:text-sm`;
+const TH_SUB_DAILY_EXAM =
+  `${TH_SUB} w-7 min-w-0 px-0.5 py-1.5 text-center text-[10px] sm:w-10 sm:px-1 sm:py-2 sm:text-xs lg:w-14 lg:max-w-14 lg:px-1 lg:text-xs`;
 const TD_TIME =
   "border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800";
+const TD_DAILY_NAME_EXTRA =
+  "min-w-0 !h-auto px-0.5 py-0.5 align-top break-words sm:px-1 lg:w-[5.75rem] lg:max-w-[5.75rem]";
+const TD_DAILY_GRADE_EXTRA = "w-7 min-w-0 px-0.5 sm:w-10 sm:px-1 lg:w-16";
+const TD_DAILY_EXAM_EXTRA =
+  "w-7 min-w-0 px-0.5 text-center text-[10px] tabular-nums sm:w-10 sm:px-1 sm:text-xs lg:w-14 lg:max-w-14";
 const TD_TIME_CAP =
   "border border-emerald-200/80 bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-900";
 
@@ -222,16 +239,15 @@ export default function DayTimetableTable({
   const roomColSpan = roomsForTable.length * COLS_PER_ROOM + 1;
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
   const dailyCompactColumns = repeatRoomHeadersPerTimeSlot;
-  const thNameClass = dailyCompactColumns
-    ? `${TH_SUB} w-[5.75rem] max-w-[5.75rem] px-1 py-2 text-xs`
-    : `${TH_SUB} px-3`;
-  const thExamClass = dailyCompactColumns
-    ? `${TH_SUB} w-14 max-w-14 px-1 py-2 text-center text-xs`
-    : `${TH_SUB} w-20 px-2`;
-  const tdNameExtra = dailyCompactColumns
-    ? "w-[5.75rem] max-w-[5.75rem] min-h-9 !h-auto px-1 py-0.5 align-top"
-    : "";
-  const tdExamExtra = dailyCompactColumns ? "w-14 max-w-14 px-1 text-center text-xs tabular-nums" : "w-20";
+  const thNameClass = dailyCompactColumns ? TH_SUB_DAILY_NAME : `${TH_SUB} px-3`;
+  const thGradeClass = dailyCompactColumns ? TH_SUB_DAILY_GRADE : `${TH_SUB} w-16 px-2`;
+  const thExamClass = dailyCompactColumns ? TH_SUB_DAILY_EXAM : `${TH_SUB} w-20 px-2`;
+  const tdNameExtra = dailyCompactColumns ? TD_DAILY_NAME_EXTRA : "";
+  const tdGradeExtra = dailyCompactColumns ? TD_DAILY_GRADE_EXTRA : "w-16";
+  const tdExamExtra = dailyCompactColumns ? TD_DAILY_EXAM_EXTRA : "w-20";
+  const thTimeClass = dailyCompactColumns ? TH_TIME_DAILY : TH_TIME;
+  const thRoomRow1Class = dailyCompactColumns ? TH_ROOM_ROW1_DAILY : TH_ROOM_ROW1;
+  const tableClassName = responsiveTableClass(960);
   const [hoverPanel, setHoverPanel] = useState<{
     studentId: string;
     name: string;
@@ -339,11 +355,11 @@ export default function DayTimetableTable({
         const { line1, line2 } = splitTimetableDisplayName(item.name);
         return line2 ? (
           <>
-            <span className="block text-[13px] leading-snug">{line1}</span>
-            <span className="block text-[11px] leading-snug">{line2}</span>
+            <span className="block text-[10px] leading-snug sm:text-[13px]">{line1}</span>
+            <span className="block text-[9px] leading-snug sm:text-[11px]">{line2}</span>
           </>
         ) : (
-          <span className="block text-[13px] leading-snug">{line1}</span>
+          <span className="block text-[10px] leading-snug sm:text-[13px]">{line1}</span>
         );
       })()
     ) : (
@@ -428,7 +444,7 @@ export default function DayTimetableTable({
         </p>
       ) : null}
       <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-auto rounded-b-lg">
-      <table className="min-w-[960px] w-full border-collapse text-sm">
+      <table className={tableClassName}>
         {repeatRoomHeadersPerTimeSlot ? (
           <thead className="sr-only">
             <tr>
@@ -449,14 +465,14 @@ export default function DayTimetableTable({
         ) : (
           <thead className="bg-slate-50">
             <tr>
-              <th rowSpan={2} className={TH_TIME}>
+              <th rowSpan={2} className={thTimeClass}>
                 {t.time}
               </th>
               {roomsForTable.map((room) => (
                 <th
                   key={`room-${room}`}
                   colSpan={COLS_PER_ROOM}
-                  className={TH_ROOM_ROW1}
+                  className={thRoomRow1Class}
                 >
                   {renderRoomHeader(room)}
                 </th>
@@ -467,10 +483,7 @@ export default function DayTimetableTable({
                 <th key={`name-${room}`} className={thNameClass}>
                   {t.name}
                 </th>,
-                <th
-                  key={`grade-${room}`}
-                  className={`${TH_SUB} w-16 px-2`}
-                >
+                <th key={`grade-${room}`} className={thGradeClass}>
                   {t.grade}
                 </th>,
                 <th key={`exam-${room}`} title={t.examThTitle} className={thExamClass}>
@@ -507,7 +520,7 @@ export default function DayTimetableTable({
                       <th
                         rowSpan={2}
                         scope="row"
-                        className={`${TH_TIME} align-middle text-center text-sm`}
+                        className={thTimeClass}
                       >
                         {frame.time}
                       </th>
@@ -516,7 +529,7 @@ export default function DayTimetableTable({
                           key={`${frame.time}-slot-h1-${room}`}
                           colSpan={COLS_PER_ROOM}
                           scope="colgroup"
-                          className={TH_ROOM_ROW1}
+                          className={thRoomRow1Class}
                         >
                           {renderRoomHeader(room)}
                         </th>
@@ -527,7 +540,7 @@ export default function DayTimetableTable({
                         <th key={`${frame.time}-slot-h2-${room}-n`} className={thNameClass}>
                           {t.name}
                         </th>,
-                        <th key={`${frame.time}-slot-h2-${room}-g`} className={`${TH_SUB} w-16 px-2`}>
+                        <th key={`${frame.time}-slot-h2-${room}-g`} className={thGradeClass}>
                           {t.grade}
                         </th>,
                         <th
@@ -632,7 +645,7 @@ export default function DayTimetableTable({
                                 )
                               ) : null}
                             </td>
-                            <td className={`${gradeSurf.className} w-16 ${noGridCls}`} style={gradeSurf.style}>
+                            <td className={`${gradeSurf.className} ${tdGradeExtra} ${noGridCls}`} style={gradeSurf.style}>
                               {formatGradeDisplay(item?.grade ?? "")}
                             </td>
                             <td className={`${examSurf.className} ${tdExamExtra} ${noGridCls}`} style={examSurf.style}>

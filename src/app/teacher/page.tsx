@@ -5,6 +5,13 @@ import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { supabase } from "@/lib/supabase";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
+import {
+  responsiveTableClass,
+  stickyColumnStyle,
+  stickyHeaderStyle,
+  useResponsiveStickyLayout,
+  type StickyColumnDef,
+} from "@/lib/responsiveTable";
 
 type TeacherStatus = "工作中" | "放假中" | "已解僱";
 const TEACHER_STATUS_OPTIONS: TeacherStatus[] = ["工作中", "放假中", "已解僱"];
@@ -20,9 +27,11 @@ function compareTeacherStatusRank(a: TeacherStatus, b: TeacherStatus): number {
 }
 
 const DEFAULT_TUTOR_COLOR = "#1d76c2";
-const STICKY_SELECT_WIDTH = 48;
-const STICKY_ID_WIDTH = 96;
-const STICKY_NICKNAME_WIDTH = 120;
+const TEACHER_STICKY_COLUMNS: StickyColumnDef[] = [
+  { id: "select", desktopWidth: 48 },
+  { id: "id", desktopWidth: 96 },
+  { id: "nickname", desktopWidth: 120 },
+];
 const TEACHER_TABLE_MAX_H = "70vh";
 
 type Teacher = {
@@ -134,6 +143,7 @@ function mapRowToTeacher(row: TeacherRow): Teacher {
 }
 
 export default function TeacherPage() {
+  const sticky = useResponsiveStickyLayout(TEACHER_STICKY_COLUMNS);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [query, setQuery] = useState("");
   const [teacherNickname, setTeacherNickname] = useState("");
@@ -819,12 +829,12 @@ export default function TeacherPage() {
                   className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                   style={{ maxHeight: TEACHER_TABLE_MAX_H }}
                 >
-                <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
+                <table className={`${responsiveTableClass(1080)} text-left`}>
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold tracking-wider text-slate-700">
                     <th
-                      className="sticky left-0 top-0 z-40 whitespace-nowrap bg-slate-50 px-2 py-3"
-                      style={{ minWidth: STICKY_SELECT_WIDTH }}
+                      className="sticky left-0 top-0 z-40 whitespace-nowrap bg-slate-50 px-1 py-2 sm:px-2 sm:py-3"
+                      style={stickyColumnStyle(sticky, "select", { includeLeft: false })}
                     >
                       <input
                         type="checkbox"
@@ -845,8 +855,8 @@ export default function TeacherPage() {
                       columnKey="id"
                       sortConfig={sortConfig}
                       setSortConfig={setSortConfig}
-                      thClassName="left-[56px] z-40"
-                      thStyle={{ left: STICKY_SELECT_WIDTH, minWidth: STICKY_ID_WIDTH }}
+                      thClassName="z-40"
+                      thStyle={stickyHeaderStyle(sticky, "id")}
                     />
                     <TeacherSortableHeader
                       label="Nickname"
@@ -854,7 +864,7 @@ export default function TeacherPage() {
                       sortConfig={sortConfig}
                       setSortConfig={setSortConfig}
                       thClassName="z-40 border-r border-slate-200"
-                      thStyle={{ left: STICKY_SELECT_WIDTH + STICKY_ID_WIDTH, minWidth: STICKY_NICKNAME_WIDTH }}
+                      thStyle={stickyHeaderStyle(sticky, "nickname")}
                     />
                     <TeacherSortableHeader
                       label="Chinese Name"
@@ -889,8 +899,8 @@ export default function TeacherPage() {
                     return (
                       <tr key={teacher.id}>
                         <td
-                          className="sticky left-0 z-30 whitespace-nowrap bg-white px-2 py-3"
-                          style={{ minWidth: STICKY_SELECT_WIDTH }}
+                          className="sticky left-0 z-30 whitespace-nowrap bg-white px-1 py-2 sm:px-2 sm:py-3"
+                          style={stickyColumnStyle(sticky, "select", { includeLeft: false })}
                         >
                           <input
                             type="checkbox"
@@ -903,14 +913,14 @@ export default function TeacherPage() {
                           />
                         </td>
                         <td
-                          className="sticky z-30 whitespace-nowrap bg-white px-2 py-3 font-mono text-xs text-slate-800"
-                          style={{ left: STICKY_SELECT_WIDTH, minWidth: STICKY_ID_WIDTH }}
+                          className="sticky z-30 whitespace-nowrap bg-white px-1 py-2 font-mono text-xs text-slate-800 sm:px-2 sm:py-3"
+                          style={stickyColumnStyle(sticky, "id")}
                         >
                           {teacher.id}
                         </td>
                         <td
-                          className="sticky z-30 border-r border-slate-200 bg-white px-2 py-3 text-sm text-slate-700"
-                          style={{ left: STICKY_SELECT_WIDTH + STICKY_ID_WIDTH, minWidth: STICKY_NICKNAME_WIDTH }}
+                          className="sticky z-30 border-r border-slate-200 bg-white px-1 py-2 text-sm text-slate-700 sm:px-2 sm:py-3"
+                          style={stickyColumnStyle(sticky, "nickname")}
                         >
                           {teacher.nickname || "—"}
                         </td>

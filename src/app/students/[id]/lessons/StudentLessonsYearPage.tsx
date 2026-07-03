@@ -26,6 +26,7 @@ import {
   LESSON_SYSTEM_START_MONTH,
   LESSON_SYSTEM_START_YEAR,
 } from "@/lib/lessonSystemStart";
+import { responsiveTableClass } from "@/lib/responsiveTable";
 import {
   formatHiddenScheduleKeyLabel,
   hiddenScheduleRuleDateStorageKey,
@@ -2823,7 +2824,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
 
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
               <div className="overflow-x-auto">
-                <div className="flex min-w-[1500px] items-end gap-3">
+                <div className="flex w-full min-w-0 flex-wrap items-end gap-3 lg:min-w-[1500px]">
                 <label className="w-40 shrink-0">
                   <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Month</span>
                   <select
@@ -2952,7 +2953,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             <fieldset disabled={readOnly} className="mt-4 disabled:opacity-95">
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
               <div className="max-h-[70vh] overflow-auto">
-                <table className="w-full min-w-[1180px] divide-y divide-slate-200">
+                <table className={`${responsiveTableClass(1180)} divide-y divide-slate-200`}>
                   <thead className="bg-slate-50">
                     <tr className="divide-x divide-slate-200">
                       <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
@@ -3027,7 +3028,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                         columnKey="lessonSummary"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
-                        thClassName="w-[20%] min-w-[220px] whitespace-normal"
+                        thClassName="w-[20%] min-w-0 whitespace-normal lg:min-w-[220px]"
                       />
                       <LessonSortableHeader
                         label="Type"
@@ -3158,7 +3159,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                             {displayTutorInCell(r.tutor)}
                           </td>
-                          <td className="w-[20%] min-w-[220px] px-4 py-3 text-sm text-slate-700 align-top break-words whitespace-normal">
+                          <td className="w-[20%] min-w-0 px-2 py-2 text-sm text-slate-700 align-top break-words whitespace-normal sm:px-3 sm:py-3 lg:min-w-[220px] lg:px-4">
                             <textarea
                               rows={3}
                               suppressHydrationWarning

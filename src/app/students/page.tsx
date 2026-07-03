@@ -10,6 +10,13 @@ import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 import { gradeToTextbookBand, resolveTextbookSelection } from "@/lib/textbookPublisherCatalog";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
+import {
+  responsiveTableClass,
+  stickyColumnStyle,
+  stickyHeaderStyle,
+  useResponsiveStickyLayout,
+  type StickyColumnDef,
+} from "@/lib/responsiveTable";
 
 type Student = {
   id: string;
@@ -44,6 +51,12 @@ type StudentRow = {
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const STUDENTS_PAGE_SIZE = 80;
 const STUDENTS_SEARCH_DEBOUNCE_MS = 300;
+
+const STUDENTS_STICKY_COLUMNS: StickyColumnDef[] = [
+  { id: "select", desktopWidth: 64 },
+  { id: "studentId", desktopWidth: 170 },
+  { id: "nameZh", desktopWidth: 240 },
+];
 
 type StudentForm = Omit<Student, "id" | "birthTs" | "searchBlob">;
 
@@ -199,6 +212,7 @@ function buildStudentSearchBlob(student: {
 }
 
 export default function StudentsPage() {
+  const sticky = useResponsiveStickyLayout(STUDENTS_STICKY_COLUMNS);
   const [students, setStudents] = useState<Student[]>([]);
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<StudentForm>(emptyForm);
@@ -854,10 +868,13 @@ export default function StudentsPage() {
               className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
               <ClientOnlyAfterMount fallback={<StudentsTableSkeleton />}>
-              <table className="min-w-[1500px] divide-y divide-slate-200">
+              <table className={`${responsiveTableClass(1500)} divide-y divide-slate-200`}>
                 <thead className="bg-slate-50">
                   <tr className="divide-x divide-slate-200">
-                    <th className="sticky left-0 top-0 z-50 w-[64px] whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                    <th
+                      className="sticky left-0 top-0 z-50 whitespace-nowrap bg-slate-50 px-1.5 py-2 text-left text-xs font-bold tracking-wider text-slate-700 sm:px-3 sm:py-3 lg:px-4"
+                      style={stickyColumnStyle(sticky, "select", { includeLeft: false })}
+                    >
                       <input
                         type="checkbox"
                         checked={allVisibleSelected}
@@ -883,21 +900,23 @@ export default function StudentsPage() {
                       columnKey="id"
                       sortConfig={sortConfig}
                       setSortConfig={setSortConfig}
-                      thClassName="left-[64px] z-40 min-w-[170px] max-w-[170px] bg-slate-50"
+                      thClassName="z-40 bg-slate-50"
+                      thStyle={stickyHeaderStyle(sticky, "studentId")}
                     />
                     <SortableHeader
                       label="Chinese name"
                       columnKey="nameZh"
                       sortConfig={sortConfig}
                       setSortConfig={setSortConfig}
-                      thClassName="left-[234px] z-40 min-w-[240px] max-w-[240px] bg-slate-50"
+                      thClassName="z-40 bg-slate-50"
+                      thStyle={stickyHeaderStyle(sticky, "nameZh")}
                     />
                     <SortableHeader
                       label="English name"
                       columnKey="nameEn"
                       sortConfig={sortConfig}
                       setSortConfig={setSortConfig}
-                      thClassName="w-[170px]"
+                      thClassName="w-[170px] min-w-0 lg:min-w-[170px]"
                     />
                     <SortableHeader label="Nickname" columnKey="nicknameEn" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                     <SortableHeader label="Date of birth" columnKey="birthDate" sortConfig={sortConfig} setSortConfig={setSortConfig} />
@@ -917,7 +936,10 @@ export default function StudentsPage() {
                         key={student.id}
                         className="group divide-x divide-slate-100 bg-white hover:bg-slate-50"
                       >
-                        <td className="sticky left-0 z-30 w-[64px] whitespace-nowrap bg-white px-4 py-4 text-sm text-slate-700 group-hover:bg-slate-50">
+                        <td
+                          className="sticky left-0 z-30 whitespace-nowrap bg-white px-1.5 py-2 text-sm text-slate-700 group-hover:bg-slate-50 sm:px-3 sm:py-3 lg:px-4 lg:py-4"
+                          style={stickyColumnStyle(sticky, "select", { includeLeft: false })}
+                        >
                           <input
                             type="checkbox"
                             checked={selectedIdSet.has(student.id)}
@@ -933,7 +955,10 @@ export default function StudentsPage() {
                             className="h-4 w-4 accent-[#1d76c2]"
                           />
                         </td>
-                        <td className="sticky left-[64px] z-30 min-w-[170px] max-w-[170px] whitespace-nowrap bg-white px-6 py-4 text-sm font-medium text-slate-900 group-hover:bg-slate-50">
+                        <td
+                          className="sticky z-30 whitespace-nowrap bg-white px-1.5 py-2 text-sm font-medium text-slate-900 group-hover:bg-slate-50 sm:px-3 sm:py-3 lg:px-6 lg:py-4"
+                          style={stickyColumnStyle(sticky, "studentId")}
+                        >
                           <Link
                             href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons`}
                             className="text-[#1d76c2] hover:underline"
@@ -941,7 +966,10 @@ export default function StudentsPage() {
                             {studentIdDisplay}
                           </Link>
                         </td>
-                        <td className="sticky left-[234px] z-30 min-w-[240px] max-w-[240px] whitespace-nowrap bg-white px-6 py-4 text-sm text-slate-700 group-hover:bg-slate-50">
+                        <td
+                          className="sticky z-30 whitespace-nowrap bg-white px-1.5 py-2 text-sm text-slate-700 group-hover:bg-slate-50 sm:px-3 sm:py-3 lg:px-6 lg:py-4"
+                          style={stickyColumnStyle(sticky, "nameZh")}
+                        >
                           {student.nameZh}
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-700 align-top">
@@ -1085,7 +1113,7 @@ export default function StudentsPage() {
 
 function StudentsTableSkeleton() {
   return (
-    <table className="min-w-[1500px] divide-y divide-slate-200" aria-hidden>
+    <table className={`${responsiveTableClass(1500)} divide-y divide-slate-200`} aria-hidden>
       <thead className="bg-slate-50">
         <tr className="divide-x divide-slate-200">
           {Array.from({ length: 12 }, (_, i) => (
@@ -1180,17 +1208,19 @@ type SortableHeaderProps = {
   sortConfig: SortConfig;
   setSortConfig: (config: SortConfig) => void;
   thClassName?: string;
+  thStyle?: React.CSSProperties;
 };
 
-function SortableHeader({ label, columnKey, sortConfig, setSortConfig, thClassName }: SortableHeaderProps) {
+function SortableHeader({ label, columnKey, sortConfig, setSortConfig, thClassName, thStyle }: SortableHeaderProps) {
   const selectedDirection = sortConfig?.key === columnKey ? sortConfig.direction : "";
 
   return (
     <th
       className={[
-        "sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-3 py-2 text-left text-[11px] font-bold tracking-wider text-slate-700",
+        "sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-1.5 py-2 text-left text-[11px] font-bold tracking-wider text-slate-700 sm:px-3 lg:px-3",
         thClassName ?? "",
       ].join(" ")}
+      style={thStyle}
     >
       <div className="flex items-center gap-1.5 whitespace-nowrap">
         <span className="whitespace-nowrap">{label}</span>

@@ -1,5 +1,7 @@
 "use client";
 
+import { responsiveTableClass } from "@/lib/responsiveTable";
+
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppTopNav from "@/components/AppTopNav";
@@ -411,7 +413,7 @@ export default function RoomsAdminClient() {
           <div className="p-6">
             {rows.length > 0 ? (
               <div className="mb-8 overflow-x-auto rounded-xl border border-slate-200">
-                <table className="w-full min-w-[820px] border-collapse text-left text-sm">
+                <table className={`${responsiveTableClass(820)} text-left`}>
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-700">
                       <th className="px-4 py-3">ID</th>
