@@ -324,6 +324,7 @@ export type FeeRecordBootstrapStudent = {
   nickname_en: string;
   grade: string;
   student_phone: string;
+  created_at: string;
 };
 
 /** Admin fee sheet: students + bulk lesson/fee data in one server pass. */
@@ -338,7 +339,7 @@ export async function loadFeeRecordBootstrap(
 
   const { data: studentRows, error: studentErr } = await supabase
     .from("students")
-    .select("id, name_zh, name_en, nickname_en, grade, student_phone")
+    .select("id, name_zh, name_en, nickname_en, grade, student_phone, created_at")
     .order("id");
   if (studentErr) throw new Error(studentErr.message);
 
@@ -375,6 +376,7 @@ export async function loadFeeRecordBootstrap(
       nickname_en: String(r.nickname_en ?? ""),
       grade: String(r.grade ?? ""),
       student_phone: String((r as { student_phone?: string | null }).student_phone ?? ""),
+      created_at: String((r as { created_at?: string | null }).created_at ?? ""),
     }))
     .filter((s) => {
       if (!s.id) return false;

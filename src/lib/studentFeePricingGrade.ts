@@ -1,5 +1,6 @@
 import { gradeRank, normalizeGradeCode } from "@/lib/grade";
-import type { StudentFeeTierSettings } from "@/lib/studentFeeTierSettings";
+import { studentIdInCurrentPriceList } from "@/lib/studentId";
+import type { StudentFeeTierBundle, StudentFeeTierSettings } from "@/lib/studentFeeTierSettings";
 
 /**
  * ISO date end of calendar month (UTC date parts; HK sheet months align with calendar month).
@@ -49,6 +50,50 @@ export function inferGradeAtSheetEnd(currentGrade: string, sheetYear: number, sh
   }
   level = Math.max(1, Math.min(6, level - promotionsAfterSheet));
   return `F${level}`;
+}
+
+/** HK calendar YYYY-MM-DD from ISO timestamp or date string. */
+export function studentCreatedAtToHkIsoDate(createdAt: string | number | Date | null | undefined): string {
+  if (createdAt == null || createdAt === "") return "";
+  const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  let y = "";
+  let m = "";
+  let day = "";
+  for (const p of parts) {
+    if (p.type === "year") y = p.value;
+    if (p.type === "month") m = p.value;
+    if (p.type === "day") day = p.value;
+  }
+  return y && m && day ? `${y}-${m}-${day}` : "";
+}
+
+/**
+ * Pick legacy vs current tier table for a student/month.
+ * - Month-end >= global switch → current for everyone.
+ * - Else student id is in currentPriceStudentIds list → current.
+ * - Else → legacy (default for existing + referral students).
+ */
+export function resolveFeeTierSettingsForStudent(
+  bundle: StudentFeeTierBundle,
+  studentId: string,
+  sheetYear: number,
+  sheetMonth: number,
+): StudentFeeTierSettings {
+  const sheetEnd = monthEndIsoDate(sheetYear, sheetMonth);
+  if (sheetEnd >= bundle.globalPriceSwitchDate) {
+    return { ...bundle.current, lesson_tier_break_after: bundle.legacy.lesson_tier_break_after };
+  }
+  if (studentIdInCurrentPriceList(studentId, bundle.currentPriceStudentIds)) {
+    return { ...bundle.current, lesson_tier_break_after: bundle.legacy.lesson_tier_break_after };
+  }
+  return { ...bundle.legacy };
 }
 
 export function gradeForFeePricing(

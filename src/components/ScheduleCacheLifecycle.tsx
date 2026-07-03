@@ -2,25 +2,10 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { flushSaveLessonScheduleRecordsQueue, hasPendingLessonScheduleRecordsSaves } from "@/lib/queueSaveLessonScheduleRecords";
-import { flushSaveLessonYearStateQueue, hasPendingLessonYearStateSaves } from "@/lib/queueSaveLessonYearState";
-import {
-  hasPendingScheduleCacheRevalidation,
-  primeScheduleCacheRevalidationOnNavigate,
-  revalidateScheduleCachesNow,
-} from "@/lib/scheduleCacheClient";
-
-function hasPendingScheduleWork(): boolean {
-  return (
-    hasPendingScheduleCacheRevalidation() ||
-    hasPendingLessonYearStateSaves() ||
-    hasPendingLessonScheduleRecordsSaves()
-  );
-}
 
 /**
  * Keeps room / day timetable server caches aligned after saves when users navigate in-app.
- * Full page unload is handled by the save queues' pagehide hooks.
+ * Heavy save-queue modules are loaded lazily so root layout stays small.
  */
 export default function ScheduleCacheLifecycle() {
   const pathname = usePathname();
@@ -28,32 +13,46 @@ export default function ScheduleCacheLifecycle() {
   const isFirstPath = useRef(true);
 
   useEffect(() => {
-    const onLinkClick = (event: MouseEvent) => {
-      if (event.defaultPrevented) return;
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    let cancelled = false;
+    let removeClick: (() => void) | undefined;
 
-      const anchor = (event.target as Element | null)?.closest?.("a[href]");
-      if (!anchor || anchor.getAttribute("target") === "_blank") return;
+    void import("@/lib/scheduleCacheClient").then(
+      ({ hasPendingScheduleCacheRevalidation, primeScheduleCacheRevalidationOnNavigate }) => {
+        if (cancelled) return;
 
-      const href = anchor.getAttribute("href");
-      if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) return;
+        const onLinkClick = (event: MouseEvent) => {
+          if (event.defaultPrevented) return;
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 
-      if (href.startsWith("http://") || href.startsWith("https://")) {
-        try {
-          const url = new URL(href);
-          if (url.origin !== window.location.origin) return;
-        } catch {
-          return;
-        }
-      }
+          const anchor = (event.target as Element | null)?.closest?.("a[href]");
+          if (!anchor || anchor.getAttribute("target") === "_blank") return;
 
-      if (hasPendingScheduleCacheRevalidation()) {
-        primeScheduleCacheRevalidationOnNavigate();
-      }
+          const href = anchor.getAttribute("href");
+          if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) return;
+
+          if (href.startsWith("http://") || href.startsWith("https://")) {
+            try {
+              const url = new URL(href);
+              if (url.origin !== window.location.origin) return;
+            } catch {
+              return;
+            }
+          }
+
+          if (hasPendingScheduleCacheRevalidation()) {
+            primeScheduleCacheRevalidationOnNavigate();
+          }
+        };
+
+        document.addEventListener("click", onLinkClick, true);
+        removeClick = () => document.removeEventListener("click", onLinkClick, true);
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      removeClick?.();
     };
-
-    document.addEventListener("click", onLinkClick, true);
-    return () => document.removeEventListener("click", onLinkClick, true);
   }, []);
 
   useEffect(() => {
@@ -62,13 +61,40 @@ export default function ScheduleCacheLifecycle() {
       return;
     }
 
-    if (!hasPendingScheduleWork()) return;
+    let cancelled = false;
 
     void (async () => {
+      const [
+        { hasPendingScheduleCacheRevalidation, revalidateScheduleCachesNow },
+        { flushSaveLessonYearStateQueue, hasPendingLessonYearStateSaves },
+        { flushSaveLessonScheduleRecordsQueue, hasPendingLessonScheduleRecordsSaves },
+      ] = await Promise.all([
+        import("@/lib/scheduleCacheClient"),
+        import("@/lib/queueSaveLessonYearState"),
+        import("@/lib/queueSaveLessonScheduleRecords"),
+      ]);
+
+      if (cancelled) return;
+
+      const hasPending =
+        hasPendingScheduleCacheRevalidation() ||
+        hasPendingLessonYearStateSaves() ||
+        hasPendingLessonScheduleRecordsSaves();
+
+      if (!hasPending) return;
+
       await Promise.all([flushSaveLessonYearStateQueue(), flushSaveLessonScheduleRecordsQueue()]);
+      if (cancelled) return;
+
       await revalidateScheduleCachesNow();
+      if (cancelled) return;
+
       router.refresh();
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [pathname, router]);
 
   return null;

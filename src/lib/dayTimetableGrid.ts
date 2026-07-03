@@ -40,7 +40,8 @@ import {
 } from "@/lib/studentFeePricingGrade";
 import {
   loadStudentFeeTierSettingsAdmin,
-  type StudentFeeTierSettings,
+  resolveFeeTierSettingsForStudent,
+  type StudentFeeTierBundle,
 } from "@/lib/studentFeeTierSettings";
 
 export {
@@ -275,7 +276,7 @@ function buildFeePaymentToneByStudentId(
   refYear: number,
   refMonth: number,
   dateIso: string,
-  feeTierSettings: StudentFeeTierSettings,
+  feeTierBundle: StudentFeeTierBundle,
 ): Record<string, DayTimetableFeePaymentTone> {
   const amountByKey = new Map<string, number>();
   const pricingByKey = new Map<string, { lessonUnitPrice: number; feePricingGrade: string }>();
@@ -352,10 +353,11 @@ function buildFeePaymentToneByStudentId(
         weekdays.reduce((sum, wd) => sum + (base[wd] ?? 0), 0) + (extraCountByMonth.get(m) ?? 0);
       const pricing = pricingFor(key, refYear, m);
       const gradeFor = gradeForFeePricing(String(st.grade ?? ""), refYear, m, pricing.feePricingGrade);
+      const tier = resolveFeeTierSettingsForStudent(feeTierBundle, st.id, refYear, m);
       const expected = sumSlotTuitionHkdByLessonCount({
         lessonCount,
         gradeFor,
-        feeTierSettings,
+        feeTierSettings: tier,
       });
       priorExpected += expected;
       submittedBefore += amountFor(key, refYear, m);
@@ -371,10 +373,16 @@ function buildFeePaymentToneByStudentId(
       refMonth,
       currentPricing.feePricingGrade,
     );
+    const currentTier = resolveFeeTierSettingsForStudent(
+      feeTierBundle,
+      st.id,
+      refYear,
+      refMonth,
+    );
     const currentExpected = sumSlotTuitionHkdByLessonCount({
       lessonCount: currentLessonCount,
       gradeFor: currentGradeFor,
-      feeTierSettings,
+      feeTierSettings: currentTier,
     });
     const opening = refYear === FEE_OPENING_BALANCE_AS_OF_YEAR ? Number(openingBalanceByStudentId[key] ?? 0) || 0 : 0;
     const balanceBefore = opening + priorExpected - submittedBefore;
@@ -490,7 +498,7 @@ async function fetchDayTimetablePayloadUncached(
   const { regularOnly } = options;
 
   const supabase = getSupabaseAdmin();
-  const [staticBundle, timetableStyle, feeTierSettings] = await Promise.all([
+  const [staticBundle, timetableStyle, feeTierBundle] = await Promise.all([
     loadDayTimetableStaticBundle(),
     loadDayTimetableStyleSettings(),
     loadStudentFeeTierSettingsAdmin(supabase),
@@ -685,7 +693,7 @@ async function fetchDayTimetablePayloadUncached(
           year,
           month,
           dateIso,
-          feeTierSettings,
+          feeTierBundle,
         )
       : {};
 
@@ -720,7 +728,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v11"],
+  ["day-timetable-payload-v12"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

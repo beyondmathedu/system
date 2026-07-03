@@ -32,9 +32,11 @@ import {
   sumSlotTuitionHkdFromDates,
 } from "@/lib/studentFeePricingGrade";
 import {
-  DEFAULT_FEE_TIER_SETTINGS,
+  DEFAULT_FEE_TIER_BUNDLE,
   loadStudentFeeTierSettings,
+  resolveFeeTierSettingsForStudent,
   saveStudentFeeTierSettings,
+  type StudentFeeTierBundle,
   type StudentFeeTierSettings,
 } from "@/lib/studentFeeTierSettings";
 import {
@@ -67,6 +69,7 @@ type StudentRow = {
   nickname_en: string;
   grade: string;
   student_phone: string;
+  created_at: string;
 };
 
 const L_COUNT = 9;
@@ -279,7 +282,7 @@ function buildMonthlyArrearsRows(params: {
   lessonRecords: unknown;
   yearState: StudentLesson2026State | undefined;
   legacyWeekdays: string[];
-  feeTierSettings: StudentFeeTierSettings;
+  feeTierBundle: StudentFeeTierBundle;
 }): MonthlyArrearsRow[] {
   const {
     student,
@@ -292,7 +295,7 @@ function buildMonthlyArrearsRows(params: {
     lessonRecords,
     yearState,
     legacyWeekdays,
-    feeTierSettings,
+    feeTierBundle,
   } = params;
   const records = normalizeFeeLessonRecords(lessonRecords);
   const state = toYearLessonStateFromClient(yearState);
@@ -325,10 +328,11 @@ function buildMonthlyArrearsRows(params: {
       m,
       m === sheetMonth ? currentRecord.feePricingGrade : String(hist?.feePricingGrade ?? ""),
     );
+    const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student.id, sheetYear, m);
     const expected = sumSlotTuitionHkdFromDates({
       fullLessonDates: dates,
       gradeFor,
-      feeTierSettings,
+      feeTierSettings: tier,
     });
     const paid =
       m === sheetMonth ? Number(currentRecord.submitted) || 0 : Number(submittedByMonth[m] ?? 0) || 0;
@@ -593,11 +597,15 @@ export default function StudentsLessonTimeFeeRecordPage() {
   const [syncingZoho, setSyncingZoho] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const [feeTierSettings, setFeeTierSettings] = useState<StudentFeeTierSettings>({
-    ...DEFAULT_FEE_TIER_SETTINGS,
+  const [feeTierBundle, setFeeTierBundle] = useState<StudentFeeTierBundle>({
+    ...DEFAULT_FEE_TIER_BUNDLE,
+    legacy: { ...DEFAULT_FEE_TIER_BUNDLE.legacy },
+    current: { ...DEFAULT_FEE_TIER_BUNDLE.current },
   });
-  const [feeTierDraft, setFeeTierDraft] = useState<StudentFeeTierSettings>({
-    ...DEFAULT_FEE_TIER_SETTINGS,
+  const [feeTierDraft, setFeeTierDraft] = useState<StudentFeeTierBundle>({
+    ...DEFAULT_FEE_TIER_BUNDLE,
+    legacy: { ...DEFAULT_FEE_TIER_BUNDLE.legacy },
+    current: { ...DEFAULT_FEE_TIER_BUNDLE.current },
   });
   const [feeTierSaveMsg, setFeeTierSaveMsg] = useState("");
   const [openingBalanceSaveMsg, setOpeningBalanceSaveMsg] = useState("");
@@ -626,7 +634,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     void (async () => {
       const t = await loadStudentFeeTierSettings();
       if (!m) return;
-      setFeeTierSettings(t);
+      setFeeTierBundle(t);
       setFeeTierDraft(t);
     })();
     return () => {
@@ -1120,7 +1128,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
       setFeeTierSaveMsg(res.error ?? "Save failed");
       return;
     }
-    setFeeTierSettings({ ...feeTierDraft });
+    setFeeTierBundle({ ...feeTierDraft });
     setFeeTierSaveMsg(res.cloudSynced ? "Saved + cloud" : "Saved locally");
     window.setTimeout(() => setFeeTierSaveMsg(""), 2800);
   }, [feeTierDraft]);
@@ -1259,10 +1267,11 @@ export default function StudentsLessonTimeFeeRecordPage() {
       const r = recordsByStudentId[st.id] ?? defaultRecordState();
       const dates = fullLessonDatesByStudentId[st.id] ?? [];
       const gradeFor = gradeForFeePricing(st, sheetYear, currentMonth, r.feePricingGrade);
+      const tier = resolveFeeTierSettingsForStudent(feeTierBundle, st.id, sheetYear, currentMonth);
       out[st.id] = sumSlotTuitionHkdFromDates({
         fullLessonDates: dates,
         gradeFor,
-        feeTierSettings,
+        feeTierSettings: tier,
       });
     }
     return out;
@@ -1272,7 +1281,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     fullLessonDatesByStudentId,
     sheetYear,
     sheetMonth,
-    feeTierSettings,
+    feeTierBundle,
   ]);
 
   const priorExpectedTuitionSumByStudentId = useMemo(() => {
@@ -1294,7 +1303,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
         });
         const hist = historicalMonthFeeByStudentId[st.id]?.[m];
         const gradeFor = gradeForFeePricing(st, sheetYear, m, hist?.feePricingGrade ?? "");
-        sum += sumSlotTuitionHkdFromDates({ fullLessonDates: dates, gradeFor, feeTierSettings });
+        const tier = resolveFeeTierSettingsForStudent(feeTierBundle, st.id, sheetYear, m);
+        sum += sumSlotTuitionHkdFromDates({ fullLessonDates: dates, gradeFor, feeTierSettings: tier });
       }
       out[st.id] = sum;
     }
@@ -1306,7 +1316,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     weekdayTokensByStudentId,
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
-    feeTierSettings,
+    feeTierBundle,
     historicalMonthFeeByStudentId,
   ]);
 
@@ -1361,7 +1371,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
       lessonRecords: lessonRecordsByStudentId[st.id] ?? [],
       yearState: lessonYearStateByStudentId[st.id],
       legacyWeekdays: weekdayTokensByStudentId[st.id] ?? [],
-      feeTierSettings,
+      feeTierBundle,
     });
   }, [
     feeDetailDialog,
@@ -1375,7 +1385,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     weekdayTokensByStudentId,
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
-    feeTierSettings,
+    feeTierBundle,
   ]);
 
   const feeOutstandingSummary = useMemo(() => {
@@ -1858,7 +1868,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                               onRemarksChange={onRemarksChange}
                               onSendFeeChange={onSendFeeChange}
                               currentMonthExpectedMoney={currentMonthExpectedTuitionByStudentId[st.id] ?? 0}
-                              feeTierSettings={feeTierSettings}
+                              feeTierBundle={feeTierBundle}
                               onFeeDetailOpen={onFeeDetailOpen}
                             />
                           );
@@ -1911,104 +1921,99 @@ export default function StudentsLessonTimeFeeRecordPage() {
 
               <details className="mt-5 rounded-lg border border-slate-200 bg-slate-50/90 p-3 text-[13.2px]">
                 <summary className="cursor-pointer select-none font-semibold text-slate-800">
-                  Lesson tiers (F1–3 / F4–6)
+                  Lesson tiers (legacy / current)
                 </summary>
                 <p className="mt-2 text-[12.1px] leading-snug text-slate-600">
-                  <span className="font-semibold">Save</span> stores in this browser; Supabase syncs too if{" "}
-                  <code className="rounded bg-slate-200/80 px-0.5">app_student_fee_tier_settings</code> exists.
-                  All students use these tiers (F1–F3 / F4–F6, Normal / Discount split); per-student flat prices are not used.
+                  <span className="font-semibold">Legacy</span> = everyone not listed below, until global switch (includes referrals on old price).
+                  <span className="font-semibold"> Current</span> = listed student ids only before 1 Sep; everyone from 1 Sep onward.
+                  Discount = Normal − $20 from lesson 9+ (Split applies to both tables).
                 </p>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <label className="flex min-w-0 items-center gap-1.5">
-                    <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-slate-500">
-                      F1-F3 (Normal)
-                    </span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      value={feeTierDraft.f_low_tier_1_8}
-                      onChange={(e) =>
+                <p className="mt-1 text-[12.1px] leading-snug text-slate-600">
+                  <span className="font-semibold">Save</span> stores locally; Supabase syncs when{" "}
+                  <code className="rounded bg-slate-200/80 px-0.5">app_student_fee_tier_settings</code> has dual-price columns.
+                </p>
+                <div className="mt-3 space-y-3">
+                  <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Legacy (舊生)</p>
+                    <FeeTierPriceFields
+                      tiers={feeTierDraft.legacy}
+                      onPatch={(patch) =>
                         setFeeTierDraft((d) => ({
                           ...d,
-                          f_low_tier_1_8: Number(e.target.value) || 0,
+                          legacy: { ...d.legacy, ...patch },
                         }))
                       }
-                      className="w-[4rem] shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[13.2px] tabular-nums"
-                      suppressHydrationWarning
                     />
-                  </label>
-                  <label className="flex min-w-0 items-center gap-1.5">
-                    <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-slate-500">
-                      F1-F3 (Discount)
-                    </span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      value={feeTierDraft.f_low_tier_9_plus}
-                      onChange={(e) =>
+                  </div>
+                  <div className="rounded-md border border-sky-200 bg-sky-50/40 px-3 py-2">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-sky-800">Current (新生 / 9·1 後全员)</p>
+                    <FeeTierPriceFields
+                      tiers={feeTierDraft.current}
+                      onPatch={(patch) =>
                         setFeeTierDraft((d) => ({
                           ...d,
-                          f_low_tier_9_plus: Number(e.target.value) || 0,
+                          current: { ...d.current, ...patch },
                         }))
                       }
-                      className="w-[4rem] shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[13.2px] tabular-nums"
-                      suppressHydrationWarning
                     />
-                  </label>
-                  <label className="flex min-w-0 items-center gap-1.5">
-                    <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-slate-500">
-                      F4-F6 (Normal)
-                    </span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      value={feeTierDraft.f_high_tier_1_8}
-                      onChange={(e) =>
-                        setFeeTierDraft((d) => ({
-                          ...d,
-                          f_high_tier_1_8: Number(e.target.value) || 0,
-                        }))
-                      }
-                      className="w-[4rem] shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[13.2px] tabular-nums"
-                      suppressHydrationWarning
-                    />
-                  </label>
-                  <label className="flex min-w-0 items-center gap-1.5">
-                    <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-slate-500">
-                      F4-F6 (Discount)
-                    </span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      value={feeTierDraft.f_high_tier_9_plus}
-                      onChange={(e) =>
-                        setFeeTierDraft((d) => ({
-                          ...d,
-                          f_high_tier_9_plus: Number(e.target.value) || 0,
-                        }))
-                      }
-                      className="w-[4rem] shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[13.2px] tabular-nums"
-                      suppressHydrationWarning
-                    />
-                  </label>
-                  <label className="flex min-w-0 items-center gap-1.5">
-                    <span className="shrink-0 whitespace-nowrap text-[12.1px] font-semibold text-slate-500">
-                      Discount Split
-                    </span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      value={feeTierDraft.lesson_tier_break_after}
-                      onChange={(e) =>
-                        setFeeTierDraft((d) => ({
-                          ...d,
-                          lesson_tier_break_after: Math.min(24, Math.max(1, Math.floor(Number(e.target.value) || 8))),
-                        }))
-                      }
-                      className="w-11 shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[14.52px] tabular-nums"
-                      suppressHydrationWarning
-                    />
-                  </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <label className="flex min-w-0 items-center gap-1.5">
+                      <span className="shrink-0 whitespace-nowrap text-[12.1px] font-semibold text-slate-500">
+                        Discount Split
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        value={feeTierDraft.legacy.lesson_tier_break_after}
+                        onChange={(e) => {
+                          const br = Math.min(24, Math.max(1, Math.floor(Number(e.target.value) || 8)));
+                          setFeeTierDraft((d) => ({
+                            ...d,
+                            legacy: { ...d.legacy, lesson_tier_break_after: br },
+                            current: { ...d.current, lesson_tier_break_after: br },
+                          }));
+                        }}
+                        className="w-11 shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[14.52px] tabular-nums"
+                        suppressHydrationWarning
+                      />
+                    </label>
+                    <label className="flex min-w-0 flex-col gap-1 sm:col-span-2">
+                      <span className="text-[12.1px] font-semibold text-slate-500">
+                        Students on new price（學號，一行一個或逗號分隔）
+                      </span>
+                      <textarea
+                        rows={4}
+                        placeholder={"00150\n00152"}
+                        value={feeTierDraft.currentPriceStudentIds}
+                        onChange={(e) =>
+                          setFeeTierDraft((d) => ({
+                            ...d,
+                            currentPriceStudentIds: e.target.value,
+                          }))
+                        }
+                        className="min-h-[5rem] w-full max-w-md rounded border border-slate-300 bg-white px-2 py-1.5 font-mono text-[13.2px] tabular-nums leading-snug"
+                        suppressHydrationWarning
+                      />
+                    </label>
+                    <label className="flex min-w-0 items-center gap-1.5">
+                      <span className="shrink-0 whitespace-nowrap text-[12.1px] font-semibold text-slate-500">
+                        All switch (9/1)
+                      </span>
+                      <input
+                        type="date"
+                        value={feeTierDraft.globalPriceSwitchDate}
+                        onChange={(e) =>
+                          setFeeTierDraft((d) => ({
+                            ...d,
+                            globalPriceSwitchDate: e.target.value || d.globalPriceSwitchDate,
+                          }))
+                        }
+                        className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[13.2px]"
+                        suppressHydrationWarning
+                      />
+                    </label>
+                  </div>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
@@ -2127,9 +2132,66 @@ type StudentFeeRowProps = {
   currentMonthExpectedMoney: number;
   /** 本月課表有日期嘅檔位數（用於 $xx(N堂) 顯示）。 */
   thisMonthDatedSlotCount: number;
-  feeTierSettings: StudentFeeTierSettings;
+  feeTierBundle: StudentFeeTierBundle;
   onFeeDetailOpen: (dialog: { kind: "arrears"; studentId: string; title: string } | { kind: "makeup"; studentId: string }) => void;
 };
+
+function FeeTierPriceFields({
+  tiers,
+  onPatch,
+}: {
+  tiers: StudentFeeTierSettings;
+  onPatch: (patch: Partial<StudentFeeTierSettings>) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <label className="flex min-w-0 items-center gap-1.5">
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-slate-500">F1-F3 (Normal)</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={tiers.f_low_tier_1_8}
+          onChange={(e) => onPatch({ f_low_tier_1_8: Number(e.target.value) || 0 })}
+          className="w-[4rem] shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[13.2px] tabular-nums"
+          suppressHydrationWarning
+        />
+      </label>
+      <label className="flex min-w-0 items-center gap-1.5">
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-slate-500">F1-F3 (Discount)</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={tiers.f_low_tier_9_plus}
+          onChange={(e) => onPatch({ f_low_tier_9_plus: Number(e.target.value) || 0 })}
+          className="w-[4rem] shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[13.2px] tabular-nums"
+          suppressHydrationWarning
+        />
+      </label>
+      <label className="flex min-w-0 items-center gap-1.5">
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-slate-500">F4-F6 (Normal)</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={tiers.f_high_tier_1_8}
+          onChange={(e) => onPatch({ f_high_tier_1_8: Number(e.target.value) || 0 })}
+          className="w-[4rem] shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[13.2px] tabular-nums"
+          suppressHydrationWarning
+        />
+      </label>
+      <label className="flex min-w-0 items-center gap-1.5">
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-slate-500">F4-F6 (Discount)</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={tiers.f_high_tier_9_plus}
+          onChange={(e) => onPatch({ f_high_tier_9_plus: Number(e.target.value) || 0 })}
+          className="w-[4rem] shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-[13.2px] tabular-nums"
+          suppressHydrationWarning
+        />
+      </label>
+    </div>
+  );
+}
 
 const StudentFeeRow = memo(function StudentFeeRow({
   student,
@@ -2150,7 +2212,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
   onSendFeeChange,
   currentMonthExpectedMoney,
   thisMonthDatedSlotCount,
-  feeTierSettings,
+  feeTierBundle,
   onFeeDetailOpen,
 }: StudentFeeRowProps) {
   const lessonDates = lessonDatesSerialized ? lessonDatesSerialized.split("|") : [];
@@ -2182,10 +2244,16 @@ const StudentFeeRow = memo(function StudentFeeRow({
     OPENING_BALANCE_AS_OF_YEAR,
     OPENING_BALANCE_AS_OF_MONTH,
   );
+  const openingTier = resolveFeeTierSettingsForStudent(
+    feeTierBundle,
+    student.id,
+    OPENING_BALANCE_AS_OF_YEAR,
+    OPENING_BALANCE_AS_OF_MONTH,
+  );
   const openingLessonHintCount = openingBalanceLessonHintCount({
     openingBalance,
     gradeForPricing: gradeForOpening,
-    feeTierSettings,
+    feeTierSettings: openingTier,
   });
 
   return (

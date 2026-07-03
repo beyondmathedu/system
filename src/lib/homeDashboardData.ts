@@ -11,7 +11,11 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 import type { HomeReminderRow } from "@/app/home/HomeReminderPanel";
 import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
-import { loadStudentFeeTierSettingsAdmin, type StudentFeeTierSettings } from "@/lib/studentFeeTierSettings";
+import {
+  loadStudentFeeTierSettingsAdmin,
+  resolveFeeTierSettingsForStudent,
+  type StudentFeeTierBundle,
+} from "@/lib/studentFeeTierSettings";
 import { gradeForFeePricing, sumSlotTuitionHkdByLessonCount } from "@/lib/studentFeePricingGrade";
 
 export type HomeWeekBirthdayItem = {
@@ -261,7 +265,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     });
   }
 
-  const [feeTierSettings, { data: recRows }, { data: yearStateRowsRaw }] = await Promise.all([
+  const [feeTierBundle, { data: recRows }, { data: yearStateRowsRaw }] = await Promise.all([
     loadStudentFeeTierSettingsAdmin(supabase),
     activeStudentIds.length
       ? supabase.from("student_lesson_records").select("student_id, records").in("student_id", activeStudentIds)
@@ -319,10 +323,11 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       const lessonCount = weekdays.reduce((sum, wd) => sum + (baseCounts[wd] ?? 0), 0) + extraCount;
       const pricing = pricingByStudentId.get(student.id) ?? { lessonUnitPrice: 0, feePricingGrade: "" };
       const gradeFor = gradeForFeePricing("", year, month, pricing.feePricingGrade);
+      const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student.id, year, month);
       const expected = sumSlotTuitionHkdByLessonCount({
         lessonCount,
         gradeFor,
-        feeTierSettings,
+        feeTierSettings: tier,
       });
       const due = Math.max(0, expected - paid);
       return { student, paid, expected, due };

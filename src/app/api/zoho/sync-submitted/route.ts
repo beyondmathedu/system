@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { getViewerContext } from "@/lib/authz";
 import { gradeForFeePricing, sumSlotTuitionHkdByLessonCount } from "@/lib/studentFeePricingGrade";
-import { loadStudentFeeTierSettingsAdmin } from "@/lib/studentFeeTierSettings";
+import {
+  loadStudentFeeTierSettingsAdmin,
+  resolveFeeTierSettingsForStudent,
+} from "@/lib/studentFeeTierSettings";
 import { FEE_RECORD_SELECT_PRICING } from "@/lib/studentMonthlyFeeRecordsCompat";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -414,7 +417,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const feeTierSettings = await loadStudentFeeTierSettingsAdmin(admin);
+    const feeTierBundle = await loadStudentFeeTierSettingsAdmin(admin);
     const amountByStudentMonth = new Map<string, number>();
 
     const studentIds = Array.from(
@@ -462,8 +465,9 @@ export async function POST(request: Request) {
         month,
         ex?.fee_pricing_grade ?? "",
       );
+      const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student_id, year, month);
       const submitted = Math.round(
-        sumSlotTuitionHkdByLessonCount({ lessonCount, gradeFor, feeTierSettings }) * 100,
+        sumSlotTuitionHkdByLessonCount({ lessonCount, gradeFor, feeTierSettings: tier }) * 100,
       ) / 100;
       amountByStudentMonth.set(key, submitted);
     }
