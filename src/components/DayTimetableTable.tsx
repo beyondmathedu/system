@@ -17,7 +17,6 @@ import { deleteTimetableDayRemark, upsertTimetableDayRemark } from "@/lib/studen
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { normalizeStudentId } from "@/lib/studentId";
 import { buildRoomPageHref } from "@/lib/roomConstants";
-import { responsiveTableClass } from "@/lib/responsiveTable";
 
 function feeToneForStudent(
   feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>,
@@ -247,7 +246,9 @@ export default function DayTimetableTable({
   const tdExamExtra = dailyCompactColumns ? TD_DAILY_EXAM_EXTRA : "w-20";
   const thTimeClass = dailyCompactColumns ? TH_TIME_DAILY : TH_TIME;
   const thRoomRow1Class = dailyCompactColumns ? TH_ROOM_ROW1_DAILY : TH_ROOM_ROW1;
-  const tableClassName = responsiveTableClass(960);
+  const tableClassName = dailyCompactColumns
+    ? "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
+    : "min-w-[960px] w-full border-collapse text-sm";
   const [hoverPanel, setHoverPanel] = useState<{
     studentId: string;
     name: string;

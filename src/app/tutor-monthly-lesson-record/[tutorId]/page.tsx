@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { responsiveTableClass } from "@/lib/responsiveTable";
 import { notFound } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import TutorMonthlyYearMonthPicker from "@/components/TutorMonthlyYearMonthPicker";
@@ -343,7 +342,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               id="tutorMonthlyLessonRecordExport"
               className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200"
             >
-              <table className={responsiveTableClass(1040)}>
+              <table className="min-w-[1040px] w-full border-collapse text-sm">
                 <thead className="bg-slate-50 text-left text-slate-800">
                   <tr>
                     <th className="sticky top-0 z-20 border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">{entry.displayName}</th>

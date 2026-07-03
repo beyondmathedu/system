@@ -833,7 +833,7 @@ export default function StudentProgressByIdPage() {
                         {isCutOffSheet && cutOffDisplay ? (
                           <div className="flex min-h-0 flex-1 flex-col">
                             <div className={CUT_OFF_TABLE_BODY_SCROLL_CLASS}>
-                              <table className="w-full min-w-0 table-fixed border-separate border-spacing-0 text-[11px] sm:text-sm">
+                              <table className="min-w-full border-separate border-spacing-0 text-sm">
                                 <thead>
                                   <tr>
                                     {cutOffDisplay.levelHeaders.map((label, colIndex) => (
@@ -895,7 +895,7 @@ export default function StudentProgressByIdPage() {
                             </div>
                           </div>
                         ) : (
-                        <table className="w-full min-w-0 table-fixed text-[11px] sm:text-sm">
+                        <table className="min-w-full text-sm">
                       <thead className="sticky top-0 z-20 bg-slate-100">
                         <tr>
                           {columns.map((col) => {
@@ -903,7 +903,7 @@ export default function StudentProgressByIdPage() {
                               return (
                                 <th
                                   key={`${sheet.name}-head-textbook-${col.colIndexEn}`}
-                                  className="sticky left-0 z-30 min-w-0 whitespace-nowrap bg-slate-100 px-1.5 py-2 text-left font-semibold text-slate-700 shadow-[inset_-1px_0_0_rgba(226,232,240,1),inset_0_-1px_0_0_rgba(226,232,240,1)] sm:min-w-[160px] sm:px-2 lg:min-w-[270px] lg:px-3"
+                                  className="sticky left-0 z-30 min-w-[270px] whitespace-nowrap bg-slate-100 px-3 py-2 text-left font-semibold text-slate-700 shadow-[inset_-1px_0_0_rgba(226,232,240,1),inset_0_-1px_0_0_rgba(226,232,240,1)]"
                                 >
                                   <span className="block leading-5">Textbook</span>
                                 </th>
@@ -960,7 +960,7 @@ export default function StudentProgressByIdPage() {
                                     return (
                                       <td
                                         key={`${sheet.name}-row-${rowIndex}-textbook-${col.colIndexEn}`}
-                                        className={`sticky left-0 z-10 min-w-0 whitespace-normal px-1.5 py-2 shadow-[inset_-1px_0_0_rgba(241,245,249,1)] sm:min-w-[160px] sm:px-2 lg:min-w-[270px] lg:px-3 ${textbookCellClass}`}
+                                        className={`sticky left-0 z-10 min-w-[270px] whitespace-normal px-3 py-2 shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${textbookCellClass}`}
                                       >
                                         <span className="block leading-5">{textbookText || " "}</span>
                                       </td>
