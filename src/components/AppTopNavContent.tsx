@@ -106,7 +106,7 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
     dashboard: pathname === "/home",
     "daily-timetable": isMatch("/daily-time-table"),
     "regular-timetable": isMatch("/regular-class-timetable"),
-    students: isMatch("/students") || isMatch("/students-lesson-time-fee-record"),
+    students: isMatch("/students"),
     reports: isMatch("/tutor") || isMatch("/teacher") || isMatch("/tutor-monthly-lesson-record"),
     rooms: isMatch("/rooms"),
     room: isMatch("/rooms"),
