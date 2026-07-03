@@ -22,7 +22,7 @@ import {
   isPendingRescheduleEntry,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
-import { scheduleRoomsMatch } from "@/lib/dayTimetableShared";
+import { scheduleRoomsMatch, weekdayCnFromIsoDateHk } from "@/lib/dayTimetableShared";
 
 export type YearLessonRecord = {
   id?: string;
@@ -117,6 +117,19 @@ function getHkWeekdayNumber(d: Date) {
   return js === 0 ? 7 : js;
 }
 
+function addCalendarDaysIso(iso: string, days: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + days));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+}
+
+function isIsoInInclusiveRange(iso: string, startIso: string, endIso: string): boolean {
+  const nd = normalizeCalendarDateIso(iso);
+  if (!nd) return false;
+  return nd >= startIso && nd <= endIso;
+}
+
 function sortTimeFromDisplay(time: string) {
   const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(time.trim());
   if (!m) return time.padStart(5, "0");
@@ -181,6 +194,39 @@ function buildScheduleRows(
   const startIso = toIsoDate(start);
   const versionCache = new Map<string, (typeof normalized)[0][]>();
 
+  if (hasRange && rangeStart && rangeEnd) {
+    let curIso = normalizeCalendarDateIso(rangeStart) ?? rangeStart;
+    const endIso = normalizeCalendarDateIso(rangeEnd) ?? rangeEnd;
+    while (curIso <= endIso) {
+      const weekday = weekdayCnFromIsoDateHk(curIso);
+      const activeRules = getActiveDedupedScheduleRulesForDate(sortedRules, curIso, versionCache);
+      for (const rule of activeRules) {
+        if (rule.weekday !== weekday) continue;
+        if (
+          isLessonScheduleHidden({
+            hiddenDates: state.hiddenDates,
+            dateIso: curIso,
+            scheduleRuleId: rule.id,
+          })
+        ) {
+          continue;
+        }
+
+        const ov = state.overrides[curIso];
+        baseRows.push({
+          date: curIso,
+          time: (ov?.time ?? rule.time).toString(),
+          room: (ov?.room ?? rule.room).toString(),
+          rowKind: "normal",
+          rowId: `${curIso}-regular-${rule.id ?? `${rule.time}-${rule.room}`}`,
+          attendanceKey: regularLessonAttendanceKey(rule, curIso),
+          baseRule: rule,
+          fromExtra: false,
+        });
+      }
+      curIso = addCalendarDaysIso(curIso, 1);
+    }
+  } else {
   for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
     const hkNum = getHkWeekdayNumber(cur);
     const weekday = numberToWeekday(hkNum);
@@ -210,6 +256,7 @@ function buildScheduleRows(
         fromExtra: false,
       });
     }
+  }
   }
 
   const rescheduleByFromDate = new Map<string, (typeof state.rescheduleEntries)[number]>();
@@ -263,6 +310,7 @@ function buildScheduleRows(
     const toNorm = normalizeCalendarDateIso(e.toDate);
     if (!toNorm) continue;
     if (hasMonth && (toNorm < startIso || toNorm > monthEndIso)) continue;
+    if (hasRange && rangeStart && rangeEnd && !isIsoInInclusiveRange(toNorm, rangeStart, rangeEnd)) continue;
     emittedRescheduleIds.add(e.id);
     rows.push({
       date: e.toDate,
@@ -277,6 +325,9 @@ function buildScheduleRows(
   }
 
   for (const ex of state.extraEntries) {
+    if (hasRange && rangeStart && rangeEnd && !isIsoInInclusiveRange(ex.date, rangeStart, rangeEnd)) {
+      continue;
+    }
     rows.push({
       date: ex.date,
       time: ex.time,
@@ -297,6 +348,9 @@ function buildScheduleRows(
       if (!nd) return false;
       return nd >= startIso && nd <= monthEndIsoFilter;
     });
+  }
+  if (hasRange && rangeStart && rangeEnd) {
+    visibleRows = visibleRows.filter((r) => isIsoInInclusiveRange(r.date, rangeStart, rangeEnd));
   }
 
   visibleRows.sort((a, b) => {

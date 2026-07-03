@@ -85,4 +85,23 @@ describe("dayTimetableScheduleRows", () => {
 
     expect(rows).toHaveLength(2);
   });
+
+  it("does not show extra lessons from other dates on daily timetable", () => {
+    const records = [
+      mondayRule({ id: "rule-sat", weekday: "六", time: "11:30 AM", room: "M前" }),
+    ];
+    const state = emptyState();
+    state.extraEntries.push({
+      id: "ex-sat",
+      date: "2026-07-04",
+      time: "11:30 AM",
+      room: "M前",
+    });
+
+    const fridayRows = buildDayTimetableRowsForDate(records, state, "2026-07-03", "2026-07-03");
+    expect(fridayRows).toHaveLength(0);
+
+    const saturdayRows = buildDayTimetableRowsForDate(records, state, "2026-07-04", "2026-07-03");
+    expect(saturdayRows.some((r) => r.lessonType === "加堂" && r.time === "11:30 AM")).toBe(true);
+  });
 });
