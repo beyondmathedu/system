@@ -27,6 +27,7 @@ import {
   normalizeScheduleRoom,
   parseDayParams,
   toDayIso,
+  weekdayCnFromIsoDateHk,
   type DayTimetableCell,
   type DayTimetablePayload,
   type DayTimetableRowFrame,
@@ -48,6 +49,7 @@ export {
   hkTodayYmd,
   parseDayParams,
   toDayIso,
+  weekdayCnFromIsoDateHk,
   type DayTimetableCell,
   type DayTimetablePayload,
   type DayTimetableRowFrame,
@@ -158,14 +160,6 @@ function normalizeWeekday(raw: unknown) {
   return s;
 }
 
-function weekdayCnFromIsoDate(dateIso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
-  if (!m) return "";
-  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  const names = ["日", "一", "二", "三", "四", "五", "六"];
-  return names[dt.getDay()] ?? "";
-}
-
 function toHkIsoDateFromMs(ms: number) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Hong_Kong",
@@ -176,13 +170,6 @@ function toHkIsoDateFromMs(ms: number) {
   const { y, m, d } = readYmdParts(parts, { y: "2026", m: "01", d: "01" });
   return `${y}-${m}-${d}`;
 }
-
-type DayCandidateIndex = {
-  weekdaySet: Set<string>;
-  extraDateSet: Set<string>;
-  rescheduleToDateSet: Set<string>;
-  pendingFromDateSet: Set<string>;
-};
 
 function normalizeYearState(raw: unknown): YearLessonState {
   const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -222,30 +209,6 @@ function normalizeRecords(raw: unknown): YearLessonRecord[] {
       } as YearLessonRecord;
     })
     .filter((r) => r.weekday && r.room);
-}
-
-function buildDayCandidateIndex(records: YearLessonRecord[], state: YearLessonState): DayCandidateIndex {
-  const weekdaySet = new Set<string>();
-  for (const r of records) {
-    if (r.weekday) weekdaySet.add(r.weekday);
-  }
-
-  const extraDateSet = new Set<string>();
-  for (const e of state.extraEntries) {
-    if (e.date) extraDateSet.add(e.date);
-  }
-
-  const rescheduleToDateSet = new Set<string>();
-  const pendingFromDateSet = new Set<string>();
-  for (const e of state.rescheduleEntries) {
-    if (isPendingRescheduleEntry(e)) {
-      if (e.fromDate) pendingFromDateSet.add(e.fromDate);
-      continue;
-    }
-    if (e.toDate) rescheduleToDateSet.add(e.toDate);
-  }
-
-  return { weekdaySet, extraDateSet, rescheduleToDateSet, pendingFromDateSet };
 }
 
 function feeSystemStartMonth1to12(sheetYear: number): number {
@@ -546,7 +509,6 @@ async function fetchDayTimetablePayloadUncached(
   const perfStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const dateIso = toDayIso(year, month, day);
-  const targetWeekday = weekdayCnFromIsoDate(dateIso);
   const titleDate = `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
   const { regularOnly } = options;
 
@@ -622,16 +584,6 @@ async function fetchDayTimetablePayloadUncached(
   for (const st of studentList) {
     const records = normalizedRecordsById.get(st.id) ?? EMPTY_RECORDS;
     const state = stateById.get(st.id) ?? EMPTY_YEAR_STATE;
-    const index = buildDayCandidateIndex(records, state);
-
-    // 快速剪枝：若該生在這一天不可能有課，跳過整年展開（最耗時）。
-    const hasRegularOnWeekday = targetWeekday ? index.weekdaySet.has(targetWeekday) : records.length > 0;
-    const hasExtraOnDate = index.extraDateSet.has(dateIso);
-    const hasRescheduleToDate = index.rescheduleToDateSet.has(dateIso);
-    const hasPendingFromDate = index.pendingFromDateSet.has(dateIso);
-    if (!hasRegularOnWeekday && !hasExtraOnDate && !hasRescheduleToDate && !hasPendingFromDate) {
-      continue;
-    }
 
     const studentDisplayName = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
@@ -791,7 +743,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v8"],
+  ["day-timetable-payload-v9"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

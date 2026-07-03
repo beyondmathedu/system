@@ -128,3 +128,24 @@ export function toDayIso(y: number, m: number, d: number) {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+/** Weekday 一–日 for a calendar date in Hong Kong. */
+export function weekdayCnFromIsoDateHk(dateIso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
+  if (!m) return "";
+  const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00+08:00`);
+  const short = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Hong_Kong",
+    weekday: "short",
+  }).format(dt);
+  const map: Record<string, string> = {
+    Mon: "一",
+    Tue: "二",
+    Wed: "三",
+    Thu: "四",
+    Fri: "五",
+    Sat: "六",
+    Sun: "日",
+  };
+  return map[short] ?? "";
+}
+
