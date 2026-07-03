@@ -27,9 +27,9 @@ import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 import {
-  buildSlotPricesInLOrder,
   inferGradeAtSheetEnd,
   isLowerFeeTier,
+  sumSlotTuitionHkdFromDates,
 } from "@/lib/studentFeePricingGrade";
 import {
   DEFAULT_FEE_TIER_SETTINGS,
@@ -213,19 +213,14 @@ function formatHkdWithLessons(amount: number, lessonCount: number | null | undef
   return `$${amt}(${n}堂)`;
 }
 
-/** 已繳欄括號堂數：劃一每堂價合理→已繳÷單價；否則 L 檔有日期堂數；再否則 Expected。 */
+/** 已繳欄括號堂數：L 檔有日期堂數；再否則 Expected。 */
 function tuitionPaidLessonHintCount(params: {
   submitted: number;
-  flatUnit: number;
   monthDatedSlotCount: number;
   expectedSessions: number;
 }): number | null {
-  const { submitted, flatUnit, monthDatedSlotCount, expectedSessions } = params;
+  const { submitted, monthDatedSlotCount, expectedSessions } = params;
   if (submitted <= 0) return null;
-  if (flatUnit >= 50) {
-    const approx = Math.round(submitted / flatUnit);
-    if (approx >= 1 && approx <= 32) return approx;
-  }
   if (monthDatedSlotCount > 0) return monthDatedSlotCount;
   const exp = Math.round(Number(expectedSessions) || 0);
   if (exp > 0 && exp <= 32) return exp;
@@ -247,12 +242,6 @@ function openingBalanceLessonHintCount(params: {
   const approx = Math.round(abs / perLesson);
   if (approx >= 1 && approx <= 32) return approx;
   return null;
-}
-
-/** 忽略資料庫殘值（如 $1）；真正劃一每堂價一般 ≥ $50。 */
-function effectiveFlatLessonUnit(price: number): number {
-  const n = Number(price) || 0;
-  return n >= 50 ? n : 0;
 }
 
 function formatSheetMonthZh(year: number, month1to12: number): string {
@@ -330,18 +319,14 @@ function buildMonthlyArrearsRows(params: {
     });
     const lessonCount = countDatedLessonSlots(dates);
     const hist = historicalMonthFee[m];
-    const flat = effectiveFlatLessonUnit(
-      m === sheetMonth ? currentRecord.lessonUnitPrice : Number(hist?.lessonUnitPrice ?? 0) || 0,
-    );
     const gradeFor = gradeForFeePricing(
       student,
       sheetYear,
       m,
       m === sheetMonth ? currentRecord.feePricingGrade : String(hist?.feePricingGrade ?? ""),
     );
-    const expected = sumSlotTuitionHkd({
+    const expected = sumSlotTuitionHkdFromDates({
       fullLessonDates: dates,
-      flatUnit: flat,
       gradeFor,
       feeTierSettings,
     });
@@ -520,22 +505,6 @@ function feeSystemStartMonth1to12(sheetYear: number): number {
   return sheetYear === LESSON_SYSTEM_START_YEAR ? LESSON_SYSTEM_START_MONTH : 1;
 }
 
-function sumSlotTuitionHkd(params: {
-  fullLessonDates: string[];
-  flatUnit: number;
-  gradeFor: string;
-  feeTierSettings: StudentFeeTierSettings;
-}): number {
-  const { fullLessonDates, gradeFor, feeTierSettings } = params;
-  const flatUnit = effectiveFlatLessonUnit(params.flatUnit);
-  if (flatUnit > 0) {
-    const n = fullLessonDates.filter((d) => String(d ?? "").trim()).length;
-    return n * flatUnit;
-  }
-  const slotPrices = buildSlotPricesInLOrder(fullLessonDates, gradeFor, feeTierSettings);
-  return slotPrices.reduce((a, b) => a + b, 0);
-}
-
 function gradeForFeePricing(
   student: StudentRow,
   sheetYear: number,
@@ -564,7 +533,7 @@ type RecordState = {
   weekday: string;
   expected: number;
   submitted: number;
-  /** 非 0 時：全月每堂同一單價（覆蓋階梯）；0 ＝用全站 F1–F3 / F4–F6 階梯。 */
+  /** Legacy DB column; tuition always uses global F1–F3 / F4–F6 tiers. */
   lessonUnitPrice: number;
   /** 空字串＝自動（按該月最後一日反推年級 + 9·1 升級）；否則 F1–F6 鎖定計價年級。 */
   feePricingGrade: string;
@@ -931,7 +900,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
         year: sheetYear,
         month: Number(sheetMonth),
         submittedAmount: Number(merged.submitted ?? 0) || 0,
-        lessonUnitPrice: Number(merged.lessonUnitPrice ?? 0) || 0,
+        lessonUnitPrice: 0,
         feePricingGrade: String(merged.feePricingGrade ?? ""),
         remarks: String(merged.remarks ?? ""),
         makeupRemarks: String(merged.makeupRemarks ?? ""),
@@ -1290,8 +1259,11 @@ export default function StudentsLessonTimeFeeRecordPage() {
       const r = recordsByStudentId[st.id] ?? defaultRecordState();
       const dates = fullLessonDatesByStudentId[st.id] ?? [];
       const gradeFor = gradeForFeePricing(st, sheetYear, currentMonth, r.feePricingGrade);
-      const flat = effectiveFlatLessonUnit(Number(r.lessonUnitPrice) || 0);
-      out[st.id] = sumSlotTuitionHkd({ fullLessonDates: dates, flatUnit: flat, gradeFor, feeTierSettings });
+      out[st.id] = sumSlotTuitionHkdFromDates({
+        fullLessonDates: dates,
+        gradeFor,
+        feeTierSettings,
+      });
     }
     return out;
   }, [
@@ -1321,9 +1293,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
           legacyWeekdays,
         });
         const hist = historicalMonthFeeByStudentId[st.id]?.[m];
-        const flat = effectiveFlatLessonUnit(Number(hist?.lessonUnitPrice) || 0);
         const gradeFor = gradeForFeePricing(st, sheetYear, m, hist?.feePricingGrade ?? "");
-        sum += sumSlotTuitionHkd({ fullLessonDates: dates, flatUnit: flat, gradeFor, feeTierSettings });
+        sum += sumSlotTuitionHkdFromDates({ fullLessonDates: dates, gradeFor, feeTierSettings });
       }
       out[st.id] = sum;
     }
@@ -1945,6 +1916,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                 <p className="mt-2 text-[12.1px] leading-snug text-slate-600">
                   <span className="font-semibold">Save</span> stores in this browser; Supabase syncs too if{" "}
                   <code className="rounded bg-slate-200/80 px-0.5">app_student_fee_tier_settings</code> exists.
+                  All students use these tiers (F1–F3 / F4–F6, Normal / Discount split); per-student flat prices are not used.
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
                   <label className="flex min-w-0 items-center gap-1.5">
@@ -2199,10 +2171,8 @@ const StudentFeeRow = memo(function StudentFeeRow({
   );
   const makeupDisplayN = makeupLiveCount > 0 ? makeupLiveCount : remedialCountDb;
 
-  const flatUnit = effectiveFlatLessonUnit(Number(record.lessonUnitPrice) || 0);
   const paidLessonHintCount = tuitionPaidLessonHintCount({
     submitted: record.submitted,
-    flatUnit,
     monthDatedSlotCount: thisMonthDatedSlotCount,
     expectedSessions: record.expected,
   });

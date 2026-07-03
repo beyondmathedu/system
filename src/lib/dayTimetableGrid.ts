@@ -35,9 +35,8 @@ import {
 } from "@/lib/dayTimetableShared";
 import { normalizeStudentId } from "@/lib/studentId";
 import {
-  effectiveFlatLessonUnit,
   gradeForFeePricing,
-  isLowerFeeTier,
+  sumSlotTuitionHkdByLessonCount,
 } from "@/lib/studentFeePricingGrade";
 import {
   loadStudentFeeTierSettingsAdmin,
@@ -239,26 +238,6 @@ function buildBaseLessonCountsByWeekdayForMonth(year: number, month1to12: number
   return out;
 }
 
-function sumSlotTuitionHkd(params: {
-  lessonCount: number;
-  flatUnit: number;
-  gradeFor: string;
-  feeTierSettings: StudentFeeTierSettings;
-}): number {
-  const { lessonCount, gradeFor, feeTierSettings } = params;
-  if (!Number.isFinite(lessonCount) || lessonCount <= 0) return 0;
-  const flatUnit = effectiveFlatLessonUnit(params.flatUnit);
-  if (flatUnit > 0) {
-    return lessonCount * flatUnit;
-  }
-  const br = Math.max(1, Math.floor(feeTierSettings.lesson_tier_break_after || 8));
-  const low = isLowerFeeTier(gradeFor);
-  const hi = low ? feeTierSettings.f_low_tier_1_8 : feeTierSettings.f_high_tier_1_8;
-  const lo = low ? feeTierSettings.f_low_tier_9_plus : feeTierSettings.f_high_tier_9_plus;
-  if (lessonCount <= br) return lessonCount * hi;
-  return br * hi + (lessonCount - br) * lo;
-}
-
 function getActiveWeekdaysForDate(records: YearLessonRecord[], dateIso: string): string[] {
   const normalized = records.map((r) => ({
     ...r,
@@ -373,9 +352,8 @@ function buildFeePaymentToneByStudentId(
         weekdays.reduce((sum, wd) => sum + (base[wd] ?? 0), 0) + (extraCountByMonth.get(m) ?? 0);
       const pricing = pricingFor(key, refYear, m);
       const gradeFor = gradeForFeePricing(String(st.grade ?? ""), refYear, m, pricing.feePricingGrade);
-      const expected = sumSlotTuitionHkd({
+      const expected = sumSlotTuitionHkdByLessonCount({
         lessonCount,
-        flatUnit: pricing.lessonUnitPrice,
         gradeFor,
         feeTierSettings,
       });
@@ -393,9 +371,8 @@ function buildFeePaymentToneByStudentId(
       refMonth,
       currentPricing.feePricingGrade,
     );
-    const currentExpected = sumSlotTuitionHkd({
+    const currentExpected = sumSlotTuitionHkdByLessonCount({
       lessonCount: currentLessonCount,
-      flatUnit: currentPricing.lessonUnitPrice,
       gradeFor: currentGradeFor,
       feeTierSettings,
     });
@@ -743,7 +720,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v10"],
+  ["day-timetable-payload-v11"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

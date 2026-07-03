@@ -51,12 +51,6 @@ export function inferGradeAtSheetEnd(currentGrade: string, sheetYear: number, sh
   return `F${level}`;
 }
 
-/** 忽略資料庫殘值（如 $1）；真正劃一每堂價一般 ≥ $50。 */
-export function effectiveFlatLessonUnit(price: number): number {
-  const n = Number(price) || 0;
-  return n >= 50 ? n : 0;
-}
-
 export function gradeForFeePricing(
   currentGrade: string,
   sheetYear: number,
@@ -67,14 +61,11 @@ export function gradeForFeePricing(
   return /^F[1-6]$/.test(fgRaw) ? fgRaw : inferGradeAtSheetEnd(currentGrade, sheetYear, sheetMonth);
 }
 
-/** 劃一每堂價：先讀 fee record，否則按年級 tier 第 1–8 堂價。 */
-export function flatLessonUnitPrice(
-  storedUnitPrice: number | null | undefined,
+/** F1–F3 tier 第 1–N 堂 Normal 價（N = lesson_tier_break_after）；供提示用。 */
+export function tierNormalLessonUnitPrice(
   gradeForPricing: string,
   tier: StudentFeeTierSettings,
 ): number {
-  const flat = effectiveFlatLessonUnit(Number(storedUnitPrice) || 0);
-  if (flat > 0) return flat;
   return isLowerFeeTier(gradeForPricing) ? tier.f_low_tier_1_8 : tier.f_high_tier_1_8;
 }
 
@@ -104,4 +95,34 @@ export function buildSlotPricesInLOrder(
     out.push(lessonIdx <= br ? hi : lo);
   }
   return out;
+}
+
+/** Sum tuition for dated slots in L-order using global F1–F3 / F4–F6 tier settings. */
+export function sumSlotTuitionHkdFromDates(params: {
+  fullLessonDates: string[];
+  gradeFor: string;
+  feeTierSettings: StudentFeeTierSettings;
+}): number {
+  const slotPrices = buildSlotPricesInLOrder(
+    params.fullLessonDates,
+    params.gradeFor,
+    params.feeTierSettings,
+  );
+  return slotPrices.reduce((a, b) => a + b, 0);
+}
+
+/** Sum tuition when only lesson count is known (weekday estimate, Zoho qty, etc.). */
+export function sumSlotTuitionHkdByLessonCount(params: {
+  lessonCount: number;
+  gradeFor: string;
+  feeTierSettings: StudentFeeTierSettings;
+}): number {
+  const { lessonCount, gradeFor, feeTierSettings } = params;
+  if (!Number.isFinite(lessonCount) || lessonCount <= 0) return 0;
+  const br = Math.max(1, Math.floor(feeTierSettings.lesson_tier_break_after || 8));
+  const low = isLowerFeeTier(gradeFor);
+  const hi = low ? feeTierSettings.f_low_tier_1_8 : feeTierSettings.f_high_tier_1_8;
+  const lo = low ? feeTierSettings.f_low_tier_9_plus : feeTierSettings.f_high_tier_9_plus;
+  if (lessonCount <= br) return lessonCount * hi;
+  return br * hi + (lessonCount - br) * lo;
 }

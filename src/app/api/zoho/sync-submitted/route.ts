@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getViewerContext } from "@/lib/authz";
-import { flatLessonUnitPrice, gradeForFeePricing } from "@/lib/studentFeePricingGrade";
+import { gradeForFeePricing, sumSlotTuitionHkdByLessonCount } from "@/lib/studentFeePricingGrade";
 import { loadStudentFeeTierSettingsAdmin } from "@/lib/studentFeeTierSettings";
 import { FEE_RECORD_SELECT_PRICING } from "@/lib/studentMonthlyFeeRecordsCompat";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -416,7 +416,6 @@ export async function POST(request: Request) {
 
     const feeTierSettings = await loadStudentFeeTierSettingsAdmin(admin);
     const amountByStudentMonth = new Map<string, number>();
-    const unitPriceByKey = new Map<string, number>();
 
     const studentIds = Array.from(
       new Set(Array.from(lessonsByStudentMonth.keys()).map((k) => k.split(":")[0])),
@@ -463,9 +462,9 @@ export async function POST(request: Request) {
         month,
         ex?.fee_pricing_grade ?? "",
       );
-      const unitPrice = flatLessonUnitPrice(ex?.lesson_unit_price, gradeFor, feeTierSettings);
-      unitPriceByKey.set(key, unitPrice);
-      const submitted = Math.round(lessonCount * unitPrice * 100) / 100;
+      const submitted = Math.round(
+        sumSlotTuitionHkdByLessonCount({ lessonCount, gradeFor, feeTierSettings }) * 100,
+      ) / 100;
       amountByStudentMonth.set(key, submitted);
     }
 
@@ -509,12 +508,11 @@ export async function POST(request: Request) {
         totalLineItems,
         parsedMonthLineItems,
         skippedZeroQuantity,
-        unitPriceSamples: Array.from(unitPriceByKey.entries())
+        tierAmountSamples: Array.from(amountByStudentMonth.entries())
           .slice(0, 5)
-          .map(([k, unit]) => {
+          .map(([k, amt]) => {
             const lessons = lessonsByStudentMonth.get(k) ?? 0;
-            const amt = amountByStudentMonth.get(k) ?? 0;
-            return `${k}:${lessons}堂×$${unit}=$${amt}`;
+            return `${k}:${lessons}堂=$${amt}`;
           }),
         detailCalls,
         skippedDetailByLimit,

@@ -12,7 +12,7 @@ import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 import type { HomeReminderRow } from "@/app/home/HomeReminderPanel";
 import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
 import { loadStudentFeeTierSettingsAdmin, type StudentFeeTierSettings } from "@/lib/studentFeeTierSettings";
-import { effectiveFlatLessonUnit, gradeForFeePricing, isLowerFeeTier } from "@/lib/studentFeePricingGrade";
+import { gradeForFeePricing, sumSlotTuitionHkdByLessonCount } from "@/lib/studentFeePricingGrade";
 
 export type HomeWeekBirthdayItem = {
   id: string;
@@ -158,24 +158,6 @@ function buildBaseLessonCountsByWeekdayForMonth(year: number, month1to12: number
     if (cn) out[cn] += 1;
   }
   return out;
-}
-
-function sumMonthTuitionByCount(params: {
-  lessonCount: number;
-  flatUnit: number;
-  gradeFor: string;
-  feeTierSettings: StudentFeeTierSettings;
-}): number {
-  const { lessonCount, gradeFor, feeTierSettings } = params;
-  if (!Number.isFinite(lessonCount) || lessonCount <= 0) return 0;
-  const flatUnit = effectiveFlatLessonUnit(params.flatUnit);
-  if (flatUnit > 0) return lessonCount * flatUnit;
-  const br = Math.max(1, Math.floor(feeTierSettings.lesson_tier_break_after || 8));
-  const low = isLowerFeeTier(gradeFor);
-  const hi = low ? feeTierSettings.f_low_tier_1_8 : feeTierSettings.f_high_tier_1_8;
-  const lo = low ? feeTierSettings.f_low_tier_9_plus : feeTierSettings.f_high_tier_9_plus;
-  if (lessonCount <= br) return lessonCount * hi;
-  return br * hi + (lessonCount - br) * lo;
 }
 
 function getActiveWeekdaysForDate(records: YearLessonRecord[], dateIso: string): string[] {
@@ -337,9 +319,8 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       const lessonCount = weekdays.reduce((sum, wd) => sum + (baseCounts[wd] ?? 0), 0) + extraCount;
       const pricing = pricingByStudentId.get(student.id) ?? { lessonUnitPrice: 0, feePricingGrade: "" };
       const gradeFor = gradeForFeePricing("", year, month, pricing.feePricingGrade);
-      const expected = sumMonthTuitionByCount({
+      const expected = sumSlotTuitionHkdByLessonCount({
         lessonCount,
-        flatUnit: pricing.lessonUnitPrice,
         gradeFor,
         feeTierSettings,
       });
