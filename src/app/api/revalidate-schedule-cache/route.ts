@@ -5,6 +5,7 @@ import {
   SCHEDULE_CACHE_TAG_AGGREGATES,
   SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
   SCHEDULE_CACHE_TAG_HOME,
+  SCHEDULE_CACHE_TAG_STUDENT_PROGRESS,
 } from "@/lib/scheduleCacheTags";
 
 /**
@@ -23,6 +24,7 @@ export async function POST() {
   revalidateTag(SCHEDULE_CACHE_TAG_AGGREGATES, "max");
   revalidateTag(SCHEDULE_CACHE_TAG_DAY_TIMETABLE, "max");
   revalidateTag(SCHEDULE_CACHE_TAG_HOME, "max");
+  revalidateTag(SCHEDULE_CACHE_TAG_STUDENT_PROGRESS, "max");
 
   return NextResponse.json({ ok: true });
 }

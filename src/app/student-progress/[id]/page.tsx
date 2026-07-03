@@ -10,6 +10,18 @@ import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import {
+  CUT_OFF_SHEET,
+  DEFAULT_YEAR_GRADE_THRESHOLDS,
+  F6_BY_YEARS_SHEET,
+  getCurrentGradeSheetNames,
+  parseCutOffThresholds,
+  parseGradeLevel,
+  parseYear,
+  syncF6ByYearsWithCutOff,
+  trimCutOffSheet,
+  type ProgressSheet,
+} from "@/lib/studentProgressWorkbook";
 
 type StudentSummary = {
   id: string;
@@ -20,12 +32,6 @@ type StudentSummary = {
   school: string;
   textbookPublisher: string;
   mathLanguage: string;
-};
-
-type ProgressSheet = {
-  name: string;
-  headers: string[];
-  rows: string[][];
 };
 
 type ProgressSelectionMap = Record<string, string>;
@@ -48,38 +54,6 @@ const SELECTABLE_HEADERS = new Set([
 type SheetColumn =
   | { kind: "normal"; header: string; colIndex: number }
   | { kind: "textbookCombined"; headerEn: string; headerZh: string; colIndexEn: number; colIndexZh: number };
-
-function parseGradeLevel(grade: string): number | null {
-  const m = grade.trim().match(/^F\.?\s*([1-6])$/i);
-  if (!m) return null;
-  const level = Number(m[1]);
-  return Number.isFinite(level) ? level : null;
-}
-
-function getCumulativeSheetNames(level: number): string[] {
-  const base: string[] = [];
-  if (level >= 1) base.push("F1");
-  if (level >= 2) base.push("F2");
-  if (level >= 3) base.push("F3");
-  if (level >= 4) base.push("F4");
-  if (level >= 5) base.push("F5");
-  if (level >= 6) base.push("F6 By Topics", "F6 By Years", "F6 學校mock卷", "Cut Off", "Exam Schedule");
-  return base;
-}
-
-function getCurrentGradeSheetNames(level: number): string[] {
-  if (level <= 1) return ["F1"];
-  if (level === 2) return ["F2"];
-  if (level === 3) return ["F3"];
-  if (level === 4) return ["F4"];
-  if (level === 5) return ["F5"];
-  return ["F6 By Topics", "F6 By Years", "F6 學校mock卷"];
-}
-
-function cellToText(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  return String(value).trim();
-}
 
 function normalizeHeaderName(input: string): string {
   return input
@@ -135,31 +109,7 @@ function parseNumberOrZero(value: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function parseYear(value: string): number | null {
-  const m = value.trim().match(/^\d{4}$/);
-  if (!m) return null;
-  const y = Number.parseInt(m[0], 10);
-  return Number.isFinite(y) ? y : null;
-}
-
 const GRADE_LABELS = ["-", "2", "3", "4", "5", "5*", "5**"] as const;
-const DEFAULT_YEAR_GRADE_THRESHOLDS: Record<number, number[]> = {
-  2026: [0, 33, 49, 62, 74, 83, 90],
-  2025: [0, 33, 49, 62, 74, 83, 90],
-  2024: [0, 33, 51, 76, 83, 89, 95],
-  2023: [0, 33, 54, 59, 74, 82, 90],
-  2022: [0, 49, 61, 68, 80, 87, 94],
-  2021: [0, 36, 55, 62, 76, 84, 90],
-  2020: [0, 36, 61, 62, 79, 87, 94],
-  2019: [0, 36, 53, 65, 76, 84, 90],
-  2018: [0, 36, 52, 63, 76, 83, 90],
-  2017: [0, 36, 55, 67, 82, 87, 93],
-  2016: [0, 36, 59, 66, 78, 86, 92],
-  2015: [0, 36, 52, 65, 80, 87, 93],
-  2014: [0, 36, 50, 65, 79, 87, 92],
-  2013: [0, 36, 52, 61, 74, 81, 89],
-  2012: [0, 36, 58, 67, 79, 82, 89],
-};
 
 function findNormalColumn(columns: SheetColumn[], headerNames: string[]): SheetColumn | undefined {
   const wanted = new Set(headerNames.map((name) => normalizeHeaderName(name)));
@@ -235,13 +185,6 @@ function lookupGradeByThresholds(
   return GRADE_LABELS[idx] ?? "-";
 }
 
-function parsePercentFromCutoffCell(value: string): number | null {
-  const m = value.match(/\((\d+(?:\.\d+)?)\)/);
-  if (!m) return null;
-  const n = Number.parseFloat(m[1]);
-  return Number.isFinite(n) ? n : null;
-}
-
 function loadCutOffOverride(): ProgressSheet | null {
   if (typeof window === "undefined") return null;
   try {
@@ -267,36 +210,6 @@ function loadCutOffOverride(): ProgressSheet | null {
 function saveCutOffOverride(sheet: ProgressSheet) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(CUT_OFF_STORAGE_KEY, JSON.stringify(sheet));
-}
-
-function trimCutOffSheet(sheet: ProgressSheet): ProgressSheet {
-  const rowByLevel = new Map<string, string[]>();
-  const extraLevelRows: string[][] = [];
-  for (const row of sheet.rows) {
-    const level = String(row[0] ?? "").trim();
-    if (!level) continue;
-    if (CUT_OFF_FIXED_LEVELS.includes(level as (typeof CUT_OFF_FIXED_LEVELS)[number])) {
-      rowByLevel.set(level, row);
-    } else {
-      extraLevelRows.push(row);
-    }
-  }
-  const rows = [
-    ...CUT_OFF_FIXED_LEVELS.map((level) => {
-      const existing = rowByLevel.get(level);
-      if (existing) {
-        while (existing.length < sheet.headers.length) existing.push("");
-        return existing;
-      }
-      return Array.from({ length: sheet.headers.length }, (_, index) => (index === 0 ? level : ""));
-    }),
-    ...extraLevelRows.map((row) => {
-      const next = [...row];
-      while (next.length < sheet.headers.length) next.push("");
-      return next;
-    }),
-  ];
-  return { ...sheet, rows };
 }
 
 type CutOffDisplayModel = {
@@ -333,95 +246,6 @@ function applyCutOffDisplayCellUpdate(
     return next;
   });
   return { ...sheet, rows };
-}
-
-function extractCutOffYears(sheet: ProgressSheet): number[] {
-  const years: number[] = [];
-  for (let col = 1; col < sheet.headers.length; col += 1) {
-    const yearMatch = String(sheet.headers[col] ?? "").trim().match(/^(\d{4})/);
-    if (!yearMatch) continue;
-    const year = Number.parseInt(yearMatch[1], 10);
-    if (Number.isFinite(year)) years.push(year);
-  }
-  return years;
-}
-
-function findHeaderColumnIndex(headers: string[], names: string[]): number {
-  const wanted = new Set(names.map((name) => normalizeHeaderName(name)));
-  return headers.findIndex((header) => wanted.has(normalizeHeaderName(header)));
-}
-
-function buildBlankF6ByYearsRow(headers: string[], dseColIndex: number, year: number): string[] {
-  const row = Array.from({ length: headers.length }, () => "");
-  row[dseColIndex] = String(year);
-  const paper1Col = findHeaderColumnIndex(headers, ["paper 1"]);
-  const percentCol = findHeaderColumnIndex(headers, ["%"]);
-  const gradeCol = headers.findIndex((header) => normalizeHeaderName(header).startsWith("grade"));
-  if (paper1Col >= 0) row[paper1Col] = "0";
-  if (percentCol >= 0) row[percentCol] = "0";
-  if (gradeCol >= 0) row[gradeCol] = "-";
-  return row;
-}
-
-function syncF6ByYearsWithCutOff(f6Sheet: ProgressSheet, cutOffSheet: ProgressSheet): ProgressSheet {
-  const dseColIndex = findHeaderColumnIndex(f6Sheet.headers, ["dse"]);
-  if (dseColIndex < 0) return f6Sheet;
-
-  const cutOffYears = extractCutOffYears(cutOffSheet);
-  const rowByYear = new Map<number, string[]>();
-  const trailingRows: string[][] = [];
-
-  for (const row of f6Sheet.rows) {
-    const year = parseYear(String(row[dseColIndex] ?? ""));
-    if (year !== null) {
-      rowByYear.set(year, [...row]);
-      continue;
-    }
-    if (isLegendDataRow(row)) {
-      trailingRows.push([...row]);
-    }
-  }
-
-  const syncedYearRows = cutOffYears.map((year, index) => {
-    const existing = rowByYear.get(year) ?? buildBlankF6ByYearsRow(f6Sheet.headers, dseColIndex, year);
-    const next = [...existing];
-    while (next.length < f6Sheet.headers.length) next.push("");
-    next[dseColIndex] = String(year);
-    next[0] = index === 0 ? "F.6" : "";
-    return next;
-  });
-
-  return { ...f6Sheet, rows: [...syncedYearRows, ...trailingRows] };
-}
-
-function parseCutOffThresholds(rows: string[][]): Record<number, number[]> {
-  if (!rows.length) return {};
-  const header = rows[0] ?? [];
-  const labelToRow = new Map<string, string[]>();
-  for (let i = 1; i < rows.length; i += 1) {
-    const row = rows[i] ?? [];
-    const label = String(row[0] ?? "").trim();
-    if (label) labelToRow.set(label, row);
-  }
-
-  const out: Record<number, number[]> = {};
-  for (let c = 1; c < header.length; c += 1) {
-    const yearText = String(header[c] ?? "").trim();
-    const yearMatch = yearText.match(/^(\d{4})/);
-    if (!yearMatch) continue;
-    const year = Number.parseInt(yearMatch[1], 10);
-    if (!Number.isFinite(year)) continue;
-
-    const p2 = parsePercentFromCutoffCell(String((labelToRow.get("2") ?? [])[c] ?? ""));
-    const p3 = parsePercentFromCutoffCell(String((labelToRow.get("3") ?? [])[c] ?? ""));
-    const p4 = parsePercentFromCutoffCell(String((labelToRow.get("4") ?? [])[c] ?? ""));
-    const p5 = parsePercentFromCutoffCell(String((labelToRow.get("5") ?? [])[c] ?? ""));
-    const p5s = parsePercentFromCutoffCell(String((labelToRow.get("5*") ?? [])[c] ?? ""));
-    const p5ss = parsePercentFromCutoffCell(String((labelToRow.get("5**") ?? [])[c] ?? ""));
-    if ([p2, p3, p4, p5, p5s, p5ss].some((v) => v === null)) continue;
-    out[year] = [0, p2 as number, p3 as number, p4 as number, p5 as number, p5s as number, p5ss as number];
-  }
-  return out;
 }
 
 function normalizeDateForInput(value: string): string {
@@ -514,9 +338,7 @@ function getPercentInputClass(): string {
   return "border-slate-300 bg-slate-100 text-slate-700";
 }
 
-const CUT_OFF_SHEET = "Cut Off";
 const CUT_OFF_STORAGE_KEY = "beyondmath-student-progress-cutoff";
-const CUT_OFF_FIXED_LEVELS = ["5**", "5*", "5", "4", "3", "2"] as const;
 const CUT_OFF_YEAR_CELL_PAD = "px-2 py-2";
 const CUT_OFF_YEAR_INPUT_CLASS =
   "min-w-[114px] max-w-[114px] rounded-md border border-slate-300 bg-white px-[0.45rem] py-1 text-sm text-slate-800";
@@ -526,7 +348,6 @@ const CUT_OFF_TABLE_BODY_SCROLL_CLASS =
   "min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable_both-edges] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400";
 
 const F6_BY_TOPICS_SHEET = "F6 By Topics";
-const F6_BY_YEARS_SHEET = "F6 By Years";
 const F6_YEARS_FROZEN_COL0_CLASS = "min-w-[4.5rem] max-w-[4.5rem]";
 
 type F6TopicColorKey = "lq-a1" | "lq-a2" | "lq-b" | "lq-a2-b";
@@ -827,72 +648,42 @@ export default function StudentProgressByIdPage() {
 
     void (async () => {
       try {
-        const response = await fetch("/student-progress-beyond-math.xlsx", { cache: "no-store" });
-        if (!response.ok) throw new Error("Workbook not found");
-        const buffer = await response.arrayBuffer();
-        const XLSX = await import("xlsx");
-        const workbook = XLSX.read(buffer, { type: "array" });
-        const wantedSheets = getCumulativeSheetNames(level);
-        const parsed: ProgressSheet[] = [];
+        const res = await fetch(`/api/student-progress/sheets?level=${level}`, {
+          credentials: "same-origin",
+        });
+        if (!res.ok) throw new Error("Progress sheets request failed");
+        const body = (await res.json()) as {
+          ok?: boolean;
+          sheets?: ProgressSheet[];
+          cutOffSheet?: ProgressSheet | null;
+          yearGradeThresholds?: Record<number, number[]>;
+        };
+        if (!body.ok || !Array.isArray(body.sheets)) throw new Error("Invalid progress payload");
 
         const savedCutOff = loadCutOffOverride();
-        const cutOffWorkbookSheet = workbook.Sheets[CUT_OFF_SHEET];
-        let loadedCutOffSheet: ProgressSheet | null = savedCutOff;
-        if (!loadedCutOffSheet && cutOffWorkbookSheet) {
-          const cutOffRows = XLSX.utils
-            .sheet_to_json<(string | number | boolean | null)[]>(cutOffWorkbookSheet, {
-              header: 1,
-              defval: "",
-              blankrows: false,
-            })
-            .map((row) => row.map((v) => cellToText(v)))
-            .filter((row) => row.some((cell) => cell !== ""));
-          if (cutOffRows.length) {
-            loadedCutOffSheet = trimCutOffSheet({
-              name: CUT_OFF_SHEET,
-              headers: cutOffRows[0] ?? [],
-              rows: cutOffRows.slice(1),
-            });
-          }
-        }
-        if (loadedCutOffSheet) {
-          setCutOffSheet(loadedCutOffSheet);
-          const parsedThresholds = parseCutOffThresholds([
-            loadedCutOffSheet.headers,
-            ...loadedCutOffSheet.rows,
-          ]);
-          setYearGradeThresholds({ ...DEFAULT_YEAR_GRADE_THRESHOLDS, ...parsedThresholds });
-        } else {
-          setCutOffSheet(null);
-          setYearGradeThresholds(DEFAULT_YEAR_GRADE_THRESHOLDS);
-        }
-
-        for (const sheetName of wantedSheets) {
-          const sheet = workbook.Sheets[sheetName];
-          if (!sheet) continue;
-          const rawRows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
-            header: 1,
-            defval: "",
-            blankrows: false,
+        const loadedCutOffSheet = savedCutOff ?? body.cutOffSheet ?? null;
+        let sheets = body.sheets;
+        if (savedCutOff) {
+          sheets = body.sheets.map((sheet) => {
+            if (sheet.name === CUT_OFF_SHEET) return savedCutOff;
+            if (sheet.name === F6_BY_YEARS_SHEET) return syncF6ByYearsWithCutOff(sheet, savedCutOff);
+            return sheet;
           });
-          const cleanedRows = rawRows
-            .map((row) => row.map((v) => cellToText(v)))
-            .filter((row) => row.some((cell) => cell !== ""));
-          if (!cleanedRows.length) continue;
-
-          const headers = cleanedRows[0];
-          let rows = cleanedRows.slice(1);
-          if (sheetName === CUT_OFF_SHEET && loadedCutOffSheet) {
-            parsed.push(loadedCutOffSheet);
-            continue;
-          }
-          if (sheetName === F6_BY_YEARS_SHEET && loadedCutOffSheet) {
-            rows = syncF6ByYearsWithCutOff({ name: sheetName, headers, rows }, loadedCutOffSheet).rows;
-          }
-          parsed.push({ name: sheetName, headers, rows });
         }
 
-        if (!cancelled) setProgressSheets(parsed);
+        if (!cancelled) {
+          setProgressSheets(sheets);
+          setCutOffSheet(loadedCutOffSheet);
+          if (loadedCutOffSheet) {
+            const parsedThresholds = parseCutOffThresholds([
+              loadedCutOffSheet.headers,
+              ...loadedCutOffSheet.rows,
+            ]);
+            setYearGradeThresholds({ ...DEFAULT_YEAR_GRADE_THRESHOLDS, ...parsedThresholds });
+          } else {
+            setYearGradeThresholds(body.yearGradeThresholds ?? DEFAULT_YEAR_GRADE_THRESHOLDS);
+          }
+        }
       } catch {
         if (!cancelled) {
           setProgressSheets([]);
