@@ -95,9 +95,10 @@ export default function StudentsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMoreStudents, setHasMoreStudents] = useState(false);
+  const [pageLoading, setPageLoading] = useState(false);
   const [listTotal, setListTotal] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [showAllStudents, setShowAllStudents] = useState(false);
   const [suggestedNextId, setSuggestedNextId] = useState("00001");
   const [dataError, setDataError] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
@@ -166,66 +167,99 @@ export default function StudentsPage() {
     sortedStudents.length > 0 &&
     sortedStudents.every((student) => selectedIdSet.has(student.id));
 
-  const fetchStudentsPage = useCallback(async (options: { offset: number; append: boolean }) => {
-    const { offset, append } = options;
-    if (append) setLoadingMore(true);
-    else {
-      setIsLoading(true);
-      setDataError("");
+  const totalPages = Math.max(1, Math.ceil(listTotal / STUDENTS_PAGE_SIZE));
+
+  const VISIBLE_PAGE_COUNT = 5;
+
+  const pageNumberItems = useMemo(() => {
+    if (totalPages <= VISIBLE_PAGE_COUNT) {
+      return Array.from({ length: VISIBLE_PAGE_COUNT }, (_, i) => i + 1);
     }
+    let start = Math.max(1, currentPage - 2);
+    if (start + VISIBLE_PAGE_COUNT - 1 > totalPages) {
+      start = totalPages - VISIBLE_PAGE_COUNT + 1;
+    }
+    return Array.from({ length: VISIBLE_PAGE_COUNT }, (_, i) => start + i);
+  }, [currentPage, totalPages]);
 
-    try {
-      const params = new URLSearchParams({
-        offset: String(offset),
-        limit: String(STUDENTS_PAGE_SIZE),
-        status: statusFilter,
-      });
-      const q = query.trim();
-      if (q) params.set("q", q);
-
-      const res = await fetch(`/api/students/list?${params.toString()}`, { credentials: "same-origin" });
-      const body = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        students?: StudentRow[];
-        visibility?: Record<string, string>;
-        total?: number;
-        hasMore?: boolean;
-      };
-
-      if (!res.ok || !body.ok) {
-        throw new Error(body.error ?? "Failed to load student records.");
-      }
-
-      const mapped = (body.students ?? []).map(mapRowToStudent);
-      setStudents((prev) => {
-        if (!append) return mapped;
-        const seen = new Set(prev.map((s) => s.id));
-        const merged = [...prev];
-        for (const row of mapped) {
-          if (!seen.has(row.id)) merged.push(row);
+  const fetchStudentsPage = useCallback(
+    async (options: { page?: number; showAll?: boolean }) => {
+      const page = Math.max(1, options.page ?? 1);
+      const showAll = Boolean(options.showAll);
+        if (showAll) {
+          setIsLoading(true);
+          setShowAllStudents(true);
+          setCurrentPage(1);
+        } else {
+          setShowAllStudents(false);
+          setCurrentPage(page);
+          if (page === 1) setIsLoading(true);
+          else setPageLoading(true);
         }
-        return merged;
-      });
-      setSelectedIds((prev) => {
-        const idSet = new Set(mapped.map((s) => s.id));
-        return append ? prev : prev.filter((id) => idSet.has(id));
-      });
+      setDataError("");
 
-      setListTotal(body.total ?? mapped.length);
-      setHasMoreStudents(Boolean(body.hasMore));
-    } catch (e) {
-      setDataError(
-        e instanceof Error ? e.message : "Failed to load student records. Please check your configuration.",
-      );
-    } finally {
-      setIsLoading(false);
-      setLoadingMore(false);
-    }
-  }, [query, statusFilter]);
+      try {
+        const q = query.trim();
+        const fetchBatch = async (offset: number, limit: number) => {
+          const params = new URLSearchParams({
+            offset: String(offset),
+            limit: String(limit),
+            status: statusFilter,
+          });
+          if (q) params.set("q", q);
+          const res = await fetch(`/api/students/list?${params.toString()}`, { credentials: "same-origin" });
+          const body = (await res.json()) as {
+            ok?: boolean;
+            error?: string;
+            students?: StudentRow[];
+            total?: number;
+            hasMore?: boolean;
+          };
+          if (!res.ok || !body.ok) {
+            throw new Error(body.error ?? "Failed to load student records.");
+          }
+          return body;
+        };
+
+        if (showAll) {
+          const merged: Student[] = [];
+          let offset = 0;
+          let total = 0;
+          let hasMore = true;
+          while (hasMore) {
+            const body = await fetchBatch(offset, 200);
+            const mapped = (body.students ?? []).map(mapRowToStudent);
+            merged.push(...mapped);
+            total = body.total ?? merged.length;
+            hasMore = Boolean(body.hasMore) && mapped.length > 0;
+            offset += mapped.length;
+            if (!mapped.length) break;
+          }
+          setStudents(merged);
+          setSelectedIds((prev) => prev.filter((id) => merged.some((s) => s.id === id)));
+          setListTotal(total || merged.length);
+          return;
+        }
+
+        const body = await fetchBatch((page - 1) * STUDENTS_PAGE_SIZE, STUDENTS_PAGE_SIZE);
+        const mapped = (body.students ?? []).map(mapRowToStudent);
+        setStudents(mapped);
+        setSelectedIds((prev) => prev.filter((id) => mapped.some((s) => s.id === id)));
+        setListTotal(body.total ?? mapped.length);
+      } catch (e) {
+        setDataError(
+          e instanceof Error ? e.message : "Failed to load student records. Please check your configuration.",
+        );
+      } finally {
+        setIsLoading(false);
+        setPageLoading(false);
+      }
+    },
+    [query, statusFilter],
+  );
 
   async function reloadStudentsList() {
-    await fetchStudentsPage({ offset: 0, append: false });
+    await fetchStudentsPage({ page: showAllStudents ? 1 : currentPage, showAll: showAllStudents });
     try {
       setSuggestedNextId(await fetchNextStudentIdFromDb());
     } catch {
@@ -233,14 +267,9 @@ export default function StudentsPage() {
     }
   }
 
-  async function loadMoreStudents() {
-    if (loadingMore || !hasMoreStudents) return;
-    await fetchStudentsPage({ offset: students.length, append: true });
-  }
-
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void fetchStudentsPage({ offset: 0, append: false });
+      void fetchStudentsPage({ page: 1, showAll: false });
     }, STUDENTS_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [fetchStudentsPage, query, statusFilter]);
@@ -824,20 +853,77 @@ export default function StudentsPage() {
           {!isLoading && sortedStudents.length > 0 ? (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-4">
               <p className="text-sm text-slate-600">
-                Showing {sortedStudents.length}
-                {listTotal > sortedStudents.length ? ` of ${listTotal}+` : listTotal ? ` of ${listTotal}` : ""}{" "}
-                students
+                {showAllStudents ? (
+                  <>Showing all {sortedStudents.length} students</>
+                ) : (
+                  <>
+                    Showing {(currentPage - 1) * STUDENTS_PAGE_SIZE + 1}–
+                    {Math.min(currentPage * STUDENTS_PAGE_SIZE, listTotal || sortedStudents.length)} of{" "}
+                    {listTotal || sortedStudents.length} students
+                  </>
+                )}
               </p>
-              {hasMoreStudents ? (
-                <button
-                  type="button"
-                  disabled={loadingMore}
-                  onClick={() => void loadMoreStudents()}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                >
-                  {loadingMore ? "Loading…" : "Load more"}
-                </button>
-              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                {showAllStudents ? (
+                  <button
+                    type="button"
+                    disabled={pageLoading}
+                    onClick={() => void fetchStudentsPage({ page: 1, showAll: false })}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    Back to pages
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={pageLoading || listTotal <= STUDENTS_PAGE_SIZE}
+                      onClick={() => void fetchStudentsPage({ showAll: true })}
+                      className="rounded-md border border-[#1d76c2]/30 bg-[#1d76c2]/5 px-3 py-1.5 text-sm font-semibold text-[#1d76c2] hover:bg-[#1d76c2]/10 disabled:opacity-60"
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pageLoading || currentPage <= 1}
+                      onClick={() => void fetchStudentsPage({ page: currentPage - 1 })}
+                      aria-label="Previous page"
+                      className="min-w-[2rem] rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      &lt;
+                    </button>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {pageNumberItems.map((page) => {
+                        const disabled = page > totalPages;
+                        return (
+                          <button
+                            key={page}
+                            type="button"
+                            disabled={pageLoading || disabled}
+                            onClick={() => void fetchStudentsPage({ page })}
+                            className={`min-w-[2rem] rounded-md border px-2 py-1.5 text-sm font-semibold tabular-nums disabled:cursor-not-allowed disabled:opacity-40 ${
+                              page === currentPage
+                                ? "border-[#1d76c2] bg-[#1d76c2] text-white"
+                                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={pageLoading || currentPage >= totalPages}
+                      onClick={() => void fetchStudentsPage({ page: currentPage + 1 })}
+                      aria-label="Next page"
+                      className="min-w-[2rem] rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      &gt;
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           ) : null}
         </div>

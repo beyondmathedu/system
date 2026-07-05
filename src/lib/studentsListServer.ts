@@ -115,19 +115,17 @@ export async function listStudentsForPage(
     };
   }
 
-  // Status filter uses grade + manual visibility — scan DB in chunks until page is filled.
-  const manualInactiveEffectiveById: Record<string, string> = {};
+  // Status filter uses grade + manual visibility — scan full list, then paginate.
+  const manualInactiveEffectiveById = await loadAllManualInactiveMap(supabase);
   const matched: StudentsListRow[] = [];
   let scanOffset = 0;
-  const scanChunk = Math.max(limit * 3, 120);
-  let dbExhausted = false;
+  const scanChunk = 200;
 
-  while (matched.length < offset + limit) {
+  while (true) {
     let chunkQuery = supabase
       .from("students")
       .select(
         "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language",
-        scanOffset === 0 ? { count: "exact" } : undefined,
       )
       .order("id", { ascending: true })
       .range(scanOffset, scanOffset + scanChunk - 1);
@@ -151,36 +149,46 @@ export async function listStudentsForPage(
     if (error) throw new Error(error.message);
 
     const chunk = (data ?? []) as StudentsListRow[];
-    if (!chunk.length) {
-      dbExhausted = true;
-      break;
-    }
-
-    const ids = chunk.map((r) => r.id).filter(Boolean);
-    const chunkInactive = await loadManualInactiveMap(supabase, ids);
-    Object.assign(manualInactiveEffectiveById, chunkInactive);
+    if (!chunk.length) break;
 
     for (const row of chunk) {
       if (!studentMatchesStatus(row, manualInactiveEffectiveById, status, todayHkIso, year)) continue;
       matched.push(row);
     }
 
-    if (chunk.length < scanChunk) {
-      dbExhausted = true;
-      break;
-    }
+    if (chunk.length < scanChunk) break;
     scanOffset += scanChunk;
   }
 
+  const total = matched.length;
   const pageRows = matched.slice(offset, offset + limit);
-  const hasMore = !dbExhausted || matched.length > offset + limit;
 
   return {
     rows: pageRows,
-    total: matched.length,
-    hasMore,
+    total,
+    hasMore: offset + pageRows.length < total,
     manualInactiveEffectiveById,
   };
+}
+
+async function loadAllManualInactiveMap(
+  supabase: SupabaseClient,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const { data, error } = await supabase
+    .from("student_visibility_modes")
+    .select("student_id, mode, effective_date");
+
+  if (error) throw new Error(error.message);
+
+  for (const row of data ?? []) {
+    const mode = String((row as { mode?: string }).mode ?? "").toLowerCase();
+    if (mode !== "inactive") continue;
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    const eff = String((row as { effective_date?: string }).effective_date ?? "");
+    if (sid && eff) out[sid] = eff;
+  }
+  return out;
 }
 
 async function loadManualInactiveMap(
