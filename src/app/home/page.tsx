@@ -151,6 +151,7 @@ export default async function HomeLandingPage() {
     unpaidRows,
     reschedulePendingRows,
     pendingLeaveRows,
+    inactiveReturnRows,
     priorMakeupMonthLabel,
     isMonthEndMakeupReminder,
     daysLeftInMonth,
@@ -272,7 +273,7 @@ export default async function HomeLandingPage() {
             </section>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 p-6 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-2">
             <HomeReminderPanel
               title={`未交學費（${month} 月）· ${unpaidRows.length} 人`}
               titleClassName="text-rose-900"
@@ -327,6 +328,22 @@ export default async function HomeLandingPage() {
               rows={pendingLeaveRows}
               emptyTitle={`目前沒有 ${PENDING_MAKEUP_BUTTON_LABEL_ZH}`}
               emptyHint="有學生請假但補堂日未定時，在課表用上方按鈕登記，就會出現在此。"
+            />
+
+            <HomeReminderPanel
+              title={`Inactive 預計復課 · ${inactiveReturnRows.length} 人`}
+              titleClassName="text-violet-900"
+              borderClassName="border-violet-200"
+              bgClassName="bg-violet-50/70"
+              logicTitle="點樣設定？"
+              logicLines={[
+                "學生 Lessons 頁 → Student Mode 設 Inactive + 生效日。",
+                "選填「預計復課日」；Inactive 期間唔顯示於日課表、Room、學費表。",
+                "到復課日請改回 Active 並確認課表。",
+              ]}
+              rows={inactiveReturnRows}
+              emptyTitle="暫時冇 Inactive 復課提醒"
+              emptyHint="暫停上堂而知道幾時返嚟，可填預計復課日。"
             />
           </div>
         </div>

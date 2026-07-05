@@ -71,6 +71,7 @@ export default function StudentLessonsPage() {
   const [currentMonthUntickedCount, setCurrentMonthUntickedCount] = useState(0);
   const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">("active");
   const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
+  const [visibilityReactivateDate, setVisibilityReactivateDate] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [scheduleRecords, setScheduleRecords] = useState<LessonScheduleRecord[] | null>(null);
   const [isTutorReadOnly, setIsTutorReadOnly] = useState(false);
@@ -158,6 +159,7 @@ export default function StudentLessonsPage() {
       setStudentNotFound(false);
       setVisibilityMode(visibility.mode);
       setVisibilityEffectiveDate(visibility.effective_date || new Date().toISOString().slice(0, 10));
+      setVisibilityReactivateDate(visibility.reactivate_date ?? "");
 
       const metrics = getLessonUntickedMetrics(
         records as Parameters<typeof getLessonUntickedMetrics>[0],
@@ -268,18 +270,36 @@ export default function StudentLessonsPage() {
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <select
                         value={visibilityMode}
-                        onChange={(e) => setVisibilityMode(e.target.value === "inactive" ? "inactive" : "active")}
+                        onChange={(e) => {
+                          const next = e.target.value === "inactive" ? "inactive" : "active";
+                          setVisibilityMode(next);
+                          if (next === "active") setVisibilityReactivateDate("");
+                        }}
                         className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
                       >
                         <option value="active">Active</option>
                         <option value="inactive">Inactive</option>
                       </select>
-                      <input
-                        type="date"
-                        value={visibilityEffectiveDate}
-                        onChange={(e) => setVisibilityEffectiveDate(e.target.value)}
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
-                      />
+                      <label className="inline-flex flex-col gap-0.5">
+                        <span className="text-[10px] font-semibold text-slate-500">Inactive from</span>
+                        <input
+                          type="date"
+                          value={visibilityEffectiveDate}
+                          onChange={(e) => setVisibilityEffectiveDate(e.target.value)}
+                          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                        />
+                      </label>
+                      {visibilityMode === "inactive" ? (
+                        <label className="inline-flex flex-col gap-0.5">
+                          <span className="text-[10px] font-semibold text-slate-500">Expected return (optional)</span>
+                          <input
+                            type="date"
+                            value={visibilityReactivateDate}
+                            onChange={(e) => setVisibilityReactivateDate(e.target.value)}
+                            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                          />
+                        </label>
+                      ) : null}
                       <button
                         type="button"
                         disabled={visibilitySaving || !visibilityEffectiveDate}
@@ -292,13 +312,15 @@ export default function StudentLessonsPage() {
                                 studentId,
                                 mode: visibilityMode,
                                 effectiveDate: visibilityEffectiveDate,
+                                reactivateDate:
+                                  visibilityMode === "inactive" ? visibilityReactivateDate || null : null,
                               });
                             } finally {
                               setVisibilitySaving(false);
                             }
                           })();
                         }}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex items-center gap-1.5 self-end rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
                           <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
@@ -308,7 +330,7 @@ export default function StudentLessonsPage() {
                     </div>
                   </ClientOnlyAfterMount>
                   <p className="mt-1 text-xs text-slate-500">
-                    When mode is Inactive and effective date starts, this student will be hidden in `rooms`, `daily-time-table`, and `students-lesson-time-fee-record`.
+                    Inactive from 該日起，學生會從 Room、Daily Timetable、學費表隱藏。選填「Expected return」會喺 Home 提醒復課；真正返嚟時請改回 Active。
                   </p>
                 </div>
 

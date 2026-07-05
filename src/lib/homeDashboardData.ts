@@ -8,7 +8,12 @@ import {
 import { SCHEDULE_CACHE_TAG_HOME } from "@/lib/scheduleCacheTags";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import {
+  compareStudentReactivateReminders,
+  formatStudentReactivateReminderDetail,
+  normalizeOptionalIsoDate,
+  resolveStudentInactiveEffectiveDate,
+} from "@/lib/studentVisibility";
 import type { HomeReminderRow } from "@/app/home/HomeReminderPanel";
 import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
 import {
@@ -37,6 +42,7 @@ export type HomeDashboardData = {
   unpaidRows: HomeReminderRow[];
   reschedulePendingRows: HomeReminderRow[];
   pendingLeaveRows: HomeReminderRow[];
+  inactiveReturnRows: HomeReminderRow[];
   priorMakeupMonthLabel: string;
   isMonthEndMakeupReminder: boolean;
   daysLeftInMonth: number;
@@ -201,7 +207,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   ] = await Promise.all([
     supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
     supabase.from("tutors").select("id, name_zh, name_en, birth_date, status"),
-    supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
+    supabase.from("student_visibility_modes").select("student_id, mode, effective_date, reactivate_date"),
     supabase
       .from("student_monthly_fee_records")
       .select("student_id, submitted_amount, lesson_unit_price, fee_pricing_grade")
@@ -210,12 +216,48 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   ]);
 
   const manualInactiveEffectiveById = new Map<string, string>();
+  const inactiveReturnCandidates: Array<{ studentId: string; reactivateDate: string }> = [];
   for (const row of visibilityRows ?? []) {
     const mode = String((row as { mode?: string }).mode ?? "").toLowerCase();
     const sid = String((row as { student_id?: string }).student_id ?? "");
     const eff = String((row as { effective_date?: string }).effective_date ?? "");
-    if (mode === "inactive" && sid && eff) manualInactiveEffectiveById.set(sid, eff);
+    if (mode === "inactive" && sid && eff) {
+      manualInactiveEffectiveById.set(sid, eff);
+      const reactivateDate = normalizeOptionalIsoDate((row as { reactivate_date?: string | null }).reactivate_date);
+      if (reactivateDate && eff <= ymdToday) {
+        inactiveReturnCandidates.push({ studentId: sid, reactivateDate });
+      }
+    }
   }
+
+  const studentDisplayNameById = new Map<string, string>();
+  for (const r of studentRows ?? []) {
+    const sid = String(r.id ?? "");
+    if (!sid) continue;
+    studentDisplayNameById.set(
+      sid,
+      formatStudentDisplayNameOrEmpty(
+        {
+          id: sid,
+          name_zh: (r as { name_zh?: string }).name_zh,
+          name_en: (r as { name_en?: string }).name_en,
+          nickname_en: (r as { nickname_en?: string }).nickname_en,
+        },
+        "full",
+        sid,
+      ),
+    );
+  }
+
+  inactiveReturnCandidates.sort((a, b) =>
+    compareStudentReactivateReminders(a.reactivateDate, b.reactivateDate, ymdToday),
+  );
+  const inactiveReturnRows: HomeReminderRow[] = inactiveReturnCandidates.map(({ studentId, reactivateDate }) => ({
+    studentId,
+    displayName: studentDisplayNameById.get(studentId) || studentId,
+    detail: formatStudentReactivateReminderDetail(reactivateDate, ymdToday),
+    href: `/students/${encodeURIComponent(studentId)}/lessons`,
+  }));
 
   const activeStudentRows = (studentRows ?? []).filter((r) => {
     const sid = String(r.id ?? "");
@@ -493,6 +535,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     unpaidRows,
     reschedulePendingRows,
     pendingLeaveRows,
+    inactiveReturnRows,
     priorMakeupMonthLabel: `${Number(priorMakeupWindow.startIso.slice(5, 7))}月`,
     isMonthEndMakeupReminder: daysLeftInMonth <= 6,
     daysLeftInMonth,
@@ -501,7 +544,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
 
 const fetchHomeDashboardCached = unstable_cache(
   fetchHomeDashboardUncached,
-  ["home-dashboard-v1"],
+  ["home-dashboard-v2"],
   // Home dashboard is read-mostly; rely on manual cache-bust tags after edits/sync.
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_HOME] },
 );

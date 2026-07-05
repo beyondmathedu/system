@@ -5,6 +5,8 @@ export type HomeReminderRow = {
   studentId: string;
   displayName: string;
   detail: string;
+  /** Defaults to student year lessons page. */
+  href?: string;
 };
 
 type Props = {
@@ -51,7 +53,7 @@ export default function HomeReminderPanel({
               className="rounded-md border border-slate-200/60 bg-white/80 px-3 py-2"
             >
               <Link
-                href={studentLessonsYearPath(row.studentId)}
+                href={row.href ?? studentLessonsYearPath(row.studentId)}
                 className="font-semibold text-[#1d76c2] hover:underline"
               >
                 {row.displayName}

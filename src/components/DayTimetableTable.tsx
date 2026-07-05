@@ -189,16 +189,17 @@ const TH_SUB =
 const TH_SUB_DAILY_NAME =
   `${TH_SUB} min-w-0 px-0.5 py-1.5 text-[10px] sm:px-1 sm:py-2 sm:text-xs lg:w-[5.75rem] lg:max-w-[5.75rem] lg:min-w-[5.75rem] lg:text-sm`;
 const TH_SUB_DAILY_GRADE =
-  `${TH_SUB} w-7 min-w-0 px-0.5 py-1.5 text-center text-[10px] sm:w-10 sm:px-1 sm:py-2 sm:text-xs lg:w-16 lg:px-2 lg:text-sm`;
+  `${TH_SUB} w-6 min-w-0 max-w-6 px-0 py-1.5 text-center text-[10px] leading-tight sm:w-7 sm:max-w-7 sm:px-0.5 sm:py-2 sm:text-xs lg:w-9 lg:max-w-9 lg:min-w-9 lg:px-0.5 lg:text-xs`;
 const TH_SUB_DAILY_EXAM =
-  `${TH_SUB} w-7 min-w-0 px-0.5 py-1.5 text-center text-[10px] sm:w-10 sm:px-1 sm:py-2 sm:text-xs lg:w-14 lg:max-w-14 lg:px-1 lg:text-xs`;
+  `${TH_SUB} w-7 min-w-0 max-w-7 px-0 py-1.5 text-center text-[10px] leading-tight sm:w-8 sm:max-w-8 sm:px-0.5 sm:py-2 sm:text-xs lg:w-10 lg:max-w-10 lg:min-w-10 lg:px-0.5 lg:text-[10px]`;
 const TD_TIME =
   "border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800";
 const TD_DAILY_NAME_EXTRA =
   "min-w-0 !h-auto px-0.5 py-0.5 align-top break-words sm:px-1 lg:w-[5.75rem] lg:max-w-[5.75rem]";
-const TD_DAILY_GRADE_EXTRA = "w-7 min-w-0 px-0.5 sm:w-10 sm:px-1 lg:w-16";
+const TD_DAILY_GRADE_EXTRA =
+  "w-6 min-w-0 max-w-6 px-0 py-0.5 text-center text-[10px] sm:w-7 sm:max-w-7 sm:px-0.5 sm:text-xs lg:w-9 lg:max-w-9";
 const TD_DAILY_EXAM_EXTRA =
-  "w-7 min-w-0 px-0.5 text-center text-[10px] tabular-nums sm:w-10 sm:px-1 sm:text-xs lg:w-14 lg:max-w-14";
+  "w-7 min-w-0 max-w-7 px-0 py-0.5 text-center text-[10px] tabular-nums sm:w-8 sm:max-w-8 sm:px-0.5 sm:text-xs lg:w-10 lg:max-w-10";
 const TD_TIME_CAP =
   "border border-emerald-200/80 bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-900";
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
+import { normalizeOptionalIsoDate } from "@/lib/studentVisibility";
 import {
   DEFAULT_LESSON_YEAR_STATE,
   parseLessonYearStateDbRow,
@@ -52,6 +53,7 @@ type VisibilityModeDbRow = {
   student_id?: string | null;
   mode?: string | null;
   effective_date?: string | null;
+  reactivate_date?: string | null;
 };
 
 function readExamDateRow(row: ExamDateDbRow | null | undefined) {
@@ -451,6 +453,8 @@ export type StudentVisibilityMode = {
   student_id: string;
   mode: "active" | "inactive";
   effective_date: string;
+  /** Optional expected return to Active (YYYY-MM-DD). */
+  reactivate_date: string | null;
 };
 
 /** One round-trip for submit/history rows across inclusive month range. */
@@ -565,17 +569,42 @@ export async function upsertStudentMonthlyFeeRecord(input: {
 }
 
 export async function loadStudentVisibilityMode(studentId: string): Promise<StudentVisibilityMode> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("student_visibility_modes")
-    .select("student_id, mode, effective_date")
+    .select("student_id, mode, effective_date, reactivate_date")
     .eq("student_id", studentId)
     .maybeSingle();
+
+  if (error && /reactivate_date/i.test(error.message)) {
+    const fallback = await supabase
+      .from("student_visibility_modes")
+      .select("student_id, mode, effective_date")
+      .eq("student_id", studentId)
+      .maybeSingle();
+    if (!fallback.data) {
+      return {
+        student_id: studentId,
+        mode: "active",
+        effective_date: new Date().toISOString().slice(0, 10),
+        reactivate_date: null,
+      };
+    }
+    const row = fallback.data as VisibilityModeDbRow;
+    const rawMode = String(row.mode ?? "active").toLowerCase();
+    return {
+      student_id: String(row.student_id ?? studentId),
+      mode: rawMode === "inactive" ? "inactive" : "active",
+      effective_date: String(row.effective_date ?? new Date().toISOString().slice(0, 10)),
+      reactivate_date: null,
+    };
+  }
 
   if (!data) {
     return {
       student_id: studentId,
       mode: "active",
       effective_date: new Date().toISOString().slice(0, 10),
+      reactivate_date: null,
     };
   }
 
@@ -585,6 +614,7 @@ export async function loadStudentVisibilityMode(studentId: string): Promise<Stud
     student_id: String(row.student_id ?? studentId),
     mode: rawMode === "inactive" ? "inactive" : "active",
     effective_date: String(row.effective_date ?? new Date().toISOString().slice(0, 10)),
+    reactivate_date: normalizeOptionalIsoDate(row.reactivate_date),
   };
 }
 
@@ -592,15 +622,29 @@ export async function saveStudentVisibilityMode(input: {
   studentId: string;
   mode: "active" | "inactive";
   effectiveDate: string;
+  reactivateDate?: string | null;
 }) {
-  const { studentId, mode, effectiveDate } = input;
-  await supabase.from("student_visibility_modes").upsert(
-    {
-      student_id: studentId,
-      mode,
-      effective_date: effectiveDate,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id" },
-  );
+  const { studentId, mode, effectiveDate, reactivateDate } = input;
+  const payload = {
+    student_id: studentId,
+    mode,
+    effective_date: effectiveDate,
+    reactivate_date:
+      mode === "inactive" ? normalizeOptionalIsoDate(reactivateDate ?? "") : null,
+    updated_at: new Date().toISOString(),
+  };
+  let { error } = await supabase.from("student_visibility_modes").upsert(payload, { onConflict: "student_id" });
+  if (error && /reactivate_date/i.test(error.message)) {
+    ({ error } = await supabase.from("student_visibility_modes").upsert(
+      {
+        student_id: studentId,
+        mode,
+        effective_date: effectiveDate,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "student_id" },
+    ));
+  }
+  if (error) throw error;
+  notifyScheduleCachesStale();
 }
