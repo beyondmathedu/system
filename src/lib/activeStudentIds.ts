@@ -1,4 +1,4 @@
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import { isStudentInactiveOnDate, resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
 
 type StudentLike = { id: string; grade?: string | null };
 
@@ -8,19 +8,25 @@ export function filterActiveStudentsOnDate<T extends StudentLike>(
   manualInactiveEffectiveById: Map<string, string> | Record<string, string>,
   year: number,
   dateIso: string,
+  reactivateDateById?: Map<string, string | null> | Record<string, string | null>,
 ): T[] {
   const manualMap =
     manualInactiveEffectiveById instanceof Map
       ? manualInactiveEffectiveById
       : new Map(Object.entries(manualInactiveEffectiveById));
+  const reactivateMap =
+    reactivateDateById instanceof Map
+      ? reactivateDateById
+      : new Map(Object.entries(reactivateDateById ?? {}));
 
   return students.filter((st) => {
-    const inactiveEffective = resolveStudentInactiveEffectiveDate({
+    return !isStudentInactiveOnDate({
       grade: st.grade,
       manualInactiveEffective: manualMap.get(st.id) ?? null,
+      reactivateDate: reactivateMap.get(st.id) ?? null,
       year,
+      dateIso,
     });
-    return !(inactiveEffective && inactiveEffective <= dateIso);
   });
 }
 

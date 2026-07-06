@@ -53,3 +53,118 @@ export function resolveStudentInactiveEffectiveDate(input: {
   if (manual && auto) return manual < auto ? manual : auto;
   return manual || auto;
 }
+
+function monthEndIsoDate(year: number, month1to12: number): string {
+  const day = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
+  return `${year}-${String(month1to12).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function firstDayOfNextMonthIso(year: number, month1to12: number): string {
+  if (month1to12 === 12) return `${year + 1}-01-01`;
+  return `${year}-${String(month1to12 + 1).padStart(2, "0")}-01`;
+}
+
+/**
+ * Expected return = first day BACK at lessons.
+ * If stored as the last day of a month (common when pausing through end of August),
+ * treat as the 1st of the following month so the whole pause month stays fee-free.
+ */
+export function normalizeReactivateAsFirstActiveDay(reactivate: string | null | undefined): string | null {
+  const r = normalizeOptionalIsoDate(reactivate);
+  if (!r) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(r);
+  if (!m) return r;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (r === monthEndIsoDate(y, mo)) return firstDayOfNextMonthIso(y, mo);
+  return r;
+}
+
+function resolveReactivateForInactiveLogic(reactivate: string | null | undefined): string | null {
+  return normalizeReactivateAsFirstActiveDay(reactivate);
+}
+
+export type StudentVisibilityMaps = {
+  inactiveEffectiveById: Record<string, string>;
+  reactivateDateById: Record<string, string | null>;
+};
+
+export function buildStudentVisibilityMaps(
+  rows: Array<{
+    student_id?: string;
+    mode?: string;
+    effective_date?: string;
+    reactivate_date?: string | null;
+  }>,
+): StudentVisibilityMaps {
+  const inactiveEffectiveById: Record<string, string> = {};
+  const reactivateDateById: Record<string, string | null> = {};
+  for (const row of rows) {
+    const mode = String(row.mode ?? "active").toLowerCase();
+    if (mode !== "inactive") continue;
+    const sid = String(row.student_id ?? "").trim();
+    const eff = String(row.effective_date ?? "").trim();
+    if (!sid || !eff) continue;
+    inactiveEffectiveById[sid] = eff;
+    reactivateDateById[sid] = normalizeOptionalIsoDate(row.reactivate_date);
+  }
+  return { inactiveEffectiveById, reactivateDateById };
+}
+
+/** True on/after manual inactive effective until reactivate date (if any). F6 auto-inactive included. */
+export function isStudentInactiveOnDate(input: {
+  grade?: string | null;
+  manualInactiveEffective?: string | null;
+  reactivateDate?: string | null;
+  year: number;
+  dateIso: string;
+}): boolean {
+  const eff = resolveStudentInactiveEffectiveDate({
+    grade: input.grade,
+    manualInactiveEffective: input.manualInactiveEffective,
+    year: input.year,
+  });
+  if (!eff || input.dateIso < eff) return false;
+  const reactivate = resolveReactivateForInactiveLogic(input.reactivateDate);
+  if (reactivate && input.dateIso >= reactivate) return false;
+  return true;
+}
+
+/** Returns a date checker for fee/lesson billing, or undefined when the student has no manual inactive date. */
+export function makeStudentInactiveDateChecker(input: {
+  grade?: string | null;
+  manualInactiveEffective?: string | null;
+  reactivateDate?: string | null;
+  year: number;
+}): ((dateIso: string) => boolean) | undefined {
+  const eff = String(input.manualInactiveEffective ?? "").trim();
+  if (!eff) return undefined;
+  return (dateIso: string) =>
+    isStudentInactiveOnDate({
+      grade: input.grade,
+      manualInactiveEffective: eff,
+      reactivateDate: input.reactivateDate,
+      year: input.year,
+      dateIso,
+    });
+}
+
+/** Fee sheet month: hide only while pause covers that month; show again from reactivate month onward. */
+export function isStudentHiddenForFeeSheetMonth(input: {
+  grade?: string | null;
+  manualInactiveEffective?: string | null;
+  reactivateDate?: string | null;
+  sheetYear: number;
+  sheetMonth: number;
+}): boolean {
+  const monthEnd = monthEndIsoDate(input.sheetYear, input.sheetMonth);
+  const eff = resolveStudentInactiveEffectiveDate({
+    grade: input.grade,
+    manualInactiveEffective: input.manualInactiveEffective,
+    year: input.sheetYear,
+  });
+  if (!eff || eff > monthEnd) return false;
+  const reactivate = resolveReactivateForInactiveLogic(input.reactivateDate);
+  if (reactivate && reactivate <= monthEnd) return false;
+  return true;
+}

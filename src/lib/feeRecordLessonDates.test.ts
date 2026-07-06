@@ -237,4 +237,30 @@ describe("feeRecordLessonDates", () => {
       }),
     ).toBe(1);
   });
+
+  it("legacy attendance skips inactive dates during pause", () => {
+    const state = emptyState();
+    state.attendance["2026-07-12"] = true;
+    state.attendance["2026-09-06"] = true;
+    const isDateInactive = (iso: string) => iso >= "2026-07-01" && iso < "2026-09-01";
+
+    expect(
+      countAttendedBillableLessonsInMonth({
+        records: [],
+        state,
+        year: 2026,
+        month1to12: 7,
+        isDateInactive,
+      }),
+    ).toBe(0);
+    expect(
+      countAttendedBillableLessonsInMonth({
+        records: [],
+        state,
+        year: 2026,
+        month1to12: 9,
+        isDateInactive,
+      }),
+    ).toBe(1);
+  });
 });

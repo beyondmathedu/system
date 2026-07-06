@@ -9,10 +9,10 @@ import { SCHEDULE_CACHE_TAG_HOME } from "@/lib/scheduleCacheTags";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import {
+  buildStudentVisibilityMaps,
   compareStudentReactivateReminders,
   formatStudentReactivateReminderDetail,
-  normalizeOptionalIsoDate,
-  resolveStudentInactiveEffectiveDate,
+  isStudentInactiveOnDate,
 } from "@/lib/studentVisibility";
 import type { HomeReminderRow } from "@/app/home/HomeReminderPanel";
 import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
@@ -215,18 +215,12 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       .eq("month", month),
   ]);
 
-  const manualInactiveEffectiveById = new Map<string, string>();
+  const { inactiveEffectiveById, reactivateDateById } = buildStudentVisibilityMaps(visibilityRows ?? []);
   const inactiveReturnCandidates: Array<{ studentId: string; reactivateDate: string }> = [];
-  for (const row of visibilityRows ?? []) {
-    const mode = String((row as { mode?: string }).mode ?? "").toLowerCase();
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    const eff = String((row as { effective_date?: string }).effective_date ?? "");
-    if (mode === "inactive" && sid && eff) {
-      manualInactiveEffectiveById.set(sid, eff);
-      const reactivateDate = normalizeOptionalIsoDate((row as { reactivate_date?: string | null }).reactivate_date);
-      if (reactivateDate && eff <= ymdToday) {
-        inactiveReturnCandidates.push({ studentId: sid, reactivateDate });
-      }
+  for (const [sid, eff] of Object.entries(inactiveEffectiveById)) {
+    const reactivateDate = reactivateDateById[sid] ?? null;
+    if (reactivateDate && eff <= ymdToday) {
+      inactiveReturnCandidates.push({ studentId: sid, reactivateDate });
     }
   }
 
@@ -262,12 +256,13 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   const activeStudentRows = (studentRows ?? []).filter((r) => {
     const sid = String(r.id ?? "");
     const grade = String((r as { grade?: string }).grade ?? "");
-    const inactiveEffective = resolveStudentInactiveEffectiveDate({
+    return !isStudentInactiveOnDate({
       grade,
-      manualInactiveEffective: manualInactiveEffectiveById.get(sid) ?? null,
+      manualInactiveEffective: inactiveEffectiveById[sid] ?? null,
+      reactivateDate: reactivateDateById[sid] ?? null,
       year,
+      dateIso: ymdToday,
     });
-    return !(inactiveEffective && inactiveEffective <= ymdToday);
   });
 
   const activeStudentMeta = activeStudentRows.map((r) => {

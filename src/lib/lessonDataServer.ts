@@ -24,7 +24,10 @@ import {
   normalizeFeeRecordRow,
 } from "@/lib/studentMonthlyFeeRecordsCompat";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import {
+  buildStudentVisibilityMaps,
+  normalizeOptionalIsoDate,
+} from "@/lib/studentVisibility";
 
 export type StudentExamInfo = {
   examDate: string;
@@ -70,6 +73,54 @@ export async function loadExamInfoServer(
   return {
     examDate: (data?.exam_date as string | null) ?? "",
     examContent: data?.exam_content ? String(data.exam_content) : "",
+  };
+}
+
+export type StudentVisibilityModeServer = {
+  mode: "active" | "inactive";
+  effective_date: string;
+  reactivate_date: string | null;
+};
+
+export async function loadStudentVisibilityModeServer(
+  supabase: SupabaseClient,
+  studentId: string,
+): Promise<StudentVisibilityModeServer> {
+  const defaultDate = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("student_visibility_modes")
+    .select("student_id, mode, effective_date, reactivate_date")
+    .eq("student_id", studentId)
+    .maybeSingle();
+
+  if (error && /reactivate_date/i.test(error.message)) {
+    const { data: fallback } = await supabase
+      .from("student_visibility_modes")
+      .select("student_id, mode, effective_date")
+      .eq("student_id", studentId)
+      .maybeSingle();
+    if (!fallback) {
+      return { mode: "active", effective_date: defaultDate, reactivate_date: null };
+    }
+    const rawMode = String(fallback.mode ?? "active").toLowerCase();
+    return {
+      mode: rawMode === "inactive" ? "inactive" : "active",
+      effective_date: String(fallback.effective_date ?? defaultDate),
+      reactivate_date: null,
+    };
+  }
+
+  if (!data) {
+    return { mode: "active", effective_date: defaultDate, reactivate_date: null };
+  }
+
+  const rawMode = String(data.mode ?? "active").toLowerCase();
+  return {
+    mode: rawMode === "inactive" ? "inactive" : "active",
+    effective_date: String(data.effective_date ?? defaultDate),
+    reactivate_date: normalizeOptionalIsoDate(
+      (data as { reactivate_date?: string | null }).reactivate_date,
+    ),
   };
 }
 
@@ -317,6 +368,11 @@ export async function loadStudentFeeOpeningBalancesServer(
   return { balances };
 }
 
+export type FeeRecordStudentVisibility = {
+  manualInactiveEffective: string | null;
+  reactivateDate: string | null;
+};
+
 export type FeeRecordBootstrapStudent = {
   id: string;
   name_zh: string;
@@ -334,8 +390,6 @@ export async function loadFeeRecordBootstrap(
 ) {
   const { sheetYear, sheetMonth } = params;
   const currentMonth = sheetMonth;
-  const feeStartMonth = feeSystemStartMonth1to12(sheetYear);
-  const cutoff = monthEndIso(sheetYear, currentMonth);
 
   const { data: studentRows, error: studentErr } = await supabase
     .from("students")
@@ -344,7 +398,12 @@ export async function loadFeeRecordBootstrap(
   if (studentErr) throw new Error(studentErr.message);
 
   const allIds = (studentRows ?? []).map((r) => String(r.id ?? "")).filter(Boolean);
-  let visibilityRows: Array<{ student_id?: string; mode?: string; effective_date?: string }> = [];
+  let visibilityRows: Array<{
+    student_id?: string;
+    mode?: string;
+    effective_date?: string;
+    reactivate_date?: string | null;
+  }> = [];
   if (allIds.length) {
     const vis = await fetchRowsInChunks({
       ids: allIds,
@@ -352,21 +411,14 @@ export async function loadFeeRecordBootstrap(
       query: (chunk) =>
         supabase
           .from("student_visibility_modes")
-          .select("student_id, mode, effective_date")
+          .select("student_id, mode, effective_date, reactivate_date")
           .in("student_id", chunk),
     });
     if (vis.error) throw new Error(vis.error);
     visibilityRows = vis.data;
   }
 
-  const manualInactiveEffectiveById = new Map<string, string>();
-  for (const row of visibilityRows) {
-    const mode = String(row.mode ?? "active").toLowerCase();
-    if (mode !== "inactive") continue;
-    const sid = String(row.student_id ?? "");
-    const eff = String(row.effective_date ?? "");
-    if (sid && eff) manualInactiveEffectiveById.set(sid, eff);
-  }
+  const { inactiveEffectiveById, reactivateDateById } = buildStudentVisibilityMaps(visibilityRows ?? []);
 
   const students: FeeRecordBootstrapStudent[] = (studentRows ?? [])
     .map((r) => ({
@@ -378,17 +430,10 @@ export async function loadFeeRecordBootstrap(
       student_phone: String((r as { student_phone?: string | null }).student_phone ?? ""),
       created_at: String((r as { created_at?: string | null }).created_at ?? ""),
     }))
-    .filter((s) => {
-      if (!s.id) return false;
-      const eff = resolveStudentInactiveEffectiveDate({
-        grade: s.grade,
-        manualInactiveEffective: manualInactiveEffectiveById.get(s.id) ?? null,
-        year: sheetYear,
-      });
-      return !(eff && eff <= cutoff);
-    });
+    .filter((s) => Boolean(s.id));
 
   const ids = students.map((s) => s.id);
+  const feeStartMonth = feeSystemStartMonth1to12(sheetYear);
   const endMonthForPricing = currentMonth - 1;
 
   const openingPromise =
@@ -413,6 +458,14 @@ export async function loadFeeRecordBootstrap(
 
   if (metricsResult.error) throw new Error(metricsResult.error);
 
+  const visibilityByStudentId: Record<string, FeeRecordStudentVisibility> = {};
+  for (const id of ids) {
+    visibilityByStudentId[id] = {
+      manualInactiveEffective: inactiveEffectiveById[id] ?? null,
+      reactivateDate: reactivateDateById[id] ?? null,
+    };
+  }
+
   return {
     students,
     metricsRows: metricsResult.data ?? [],
@@ -422,5 +475,6 @@ export async function loadFeeRecordBootstrap(
     openingResult,
     feeStartMonth,
     endMonthForPricing,
+    visibilityByStudentId,
   };
 }

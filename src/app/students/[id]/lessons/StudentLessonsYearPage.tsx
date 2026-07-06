@@ -53,6 +53,7 @@ import {
   ROOM_GROUPS,
   resolveScheduleRoomPickerValue,
 } from "@/lib/dayTimetableShared";
+import { isStudentInactiveOnDate } from "@/lib/studentVisibility";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const ROOM_OPTIONS = [...ROOM_GROUPS];
@@ -496,6 +497,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   });
   const [studentLoaded, setStudentLoaded] = useState(false);
   const [studentNotFound, setStudentNotFound] = useState(false);
+  const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">("active");
+  const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
+  const [visibilityReactivateDate, setVisibilityReactivateDate] = useState<string | null>(null);
   const [accessReady, setAccessReady] = useState(false);
   const [isReadOnlyViewer, setIsReadOnlyViewer] = useState(false);
   const forceReadOnlyFromNext = (searchParams.get("next") || "").startsWith("/rooms/");
@@ -794,6 +798,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             rescheduleEntries?: RescheduleEntry[];
             extraEntries?: ExtraEntry[];
           };
+          visibilityMode?: {
+            mode?: string;
+            effective_date?: string;
+            reactivate_date?: string | null;
+          };
         };
         if (!mounted) return;
 
@@ -827,6 +836,15 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
           school: data.school ?? "",
           textbookPublisher: data.textbook_publisher ?? "",
         });
+        const vis = body.visibilityMode;
+        const rawVisMode = String(vis?.mode ?? "active").toLowerCase();
+        setVisibilityMode(rawVisMode === "inactive" ? "inactive" : "active");
+        setVisibilityEffectiveDate(String(vis?.effective_date ?? ""));
+        setVisibilityReactivateDate(
+          typeof vis?.reactivate_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(vis.reactivate_date)
+            ? vis.reactivate_date
+            : null,
+        );
         setStudentNotFound(false);
         setStudentLoaded(true);
 
@@ -954,16 +972,48 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     [hiddenDates, overrides, rescheduleEntries, extraEntries],
   );
 
+  const isLessonDateHiddenByInactive = useMemo(() => {
+    if (visibilityMode !== "inactive" || !visibilityEffectiveDate) {
+      return (_dateIso: string) => false;
+    }
+    const grade = studentSummary.grade;
+    const effective = visibilityEffectiveDate;
+    const reactivate = visibilityReactivateDate;
+    return (dateIso: string) =>
+      isStudentInactiveOnDate({
+        grade,
+        manualInactiveEffective: effective,
+        reactivateDate: reactivate,
+        year: targetYear,
+        dateIso,
+      });
+  }, [
+    visibilityMode,
+    visibilityEffectiveDate,
+    visibilityReactivateDate,
+    studentSummary.grade,
+    targetYear,
+  ]);
+
   const baseScheduleRows = useMemo(() => {
     if (!studentId) return [];
-    return buildStudentBaseScheduleRows(
+    const rows = buildStudentBaseScheduleRows(
       records,
       scheduleMapperState,
       targetYear,
       hkTodayYmd,
       scheduleBuildOptions,
     );
-  }, [records, studentId, scheduleMapperState, targetYear, hkTodayYmd, scheduleBuildOptions]);
+    return rows.filter((r) => !isLessonDateHiddenByInactive(r.date));
+  }, [
+    records,
+    studentId,
+    scheduleMapperState,
+    targetYear,
+    hkTodayYmd,
+    scheduleBuildOptions,
+    isLessonDateHiddenByInactive,
+  ]);
 
   const baseRowByDate = useMemo(() => {
     const map = new Map<string, ScheduleRow>();
@@ -991,14 +1041,23 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
 
   const scheduleRows = useMemo(() => {
     if (!studentId) return [];
-    return buildStudentScheduleRows(
+    const rows = buildStudentScheduleRows(
       records,
       scheduleMapperState,
       targetYear,
       hkTodayYmd,
       scheduleBuildOptions,
     );
-  }, [records, studentId, scheduleMapperState, targetYear, hkTodayYmd, scheduleBuildOptions]);
+    return rows.filter((r) => !isLessonDateHiddenByInactive(r.date));
+  }, [
+    records,
+    studentId,
+    scheduleMapperState,
+    targetYear,
+    hkTodayYmd,
+    scheduleBuildOptions,
+    isLessonDateHiddenByInactive,
+  ]);
 
   const scheduleRowById = useMemo(() => {
     const map = new Map<string, ScheduleRow>();
@@ -1857,6 +1916,13 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
               disabled={readOnly}
               className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 disabled:opacity-95"
             >
+              {visibilityMode === "inactive" && visibilityEffectiveDate ? (
+                <p className="mb-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+                  此學生自 {visibilityEffectiveDate} 起為 Inactive
+                  {visibilityReactivateDate ? `，預計 ${visibilityReactivateDate} 復課` : ""}
+                  。Inactive 期間的課堂不會顯示於此表（Room、Daily Timetable、學費表同樣隱藏）。
+                </p>
+              ) : null}
               <ScheduleDuplicateRulesBanner
                 records={records.map((r) => ({
                   ...r,

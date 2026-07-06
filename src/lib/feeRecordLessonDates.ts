@@ -63,8 +63,9 @@ function buildLegacyWeekdayLessonDatesForMonth(params: {
   month1to12: number;
   weekdays: string[];
   extraEntries: Array<{ id: string; date: string }>;
+  isDateInactive?: (dateIso: string) => boolean;
 }): string[] {
-  const { year, month1to12, weekdays, extraEntries } = params;
+  const { year, month1to12, weekdays, extraEntries, isDateInactive } = params;
   const baseMap: Record<string, string[]> = {
     一: [],
     二: [],
@@ -80,6 +81,8 @@ function buildLegacyWeekdayLessonDatesForMonth(params: {
     weekday: "short",
   });
   for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${year}-${String(month1to12).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    if (isDateInactive?.(iso)) continue;
     const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12));
     const short = weekdayFormatter.format(dt);
     const cn = HK_WEEKDAY_SHORT_TO_CN[short];
@@ -97,7 +100,7 @@ function buildLegacyWeekdayLessonDatesForMonth(params: {
     const mo = Number(m[2]);
     const day = Number(m[3]);
     if (y === year && mo === month1to12) {
-      base.push(`${mo}/${day}`);
+      if (!isDateInactive?.(e.date)) base.push(`${mo}/${day}`);
     }
   }
   return sortMonthDayDates(Array.from(new Set(base)));
@@ -152,14 +155,17 @@ export function collectBillableLessonDatesForMonth(params: {
   month1to12: number;
   /** Used only when schedule records are not loaded yet. */
   legacyWeekdays?: string[];
+  /** When true, that calendar day is excluded from billable tuition (e.g. Inactive pause). */
+  isDateInactive?: (dateIso: string) => boolean;
 }): string[] {
-  const { records, state, year, month1to12, legacyWeekdays } = params;
+  const { records, state, year, month1to12, legacyWeekdays, isDateInactive } = params;
   if (records.length === 0) {
     return buildLegacyWeekdayLessonDatesForMonth({
       year,
       month1to12,
       weekdays: legacyWeekdays ?? [],
       extraEntries: state.extraEntries ?? [],
+      isDateInactive,
     });
   }
 
@@ -167,6 +173,7 @@ export function collectBillableLessonDatesForMonth(params: {
   const dates: string[] = [];
   for (const row of rows) {
     if (!BILLABLE_LESSON_TYPES.has(row.lessonType)) continue;
+    if (isDateInactive?.(row.date)) continue;
     dates.push(isoYmdToMonthDay(row.date));
   }
   return sortMonthDayDates(dates);
@@ -185,8 +192,9 @@ function countLegacyAttendedLessonsInMonth(params: {
   month1to12: number;
   extraEntries: Array<{ id: string; date: string }>;
   rescheduleEntries: Array<{ id: string; toDate: string }>;
+  isDateInactive?: (dateIso: string) => boolean;
 }): number {
-  const { attendance, year, month1to12, extraEntries, rescheduleEntries } = params;
+  const { attendance, year, month1to12, extraEntries, rescheduleEntries, isDateInactive } = params;
   const prefix = `${year}-${String(month1to12).padStart(2, "0")}`;
   const extraById = new Map(extraEntries.map((e) => [e.id, e]));
   const rescheduleById = new Map(rescheduleEntries.map((r) => [r.id, r]));
@@ -194,17 +202,17 @@ function countLegacyAttendedLessonsInMonth(params: {
   for (const [key, v] of Object.entries(attendance)) {
     if (!v) continue;
     if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
-      if (key.startsWith(prefix)) n += 1;
+      if (key.startsWith(prefix) && !isDateInactive?.(key)) n += 1;
       continue;
     }
     if (key.startsWith("extra:")) {
       const ex = extraById.get(key.slice("extra:".length));
-      if (ex?.date?.startsWith(prefix)) n += 1;
+      if (ex?.date?.startsWith(prefix) && !isDateInactive?.(ex.date)) n += 1;
       continue;
     }
     if (key.startsWith("reschedule:")) {
       const r = rescheduleById.get(key.slice("reschedule:".length));
-      if (r?.toDate?.startsWith(prefix)) n += 1;
+      if (r?.toDate?.startsWith(prefix) && !isDateInactive?.(r.toDate)) n += 1;
     }
   }
   return n;
@@ -216,8 +224,9 @@ export function countAttendedBillableLessonsInMonth(params: {
   state: YearLessonState;
   year: number;
   month1to12: number;
+  isDateInactive?: (dateIso: string) => boolean;
 }): number {
-  const { records, state, year, month1to12 } = params;
+  const { records, state, year, month1to12, isDateInactive } = params;
   if (records.length === 0) {
     return countLegacyAttendedLessonsInMonth({
       attendance: state.attendance,
@@ -228,6 +237,7 @@ export function countAttendedBillableLessonsInMonth(params: {
         id: e.id,
         toDate: e.toDate,
       })),
+      isDateInactive,
     });
   }
 
@@ -235,6 +245,7 @@ export function countAttendedBillableLessonsInMonth(params: {
   let n = 0;
   for (const row of rows) {
     if (!BILLABLE_LESSON_TYPES.has(row.lessonType)) continue;
+    if (isDateInactive?.(row.date)) continue;
     if (
       isScheduleAttendanceMarked(state.attendance, {
         attendanceKey: row.attendanceKey,

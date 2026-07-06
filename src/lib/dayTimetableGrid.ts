@@ -17,6 +17,7 @@ import {
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { filterActiveStudentsOnDate, studentIdsOf } from "@/lib/activeStudentIds";
+import { buildStudentVisibilityMaps } from "@/lib/studentVisibility";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorConstants";
 import type { DayTimetableFeePaymentTone } from "@/lib/dayTimetableStyleSettings";
@@ -433,6 +434,7 @@ export type FetchDayTimetableOptions = {
 type DayTimetableStaticBundle = {
   studentList: StudentRow[];
   manualInactiveEffectiveById: Record<string, string>;
+  reactivateDateById: Record<string, string | null>;
   tutorColorByName: Record<string, string>;
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
   examById: Record<string, string>;
@@ -450,20 +452,12 @@ const loadDayTimetableStaticBundle = unstable_cache(
     ] = await Promise.all([
       supabase.from("students").select("id, name_zh, name_en, nickname_en, grade").order("id"),
       supabase.from("student_exam_dates").select("student_id, exam_date"),
-      supabase.from("student_visibility_modes").select("student_id, mode, effective_date"),
+      supabase.from("student_visibility_modes").select("student_id, mode, effective_date, reactivate_date"),
       supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
       supabase.from("classrooms").select("name, regular_period_max"),
     ]);
 
-    const manualInactiveEffectiveById: Record<string, string> = {};
-    for (const row of visibilityRows ?? []) {
-      const r = row as { student_id?: string; mode?: string; effective_date?: string };
-      const mode = String(r.mode ?? "active").toLowerCase();
-      if (mode !== "inactive") continue;
-      const sid = String(r.student_id ?? "");
-      const eff = String(r.effective_date ?? "");
-      if (sid && eff) manualInactiveEffectiveById[sid] = eff;
-    }
+    const { inactiveEffectiveById, reactivateDateById } = buildStudentVisibilityMaps(visibilityRows ?? []);
 
     const examById: Record<string, string> = {};
     for (const row of examRows ?? []) {
@@ -473,7 +467,8 @@ const loadDayTimetableStaticBundle = unstable_cache(
 
     return {
       studentList: (students ?? []) as StudentRow[],
-      manualInactiveEffectiveById,
+      manualInactiveEffectiveById: inactiveEffectiveById,
+      reactivateDateById,
       tutorColorByName: Object.fromEntries(buildTutorColorByDisplayName(tutorRows ?? [])),
       regularPeriodMaxByRoom: buildRegularPeriodMaxByRoom(
         classroomRows as Array<{ name?: string | null; regular_period_max?: number | null }> | null,
@@ -481,7 +476,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
       examById,
     };
   },
-  ["day-timetable-static-v1"],
+  ["day-timetable-static-v2"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
@@ -505,12 +500,14 @@ async function fetchDayTimetablePayloadUncached(
   ]);
   const { regularPeriodMaxByRoom, tutorColorByName, examById } = staticBundle;
   const manualInactiveEffectiveById = new Map(Object.entries(staticBundle.manualInactiveEffectiveById));
+  const reactivateDateById = staticBundle.reactivateDateById;
 
   const studentList = filterActiveStudentsOnDate(
     staticBundle.studentList,
     manualInactiveEffectiveById,
     year,
     dateIso,
+    reactivateDateById,
   );
   const activeStudentIds = studentIdsOf(studentList);
 

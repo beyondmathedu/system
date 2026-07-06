@@ -53,6 +53,10 @@ import {
   toYearLessonStateFromClient,
 } from "@/lib/feeRecordLessonDates";
 import {
+  isStudentHiddenForFeeSheetMonth,
+  makeStudentInactiveDateChecker,
+} from "@/lib/studentVisibility";
+import {
   availableLessonYears,
   defaultLessonYear,
 } from "@/lib/lessonCalendar";
@@ -283,6 +287,8 @@ function buildMonthlyArrearsRows(params: {
   yearState: StudentLesson2026State | undefined;
   legacyWeekdays: string[];
   feeTierBundle: StudentFeeTierBundle;
+  isMonthInactiveForFee?: (month1to12: number) => boolean;
+  isDateInactive?: (dateIso: string) => boolean;
 }): MonthlyArrearsRow[] {
   const {
     student,
@@ -296,6 +302,8 @@ function buildMonthlyArrearsRows(params: {
     yearState,
     legacyWeekdays,
     feeTierBundle,
+    isMonthInactiveForFee,
+    isDateInactive,
   } = params;
   const records = normalizeFeeLessonRecords(lessonRecords);
   const state = toYearLessonStateFromClient(yearState);
@@ -313,12 +321,26 @@ function buildMonthlyArrearsRows(params: {
   }
   const feeStart = feeSystemStartMonth1to12(sheetYear);
   for (let m = feeStart; m <= sheetMonth; m += 1) {
+    const paid =
+      m === sheetMonth ? Number(currentRecord.submitted) || 0 : Number(submittedByMonth[m] ?? 0) || 0;
+    if (isMonthInactiveForFee?.(m)) {
+      rows.push({
+        key: `${sheetYear}-${m}`,
+        monthLabel: formatSheetMonthZh(sheetYear, m),
+        expected: 0,
+        lessonCount: 0,
+        paid,
+        outstanding: -paid,
+      });
+      continue;
+    }
     const dates = collectBillableLessonDatesForMonth({
       records,
       state,
       year: sheetYear,
       month1to12: m,
       legacyWeekdays,
+      isDateInactive,
     });
     const lessonCount = countDatedLessonSlots(dates);
     const hist = historicalMonthFee[m];
@@ -334,8 +356,6 @@ function buildMonthlyArrearsRows(params: {
       gradeFor,
       feeTierSettings: tier,
     });
-    const paid =
-      m === sheetMonth ? Number(currentRecord.submitted) || 0 : Number(submittedByMonth[m] ?? 0) || 0;
     rows.push({
       key: `${sheetYear}-${m}`,
       monthLabel: formatSheetMonthZh(sheetYear, m),
@@ -555,6 +575,11 @@ type LessonRecord = {
   createdAt: number;
 };
 
+type StudentVisibilityFeeContext = {
+  manualInactiveEffective: string | null;
+  reactivateDate: string | null;
+};
+
 type SortDirection = "asc" | "desc";
 type SortKey = "id" | "name" | "grade" | "weekday" | "expected" | "submitted";
 type SortConfig = { key: SortKey; direction: SortDirection } | null;
@@ -583,6 +608,9 @@ export default function StudentsLessonTimeFeeRecordPage() {
   );
   const [lessonYearStateByStudentId, setLessonYearStateByStudentId] = useState<
     Record<string, StudentLesson2026State>
+  >({});
+  const [visibilityByStudentId, setVisibilityByStudentId] = useState<
+    Record<string, StudentVisibilityFeeContext>
   >({});
   const saveTimersRef = useState(() => new Map<string, number>())[0];
   const openingBalanceSaveTimersRef = useState(() => new Map<string, number>())[0];
@@ -676,11 +704,13 @@ export default function StudentsLessonTimeFeeRecordPage() {
           };
           feeStartMonth?: number;
           endMonthForPricing?: number;
+          visibilityByStudentId?: Record<string, StudentVisibilityFeeContext>;
         };
         if (!mounted || !body.ok) return;
 
         const mapped = body.students ?? [];
         setStudents(mapped);
+        setVisibilityByStudentId(body.visibilityByStudentId ?? {});
         setRecordsByStudentId((prev) => {
           const next = { ...prev };
           for (const st of mapped) {
@@ -696,6 +726,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
           setOpeningBalanceByStudentId({});
           setLessonRecordsByStudentId({});
           setLessonYearStateByStudentId({});
+          setVisibilityByStudentId({});
           return;
         }
 
@@ -974,10 +1005,44 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return out;
   }, [students, recordsByStudentId]);
 
+  const inactiveDateCheckerByStudentId = useMemo(() => {
+    const out: Record<string, ((dateIso: string) => boolean) | undefined> = {};
+    for (const st of students) {
+      const vis = visibilityByStudentId[st.id];
+      out[st.id] = makeStudentInactiveDateChecker({
+        grade: st.grade,
+        manualInactiveEffective: vis?.manualInactiveEffective ?? null,
+        reactivateDate: vis?.reactivateDate ?? null,
+        year: sheetYear,
+      });
+    }
+    return out;
+  }, [students, visibilityByStudentId, sheetYear]);
+
+  const isMonthInactiveForFeeByStudentId = useMemo(() => {
+    const out: Record<string, (month1to12: number) => boolean> = {};
+    for (const st of students) {
+      const vis = visibilityByStudentId[st.id];
+      out[st.id] = (month1to12: number) =>
+        isStudentHiddenForFeeSheetMonth({
+          grade: st.grade,
+          manualInactiveEffective: vis?.manualInactiveEffective ?? null,
+          reactivateDate: vis?.reactivateDate ?? null,
+          sheetYear,
+          sheetMonth: month1to12,
+        });
+    }
+    return out;
+  }, [students, visibilityByStudentId, sheetYear]);
+
   const attendedLessonsInMonthByStudentId = useMemo(() => {
     const out: Record<string, number> = {};
     const m = Number(sheetMonth);
     for (const st of students) {
+      if (isMonthInactiveForFeeByStudentId[st.id]?.(m)) {
+        out[st.id] = 0;
+        continue;
+      }
       const records = normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []);
       const state = toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]);
       out[st.id] = countAttendedBillableLessonsInMonth({
@@ -985,6 +1050,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
         state,
         year: sheetYear,
         month1to12: m,
+        isDateInactive: inactiveDateCheckerByStudentId[st.id],
       });
     }
     return out;
@@ -994,6 +1060,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     sheetMonth,
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
+    inactiveDateCheckerByStudentId,
+    isMonthInactiveForFeeByStudentId,
   ]);
 
   const filteredSortedStudents = useMemo(() => {
@@ -1211,13 +1279,17 @@ export default function StudentsLessonTimeFeeRecordPage() {
     const currentMonth = Number(sheetMonth);
     for (const st of students) {
       const legacyWeekdays = weekdayTokensByStudentId[st.id] ?? [];
-      const dates = collectBillableLessonDatesForMonth({
-        records: normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []),
-        state: toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]),
-        year: sheetYear,
-        month1to12: currentMonth,
-        legacyWeekdays,
-      });
+      const dates =
+        isMonthInactiveForFeeByStudentId[st.id]?.(currentMonth)
+          ? []
+          : collectBillableLessonDatesForMonth({
+              records: normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []),
+              state: toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]),
+              year: sheetYear,
+              month1to12: currentMonth,
+              legacyWeekdays,
+              isDateInactive: inactiveDateCheckerByStudentId[st.id],
+            });
       full[st.id] = dates;
       capped[st.id] = dates.slice(0, L_COUNT);
     }
@@ -1229,6 +1301,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     lessonYearStateByStudentId,
     sheetYear,
     sheetMonth,
+    inactiveDateCheckerByStudentId,
+    isMonthInactiveForFeeByStudentId,
   ]);
 
   const feeDialogMakeupDetail = useMemo(() => {
@@ -1264,6 +1338,10 @@ export default function StudentsLessonTimeFeeRecordPage() {
     const out: Record<string, number> = {};
     const currentMonth = Number(sheetMonth);
     for (const st of students) {
+      if (isMonthInactiveForFeeByStudentId[st.id]?.(currentMonth)) {
+        out[st.id] = 0;
+        continue;
+      }
       const r = recordsByStudentId[st.id] ?? defaultRecordState();
       const dates = fullLessonDatesByStudentId[st.id] ?? [];
       const gradeFor = gradeForFeePricing(st, sheetYear, currentMonth, r.feePricingGrade);
@@ -1282,6 +1360,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     sheetYear,
     sheetMonth,
     feeTierBundle,
+    isMonthInactiveForFeeByStudentId,
   ]);
 
   const priorExpectedTuitionSumByStudentId = useMemo(() => {
@@ -1294,12 +1373,14 @@ export default function StudentsLessonTimeFeeRecordPage() {
       const records = normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []);
       const state = toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]);
       for (let m = feeStartMonth; m < currentMonth; m += 1) {
+        if (isMonthInactiveForFeeByStudentId[st.id]?.(m)) continue;
         const dates = collectBillableLessonDatesForMonth({
           records,
           state,
           year: sheetYear,
           month1to12: m,
           legacyWeekdays,
+          isDateInactive: inactiveDateCheckerByStudentId[st.id],
         });
         const hist = historicalMonthFeeByStudentId[st.id]?.[m];
         const gradeFor = gradeForFeePricing(st, sheetYear, m, hist?.feePricingGrade ?? "");
@@ -1318,6 +1399,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     lessonYearStateByStudentId,
     feeTierBundle,
     historicalMonthFeeByStudentId,
+    inactiveDateCheckerByStudentId,
+    isMonthInactiveForFeeByStudentId,
   ]);
 
   const balanceBeforeByStudentId = useMemo(() => {
@@ -1372,6 +1455,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
       yearState: lessonYearStateByStudentId[st.id],
       legacyWeekdays: weekdayTokensByStudentId[st.id] ?? [],
       feeTierBundle,
+      isMonthInactiveForFee: isMonthInactiveForFeeByStudentId[st.id],
+      isDateInactive: inactiveDateCheckerByStudentId[st.id],
     });
   }, [
     feeDetailDialog,
@@ -1386,6 +1471,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
     feeTierBundle,
+    inactiveDateCheckerByStudentId,
+    isMonthInactiveForFeeByStudentId,
   ]);
 
   const feeOutstandingSummary = useMemo(() => {
@@ -1431,13 +1518,18 @@ export default function StudentsLessonTimeFeeRecordPage() {
           .split("/")
           .map((v) => v.trim())
           .filter(Boolean);
-        const billableDates = collectBillableLessonDatesForMonth({
-          records: normalizeFeeLessonRecords(records),
-          state: toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]),
-          year: sheetYear,
-          month1to12: Number(sheetMonth),
-          legacyWeekdays: effectiveWeekdays,
-        });
+        const currentMonth = Number(sheetMonth);
+        const monthInactive = isMonthInactiveForFeeByStudentId[st.id]?.(currentMonth) ?? false;
+        const billableDates = monthInactive
+          ? []
+          : collectBillableLessonDatesForMonth({
+              records: normalizeFeeLessonRecords(records),
+              state: toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]),
+              year: sheetYear,
+              month1to12: currentMonth,
+              legacyWeekdays: effectiveWeekdays,
+              isDateInactive: inactiveDateCheckerByStudentId[st.id],
+            });
 
         next[st.id] = {
           ...next[st.id],
@@ -1453,6 +1545,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
     lessonYearStateByStudentId,
     sheetMonth,
     sheetYear,
+    inactiveDateCheckerByStudentId,
+    isMonthInactiveForFeeByStudentId,
   ]);
 
   return (

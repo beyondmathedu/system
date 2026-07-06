@@ -330,7 +330,7 @@ export default function StudentLessonsPage() {
                     </div>
                   </ClientOnlyAfterMount>
                   <p className="mt-1 text-xs text-slate-500">
-                    Inactive from 該日起，學生會從 Room、Daily Timetable、學費表隱藏。選填「Expected return」會喺 Home 提醒復課；真正返嚟時請改回 Active。
+                    Inactive from 該日起，學生會從 Room、Daily Timetable、學費表、及該年課表（Inactive 期間的課）隱藏。Expected return 請填<strong>復課首日</strong>（例：7–8 月停 → 填 2026-09-01，唔好填 8/31）；到時請改回 Active。
                   </p>
                 </div>
 

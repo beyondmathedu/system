@@ -6,6 +6,7 @@ import {
   loadExamInfoServer,
   loadLessonScheduleRecordsServer,
   loadLessonYearStateServer,
+  loadStudentVisibilityModeServer,
 } from "@/lib/lessonDataServer";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
 import { normalizeStudentId } from "@/lib/studentId";
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const [studentRes, examInfo, scheduleRecords, yearState] = await Promise.all([
+  const [studentRes, examInfo, scheduleRecords, yearState, visibilityMode] = await Promise.all([
     supabase
       .from("students")
       .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
@@ -55,6 +56,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     loadExamInfoServer(supabase, studentId),
     loadLessonScheduleRecordsServer(supabase, studentId),
     loadLessonYearStateServer(supabase, studentId, year),
+    loadStudentVisibilityModeServer(supabase, studentId),
   ]);
 
   if (studentRes.error) {
@@ -73,5 +75,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
     examInfo,
     scheduleRecords,
     yearState,
+    visibilityMode,
   });
 }
