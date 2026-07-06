@@ -13,6 +13,7 @@ import {
   type YearLessonRecord,
   type YearLessonState,
 } from "@/lib/yearScheduleCore";
+import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
 
 export type DayTimetableBuiltRow = {
   date: string;
@@ -115,6 +116,7 @@ export function buildDayTimetableRowsForDate(
   state: YearLessonState,
   targetDateIso: string,
   todayYmd: string,
+  options?: { roomSlotTutorRules?: RoomSlotTutorRule[] },
 ): DayTimetableBuiltRow[] {
   const year = yearFromIso(targetDateIso);
   const coreRows = buildYearScheduleRowsForDateRange(
@@ -123,6 +125,7 @@ export function buildDayTimetableRowsForDate(
     year,
     targetDateIso,
     targetDateIso,
+    { roomSlotTutorRules: options?.roomSlotTutorRules },
   );
   return coreRows.map((row) => mapCoreRowToDayRow(row, todayYmd));
 }

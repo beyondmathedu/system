@@ -232,16 +232,19 @@ export function readLessonDayOverrideField(
   return String((ov as Record<string, unknown>)[field] ?? "").trim();
 }
 
-/** 導師顯示：override 優先，其次排課規則；調堂列用補堂日 overrides。 */
+/** 導師顯示：override 優先，其次 Room 時段預設，再排課規則；調堂列用補堂日 overrides。 */
 export function tutorDisplayForLessonRow(opts: {
   overrides?: Record<string, unknown>;
   dateIso: string;
+  roomSlotTutor?: string;
   scheduleRuleTutor?: string;
   pendingLabel?: string;
 }): string {
-  const { overrides, dateIso, scheduleRuleTutor, pendingLabel = "待定" } = opts;
+  const { overrides, dateIso, roomSlotTutor, scheduleRuleTutor, pendingLabel = "待定" } = opts;
   const fromOverride = readLessonDayOverrideField(overrides, dateIso, "tutor");
   if (fromOverride) return fromOverride;
+  const fromSlot = String(roomSlotTutor ?? "").trim();
+  if (fromSlot) return fromSlot;
   const fromRule = String(scheduleRuleTutor ?? "").trim();
   if (fromRule) return fromRule;
   return pendingLabel;

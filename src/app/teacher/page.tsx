@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppTopNav from "@/components/AppTopNav";
+import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+import RoomSlotTutorRulesPanel from "@/components/RoomSlotTutorRulesPanel";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { supabase } from "@/lib/supabase";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
@@ -172,6 +174,14 @@ export default function TeacherPage() {
         t.birthDate.toLowerCase().includes(keyword),
     );
   }, [query, teachers]);
+
+  const activeTutorNames = useMemo(() => {
+    return teachers
+      .filter((t) => t.status === "工作中" || t.status === "放假中")
+      .map((t) => t.nickname.trim() || t.name.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, "zh-Hant"));
+  }, [teachers]);
 
   const teacherById = useMemo(() => new Map(teachers.map((t) => [t.id, t])), [teachers]);
 
@@ -571,6 +581,7 @@ export default function TeacherPage() {
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
         <AppTopNav highlight="reports" />
 
+        <ClientOnlyAfterMount fallback={<TeacherPageSkeleton />}>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">Tutor Records</h1>
@@ -1008,8 +1019,46 @@ export default function TeacherPage() {
             </div>
           </div>
         </div>
+
+        <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <RoomSlotTutorRulesPanel tutorOptions={activeTutorNames} />
+        </div>
+        </ClientOnlyAfterMount>
       </div>
     </div>
+  );
+}
+
+function TeacherPageSkeleton() {
+  return (
+    <>
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
+          <div className="h-8 w-48 animate-pulse rounded bg-white/20" />
+          <div className="mt-2 h-4 w-96 max-w-full animate-pulse rounded bg-white/20" />
+        </div>
+        <div className="animate-pulse p-6" aria-hidden>
+          <div className="flex flex-wrap gap-3">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-10 w-36 rounded-lg bg-slate-200" />
+            ))}
+          </div>
+          <div className="mt-6 h-10 max-w-lg rounded-lg bg-slate-200" />
+          <div className="mt-4 h-[280px] rounded-lg bg-slate-100" />
+        </div>
+      </div>
+      <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="animate-pulse p-6" aria-hidden>
+          <div className="h-6 w-56 rounded bg-slate-200" />
+          <div className="mt-4 flex flex-wrap gap-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-9 w-28 rounded-md bg-slate-200" />
+            ))}
+          </div>
+          <div className="mt-4 h-32 rounded-lg bg-slate-100" />
+        </div>
+      </div>
+    </>
   );
 }
 

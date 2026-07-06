@@ -23,6 +23,8 @@ import {
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
 import { scheduleRoomsMatch, weekdayCnFromIsoDateHk } from "@/lib/dayTimetableShared";
+import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
+import { resolveRoomSlotTutorForLessonRow } from "@/lib/roomSlotTutorRules";
 
 export type YearLessonRecord = {
   id?: string;
@@ -70,6 +72,7 @@ type BuildRangeOptions = {
   month?: number;
   rangeStartIso?: string;
   rangeEndIso?: string;
+  roomSlotTutorRules?: RoomSlotTutorRule[];
 };
 
 function numberToWeekday(num: number) {
@@ -376,6 +379,12 @@ function buildScheduleRows(
     const tutorDisplay = tutorDisplayForLessonRow({
       overrides: state.overrides,
       dateIso: r.date,
+      roomSlotTutor: resolveRoomSlotTutorForLessonRow(options?.roomSlotTutorRules, {
+        room: r.room,
+        time: r.time,
+        dateIso: r.date,
+        weekday: r.baseRule?.weekday,
+      }),
       scheduleRuleTutor: r.baseRule?.tutor,
       pendingLabel: "待定",
     });
@@ -415,8 +424,9 @@ export function buildYearScheduleRowsForMonth(
   state: YearLessonState,
   targetYear: number,
   month: number,
+  options?: Pick<BuildRangeOptions, "roomSlotTutorRules">,
 ): BuiltScheduleRow[] {
-  return buildScheduleRows(records, state, targetYear, { month });
+  return buildScheduleRows(records, state, targetYear, { month, ...options });
 }
 
 export function buildYearScheduleRowsForDateRange(
@@ -425,8 +435,9 @@ export function buildYearScheduleRowsForDateRange(
   targetYear: number,
   rangeStartIso: string,
   rangeEndIso: string,
+  options?: Pick<BuildRangeOptions, "roomSlotTutorRules">,
 ): BuiltScheduleRow[] {
-  return buildScheduleRows(records, state, targetYear, { rangeStartIso, rangeEndIso });
+  return buildScheduleRows(records, state, targetYear, { rangeStartIso, rangeEndIso, ...options });
 }
 
 export function filterRowsByRoomAndMonth(

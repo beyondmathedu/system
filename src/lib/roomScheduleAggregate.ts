@@ -29,6 +29,7 @@ import {
 } from "@/lib/lessonYearStateLegacy";
 import { scheduleRoomsMatch } from "@/lib/dayTimetableShared";
 import { monthsToLoadForScheduleRange } from "@/lib/roomScheduleMonths";
+import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
 import {
   hasRoomScheduleCandidateFromRecords,
   hasRoomScheduleCandidateFromStateSignals,
@@ -629,6 +630,8 @@ async function fetchRoomScheduleAggregateUncached(
   }
 
   const { students, recMap, stateMap, inactiveEffectiveById } = bundle;
+  const supabase = getSupabaseAdmin();
+  const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(supabase);
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
   const roomCandidateStudents: ScheduleStudentRow[] = students;
   for (const st of students) {
@@ -645,7 +648,9 @@ async function fetchRoomScheduleAggregateUncached(
   for (const st of roomCandidateStudents) {
     const records = normalizedRecordsById.get(st.id) ?? [];
     const state = stateMap.get(st.id) ?? emptyState();
-    const monthRows = monthsToLoad.flatMap((m) => buildYearScheduleRowsForMonth(records, state, year, m));
+    const monthRows = monthsToLoad.flatMap((m) =>
+      buildYearScheduleRowsForMonth(records, state, year, m, { roomSlotTutorRules }),
+    );
     const filtered = monthRows
       .filter((r) => r.lessonType !== "取消" && scheduleRoomsMatch(r.room, roomLabel))
       .filter((r) => {
@@ -768,6 +773,7 @@ async function fetchTutorMonthLessonRowsUncached(
   }
 
   const { students, recMap, stateMap, inactiveEffectiveById } = bundle;
+  const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(getSupabaseAdmin());
   const out: TutorMonthLessonRow[] = [];
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
   const hasTutorCandidateById = new Map<string, boolean>();
@@ -782,7 +788,7 @@ async function fetchTutorMonthLessonRowsUncached(
     const records = normalizedRecordsById.get(st.id) ?? [];
     const state = stateMap.get(st.id) ?? emptyState();
     if (!hasTutorCandidateById.get(st.id)) continue;
-    let filtered = buildYearScheduleRowsForMonth(records, state, year, month).filter(
+    let filtered = buildYearScheduleRowsForMonth(records, state, year, month, { roomSlotTutorRules }).filter(
       (r) => r.lessonType !== "取消",
     );
     const inactiveEffective = inactiveEffectiveById.get(st.id);

@@ -18,6 +18,8 @@ import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { filterActiveStudentsOnDate, studentIdsOf } from "@/lib/activeStudentIds";
 import { buildStudentVisibilityMaps } from "@/lib/studentVisibility";
+import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
+import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorConstants";
 import type { DayTimetableFeePaymentTone } from "@/lib/dayTimetableStyleSettings";
@@ -438,6 +440,7 @@ type DayTimetableStaticBundle = {
   tutorColorByName: Record<string, string>;
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
   examById: Record<string, string>;
+  roomSlotTutorRules: RoomSlotTutorRule[];
 };
 
 const loadDayTimetableStaticBundle = unstable_cache(
@@ -458,6 +461,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
     ]);
 
     const { inactiveEffectiveById, reactivateDateById } = buildStudentVisibilityMaps(visibilityRows ?? []);
+    const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(supabase);
 
     const examById: Record<string, string> = {};
     for (const row of examRows ?? []) {
@@ -474,9 +478,10 @@ const loadDayTimetableStaticBundle = unstable_cache(
         classroomRows as Array<{ name?: string | null; regular_period_max?: number | null }> | null,
       ),
       examById,
+      roomSlotTutorRules,
     };
   },
-  ["day-timetable-static-v2"],
+  ["day-timetable-static-v3"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
@@ -498,7 +503,7 @@ async function fetchDayTimetablePayloadUncached(
     loadDayTimetableStyleSettings(),
     loadStudentFeeTierSettingsAdmin(supabase),
   ]);
-  const { regularPeriodMaxByRoom, tutorColorByName, examById } = staticBundle;
+  const { regularPeriodMaxByRoom, tutorColorByName, examById, roomSlotTutorRules } = staticBundle;
   const manualInactiveEffectiveById = new Map(Object.entries(staticBundle.manualInactiveEffectiveById));
   const reactivateDateById = staticBundle.reactivateDateById;
 
@@ -574,7 +579,9 @@ async function fetchDayTimetablePayloadUncached(
 
     const today = hkTodayYmd();
     const todayIso = toDayIso(today.y, today.m, today.d);
-    const dayRows = buildDayTimetableRowsForDate(records, state, dateIso, todayIso)
+    const dayRows = buildDayTimetableRowsForDate(records, state, dateIso, todayIso, {
+      roomSlotTutorRules,
+    })
       .map((r) => ({ ...r, normalizedRoom: normalizeScheduleRoom(r.room) }))
       .filter((r) => {
         if (r.lessonType === "取消") return false;
