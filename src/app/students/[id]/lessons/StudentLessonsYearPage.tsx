@@ -53,7 +53,11 @@ import {
   ROOM_GROUPS,
   resolveScheduleRoomPickerValue,
 } from "@/lib/dayTimetableShared";
-import { isStudentInactiveOnDate } from "@/lib/studentVisibility";
+import {
+  loadRoomSlotTutorRulesServer,
+  type RoomSlotTutorRule,
+} from "@/lib/roomSlotTutorRules";
+import { isStudentInactiveOnDate, getInactiveMonthGapsInYear, type InactiveMonthGap } from "@/lib/studentVisibility";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const ROOM_OPTIONS = [...ROOM_GROUPS];
@@ -95,6 +99,12 @@ const MONTH_LABEL: Record<number, string> = {
   12: "Dec",
 };
 
+function formatInactiveGapMonthRange(months: number[]): string {
+  if (months.length === 0) return "";
+  if (months.length === 1) return MONTH_LABEL[months[0]!] ?? String(months[0]);
+  return `${MONTH_LABEL[months[0]!] ?? months[0]} – ${MONTH_LABEL[months[months.length - 1]!] ?? months[months.length - 1]}`;
+}
+
 type StudentSummary = {
   id: string;
   nameZh: string;
@@ -127,6 +137,10 @@ type DayOverride = {
 };
 
 type ScheduleRow = StudentLessonScheduleRow;
+
+type LessonTableEntry =
+  | { kind: "row"; row: ScheduleRow }
+  | { kind: "inactive-gap"; gap: InactiveMonthGap; key: string };
 
 type RescheduleEntry = {
   id: string;
@@ -662,6 +676,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const [filterType, setFilterType] = useState("");
   const [sortConfig, setSortConfig] = useState<ScheduleSortConfig>(null);
   const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
+  const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>([]);
   const yearMin = getLessonSystemStartIso(targetYear);
   const yearMax = `${targetYear}-12-31`;
 
@@ -719,6 +734,17 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     void (async () => {
       const names = await loadInactiveTutorNames();
       if (mounted) setInactiveTutorNames(names);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      const rules = await loadRoomSlotTutorRulesServer(supabase);
+      if (mounted) setRoomSlotTutorRules(rules);
     })();
     return () => {
       mounted = false;
@@ -952,15 +978,16 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const scheduleBuildOptions = useMemo((): StudentScheduleBuildOptions | undefined => {
     const from = filterDateFrom.trim();
     const to = filterDateTo.trim();
+    const roomRules = { roomSlotTutorRules };
     if (from && to) {
-      return { rangeStartIso: from, rangeEndIso: to };
+      return { rangeStartIso: from, rangeEndIso: to, ...roomRules };
     }
     if (filterMonth) {
-      return { month: Number(filterMonth) };
+      return { month: Number(filterMonth), ...roomRules };
     }
     // Month = All: expand the full year (system start through Dec), not just the current month.
-    return undefined;
-  }, [filterDateFrom, filterDateTo, filterMonth]);
+    return roomRules;
+  }, [filterDateFrom, filterDateTo, filterMonth, roomSlotTutorRules]);
 
   const scheduleMapperState = useMemo(
     () => ({
@@ -1590,6 +1617,93 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     filterType,
   ]);
 
+  const inactiveGapMarkers = useMemo(() => {
+    if (visibilityMode !== "inactive" || !visibilityEffectiveDate) return [];
+    const firstMonth = targetYear === LESSON_SYSTEM_START_YEAR ? LESSON_SYSTEM_START_MONTH : 1;
+    return getInactiveMonthGapsInYear({
+      grade: studentSummary.grade,
+      manualInactiveEffective: visibilityEffectiveDate,
+      reactivateDate: visibilityReactivateDate,
+      year: targetYear,
+      firstMonth,
+    });
+  }, [
+    visibilityMode,
+    visibilityEffectiveDate,
+    visibilityReactivateDate,
+    studentSummary.grade,
+    targetYear,
+  ]);
+
+  const viewingInactiveMonthOnly = useMemo(() => {
+    if (!filterMonth || visibilityMode !== "inactive") return false;
+    const m = Number(filterMonth);
+    return inactiveGapMarkers.some((g) => g.months.includes(m));
+  }, [filterMonth, visibilityMode, inactiveGapMarkers]);
+
+  const selectedInactiveMonthGap = useMemo(() => {
+    if (!viewingInactiveMonthOnly || !filterMonth) return null;
+    const m = Number(filterMonth);
+    const gap = inactiveGapMarkers.find((g) => g.months.includes(m));
+    if (!gap) return null;
+    return { ...gap, months: [m] };
+  }, [viewingInactiveMonthOnly, filterMonth, inactiveGapMarkers]);
+
+  const lessonTableEntries = useMemo((): LessonTableEntry[] => {
+    const rows = filteredScheduleRows;
+
+    if (selectedInactiveMonthGap && !sortConfig) {
+      const gapEntry: LessonTableEntry = {
+        kind: "inactive-gap",
+        gap: selectedInactiveMonthGap,
+        key: `inactive-month-${selectedInactiveMonthGap.months[0]}`,
+      };
+      return [gapEntry, ...rows.map((row) => ({ kind: "row" as const, row }))];
+    }
+
+    const showGaps = !filterMonth && !sortConfig && inactiveGapMarkers.length > 0;
+    if (!showGaps) return rows.map((row) => ({ kind: "row" as const, row }));
+
+    const entries: LessonTableEntry[] = [];
+    const insertedGapKeys = new Set<string>();
+
+    const tryInsertGaps = (nextMonth: number, prevMonth: number | null) => {
+      for (const gap of inactiveGapMarkers) {
+        const key = gap.months.join("-");
+        if (insertedGapKeys.has(key)) continue;
+        const gapEnd = gap.months[gap.months.length - 1]!;
+        const shouldInsert =
+          nextMonth > gapEnd &&
+          ((prevMonth !== null && prevMonth === gap.afterMonth) || prevMonth === null);
+        if (shouldInsert) {
+          entries.push({ kind: "inactive-gap", gap, key: `inactive-${key}` });
+          insertedGapKeys.add(key);
+        }
+      }
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]!;
+      const prevMonth = i > 0 ? rows[i - 1]!.month : null;
+      tryInsertGaps(r.month, prevMonth);
+      entries.push({ kind: "row", row: r });
+    }
+    return entries;
+  }, [filteredScheduleRows, filterMonth, sortConfig, inactiveGapMarkers, selectedInactiveMonthGap]);
+
+  function renderInactiveGapRow(gap: InactiveMonthGap, key: string) {
+    const range = formatInactiveGapMonthRange(gap.months);
+    return (
+      <tr key={key} className="divide-x divide-slate-100 bg-slate-100">
+        <td colSpan={11} className="px-4 py-4 text-center text-sm text-slate-700">
+          <span className="font-semibold text-slate-900">{range}</span>
+          {" "}— 此段因 Inactive 不顯示課堂（{gap.effectiveDate} 起
+          {gap.reactivateDate ? `，${gap.reactivateDate} 復課` : ""}）
+        </td>
+      </tr>
+    );
+  }
+
   const diagnosticMonth = filterMonth
     ? Number(filterMonth)
     : targetYear === LESSON_SYSTEM_START_YEAR
@@ -1603,7 +1717,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       scheduleMapperState,
       targetYear,
       hkTodayYmd,
-      { month: diagnosticMonth },
+      { month: diagnosticMonth, roomSlotTutorRules },
     );
     return {
       total: monthRows.length,
@@ -1617,6 +1731,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     hkTodayYmd,
     diagnosticMonth,
     filteredScheduleRows,
+    roomSlotTutorRules,
   ]);
 
   const activeDiagnosticVersionDate = useMemo(() => {
@@ -1942,7 +2057,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
               {hiddenScheduleKeys.length > 0 ||
               records.length === 0 ||
               (records.length > 0 && monthDiagnostic.total === 0) ||
-              (monthDiagnostic.total > 0 && monthDiagnostic.visible === 0) ? (
+              (monthDiagnostic.total > 0 && monthDiagnostic.visible === 0 && !viewingInactiveMonthOnly) ? (
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
                   {hiddenScheduleKeys.length > 0 ? (
                     <>
@@ -3111,20 +3226,28 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                           No records in lesson schedule settings yet.
                         </td>
                       </tr>
-                    ) : filteredScheduleRows.length === 0 ? (
+                    ) : lessonTableEntries.length === 0 ? (
                       <tr>
                         <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
                           No records match current filters.
                         </td>
                       </tr>
                     ) : (
-                      filteredScheduleRows.map((r, idx) => (
+                      lessonTableEntries.map((entry, idx) => {
+                        if (entry.kind === "inactive-gap") {
+                          return renderInactiveGapRow(entry.gap, entry.key);
+                        }
+
+                        const r = entry.row;
+                        const nextRowEntry = lessonTableEntries.slice(idx + 1).find((e) => e.kind === "row");
+                        const nextMonth = nextRowEntry?.kind === "row" ? nextRowEntry.row.month : null;
+
+                        return (
                         <tr
                           key={r.rowId}
                           className={[
                             "divide-x divide-slate-100",
-                            idx < filteredScheduleRows.length - 1 &&
-                            filteredScheduleRows[idx + 1].month !== r.month
+                            nextMonth !== null && nextMonth !== r.month
                               ? "border-b-2 border-slate-400"
                               : "",
                             r.lessonType === TYPE_PENDING
@@ -3268,7 +3391,8 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                             </div>
                           </td>
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>

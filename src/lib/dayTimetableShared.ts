@@ -51,6 +51,25 @@ export function canonicalScheduleRoomLabel(roomRaw: string): string {
   return (roomRaw ?? "").trim();
 }
 
+/** Canonical display time for schedule slot matching (e.g. `3:00 PM` → `03:00 PM`). */
+export function canonicalScheduleTimeLabel(raw: string): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(s);
+  if (m) {
+    const hh = String(Number(m[1])).padStart(2, "0");
+    return `${hh}:${m[2]} ${m[3].toUpperCase()}`;
+  }
+  if (s === "10:00") return "10:00 AM";
+  if (s === "11:30") return "11:30 AM";
+  if (s === "1:00" || s === "13:00") return "01:00 PM";
+  if (s === "2:30" || s === "14:30") return "02:30 PM";
+  if (s === "3:00" || s === "15:00") return "03:00 PM";
+  if (s === "4:30" || s === "16:30") return "04:30 PM";
+  if (s === "6:00" || s === "18:00") return "06:00 PM";
+  return s;
+}
+
 /** Map stored room to a standard picker value (Hope 1 → Hope). */
 export function resolveScheduleRoomPickerValue(
   roomRaw: string,

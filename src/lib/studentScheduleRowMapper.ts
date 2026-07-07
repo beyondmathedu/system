@@ -14,6 +14,7 @@ import {
   type YearLessonRecord,
   type YearLessonState,
 } from "@/lib/yearScheduleCore";
+import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
 
 const TYPE_REGULAR = "Regular";
 const TYPE_CANCELLED = "Cancelled";
@@ -244,6 +245,7 @@ export type StudentScheduleBuildOptions = {
   month?: number;
   rangeStartIso?: string;
   rangeEndIso?: string;
+  roomSlotTutorRules?: RoomSlotTutorRule[];
 };
 
 export function buildStudentBaseScheduleRows(

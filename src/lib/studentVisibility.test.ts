@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getInactiveMonthGapsInYear,
   isStudentHiddenForFeeSheetMonth,
   makeStudentInactiveDateChecker,
   normalizeReactivateAsFirstActiveDay,
@@ -118,5 +119,25 @@ describe("collectBillableLessonDatesForMonth inactive pause", () => {
       isDateInactive: checker,
     });
     expect(august).toEqual([]);
+  });
+});
+
+describe("getInactiveMonthGapsInYear", () => {
+  it("groups July and August when pause runs through summer", () => {
+    const gaps = getInactiveMonthGapsInYear({
+      grade: "F3",
+      manualInactiveEffective: "2026-07-01",
+      reactivateDate: "2026-09-01",
+      year: 2026,
+      firstMonth: 1,
+    });
+    expect(gaps).toEqual([
+      {
+        afterMonth: 6,
+        months: [7, 8],
+        effectiveDate: "2026-07-01",
+        reactivateDate: "2026-09-01",
+      },
+    ]);
   });
 });

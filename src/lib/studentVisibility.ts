@@ -130,6 +130,71 @@ export function isStudentInactiveOnDate(input: {
   return true;
 }
 
+export type InactiveMonthGap = {
+  /** Last visible month before this inactive block (0 if none). */
+  afterMonth: number;
+  months: number[];
+  effectiveDate: string;
+  reactivateDate: string | null;
+};
+
+/** Whole calendar months with no lessons because the student is inactive (for lesson table gaps). */
+export function getInactiveMonthGapsInYear(input: {
+  grade?: string | null;
+  manualInactiveEffective?: string | null;
+  reactivateDate?: string | null;
+  year: number;
+  firstMonth?: number;
+}): InactiveMonthGap[] {
+  const eff = resolveStudentInactiveEffectiveDate({
+    grade: input.grade,
+    manualInactiveEffective: input.manualInactiveEffective,
+    year: input.year,
+  });
+  if (!eff) return [];
+
+  const reactivate = normalizeReactivateAsFirstActiveDay(input.reactivateDate);
+  const startMonth = input.firstMonth ?? 1;
+  const fullyInactive: number[] = [];
+
+  for (let m = startMonth; m <= 12; m++) {
+    const monthStart = `${input.year}-${String(m).padStart(2, "0")}-01`;
+    const monthEnd = monthEndIsoDate(input.year, m);
+    if (monthStart >= eff && (!reactivate || monthEnd < reactivate)) {
+      fullyInactive.push(m);
+    }
+  }
+
+  if (fullyInactive.length === 0) return [];
+
+  const gaps: InactiveMonthGap[] = [];
+  let group: number[] = [fullyInactive[0]!];
+
+  for (let i = 1; i < fullyInactive.length; i++) {
+    const month = fullyInactive[i]!;
+    if (month === group[group.length - 1]! + 1) {
+      group.push(month);
+      continue;
+    }
+    gaps.push({
+      afterMonth: group[0]! - 1,
+      months: group,
+      effectiveDate: eff,
+      reactivateDate: reactivate,
+    });
+    group = [month];
+  }
+
+  gaps.push({
+    afterMonth: group[0]! - 1,
+    months: group,
+    effectiveDate: eff,
+    reactivateDate: reactivate,
+  });
+
+  return gaps;
+}
+
 /** Returns a date checker for fee/lesson billing, or undefined when the student has no manual inactive date. */
 export function makeStudentInactiveDateChecker(input: {
   grade?: string | null;

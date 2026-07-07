@@ -60,6 +60,7 @@ export {
 };
 
 const FALLBACK_CELL_BG = "#f1f5f9";
+const DEFAULT_TUTOR_COLOR_HEX = "#1d76c2";
 const PERF_LOG_ENABLED = process.env.ENABLE_PERF_LOGS === "1";
 const EMPTY_RECORDS: YearLessonRecord[] = [];
 const EMPTY_YEAR_STATE: YearLessonState = {
@@ -136,7 +137,7 @@ function buildTutorColorByDisplayName(
     const n = String(t.name ?? "").trim();
     const z = String(t.name_zh ?? "").trim();
     const en = String(t.name_en ?? "").trim();
-    const hex = normalizeTutorHex(String(t.color_hex ?? "")) ?? FALLBACK_CELL_BG;
+    const hex = normalizeTutorHex(String(t.color_hex ?? "")) ?? DEFAULT_TUTOR_COLOR_HEX;
     if (n) map.set(n, hex);
     if (z) map.set(z, hex);
     if (en) map.set(en, hex);
@@ -481,7 +482,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
       roomSlotTutorRules,
     };
   },
-  ["day-timetable-static-v3"],
+  ["day-timetable-static-v4"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 

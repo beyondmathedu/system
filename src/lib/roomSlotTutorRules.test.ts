@@ -28,6 +28,28 @@ describe("timeSuggestionsForScheduleWeekday", () => {
 });
 
 describe("resolveRoomSlotTutorForDate", () => {
+  it("matches times with or without a leading zero", () => {
+    const rules: RoomSlotTutorRule[] = [
+      {
+        id: "1",
+        room: "B",
+        weekday: "二",
+        time: "03:00 PM",
+        tutor_name: "Kelly",
+        effective_date: "2026-07-01",
+      },
+    ];
+
+    expect(
+      resolveRoomSlotTutorForDate(rules, {
+        room: "B",
+        weekday: "二",
+        time: "3:00 PM",
+        dateIso: "2026-07-20",
+      }),
+    ).toBe("Kelly");
+  });
+
   const rules: RoomSlotTutorRule[] = [
     {
       id: "1",

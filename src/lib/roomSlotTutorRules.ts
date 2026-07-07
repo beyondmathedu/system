@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { canonicalScheduleRoomLabel, ROOM_GROUPS } from "@/lib/dayTimetableShared";
-import { normalizeScheduleWeekday, scheduleSlotKey } from "@/lib/lessonScheduleVersions";
+import { canonicalScheduleRoomLabel, canonicalScheduleTimeLabel, ROOM_GROUPS } from "@/lib/dayTimetableShared";
+import { normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
 
 export type RoomSlotTutorRule = {
   id: string;
@@ -33,6 +33,10 @@ export function timeSuggestionsForScheduleWeekday(weekday: string): readonly str
   return [];
 }
 
+export function roomSlotScheduleKey(rule: { weekday: string; time: string; room: string }): string {
+  return `${normalizeScheduleWeekday(rule.weekday)}|${canonicalScheduleTimeLabel(rule.time)}|${canonicalScheduleRoomLabel(rule.room)}`;
+}
+
 export function weekdayCnFromIsoDate(dateIso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateIso ?? "").trim());
   if (!m) return "";
@@ -44,7 +48,7 @@ export function weekdayCnFromIsoDate(dateIso: string): string {
 export function normalizeRoomSlotRuleRow(row: Record<string, unknown>): RoomSlotTutorRule | null {
   const room = canonicalScheduleRoomLabel(String(row.room ?? ""));
   const weekday = normalizeScheduleWeekday(row.weekday);
-  const time = String(row.time ?? "").trim();
+  const time = canonicalScheduleTimeLabel(String(row.time ?? ""));
   const tutor_name = String(row.tutor_name ?? "").trim();
   const effective_date = String(row.effective_date ?? "").trim();
   const id = String(row.id ?? "").trim();
@@ -59,9 +63,9 @@ export function resolveRoomSlotTutorForDate(
   rules: RoomSlotTutorRule[],
   input: { room: string; weekday: string; time: string; dateIso: string },
 ): string | undefined {
-  const key = scheduleSlotKey({
+  const key = roomSlotScheduleKey({
     weekday: normalizeScheduleWeekday(input.weekday),
-    time: input.time.trim(),
+    time: input.time,
     room: canonicalScheduleRoomLabel(input.room),
   });
   const dateIso = String(input.dateIso ?? "").trim();
@@ -69,7 +73,7 @@ export function resolveRoomSlotTutorForDate(
 
   let best: RoomSlotTutorRule | null = null;
   for (const rule of rules) {
-    if (scheduleSlotKey(rule) !== key) continue;
+    if (roomSlotScheduleKey(rule) !== key) continue;
     if (rule.effective_date > dateIso) continue;
     if (!best || rule.effective_date > best.effective_date) best = rule;
   }
@@ -122,7 +126,7 @@ export async function upsertRoomSlotTutorRule(
 ): Promise<void> {
   const room = canonicalScheduleRoomLabel(input.room);
   const weekday = normalizeScheduleWeekday(input.weekday);
-  const time = String(input.time ?? "").trim();
+  const time = canonicalScheduleTimeLabel(String(input.time ?? ""));
   const tutor_name = String(input.tutor_name ?? "").trim();
   const effective_date = String(input.effective_date ?? "").trim();
   if (!room || !weekday || !time || !tutor_name || !/^\d{4}-\d{2}-\d{2}$/.test(effective_date)) {
