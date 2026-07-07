@@ -8,6 +8,12 @@ import ScheduleDuplicateRulesBanner from "@/components/ScheduleDuplicateRulesBan
 import { supabase } from "@/lib/supabase";
 import { queueSaveLessonYearState, retrySaveLessonYearState } from "@/lib/queueSaveLessonYearState";
 import { queueSaveLessonScheduleRecords, retrySaveLessonScheduleRecords } from "@/lib/queueSaveLessonScheduleRecords";
+import {
+  deleteTimetableDayRemark,
+  loadTimetableDayRemarksForStudent,
+  upsertTimetableDayRemark,
+} from "@/lib/studentLessonStorage";
+import { dayTimetableTableStrings } from "@/lib/dayTimetableUiStrings";
 import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
@@ -169,6 +175,7 @@ type ScheduleSortKey =
   | "room"
   | "tutor"
   | "lessonSummary"
+  | "remarks"
   | "lessonType";
 type ScheduleSortConfig = { key: ScheduleSortKey; direction: SortDirection } | null;
 
@@ -516,6 +523,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const [visibilityReactivateDate, setVisibilityReactivateDate] = useState<string | null>(null);
   const [accessReady, setAccessReady] = useState(false);
   const [isReadOnlyViewer, setIsReadOnlyViewer] = useState(false);
+  const [canEditTimetableRemarks, setCanEditTimetableRemarks] = useState(false);
   const forceReadOnlyFromNext = (searchParams.get("next") || "").startsWith("/rooms/");
   const readOnly = isReadOnlyViewer;
 
@@ -554,6 +562,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       if (isSharedByEmail || forceReadOnlyFromNext) {
         if (mounted) {
           setIsReadOnlyViewer(true);
+          setCanEditTimetableRemarks(false);
           setAccessReady(true);
         }
         return;
@@ -561,6 +570,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       if (role === "tutor") {
         if (mounted) {
           setIsReadOnlyViewer(true);
+          setCanEditTimetableRemarks(false);
           setAccessReady(true);
         }
         return;
@@ -568,12 +578,14 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       if (role === "admin") {
         if (mounted) {
           setIsReadOnlyViewer(false);
+          setCanEditTimetableRemarks(true);
           setAccessReady(true);
         }
         return;
       }
       if (mounted) {
         setIsReadOnlyViewer(false);
+        setCanEditTimetableRemarks(false);
         setAccessReady(true);
       }
     }
@@ -599,6 +611,14 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   >({});
   const lessonSummaryDraftByDateIsoRef = useRef<Record<string, string>>({});
   const lessonSummarySaveTimersRef = useRef<Map<string, number>>(new Map());
+  const [timetableRemarksByDateIso, setTimetableRemarksByDateIso] = useState<Record<string, string>>(
+    {},
+  );
+  const timetableRemarksByDateIsoRef = useRef<Record<string, string>>({});
+  const timetableRemarksSaveTimersRef = useRef<Map<string, number>>(new Map());
+  const [savingTimetableRemarkDateIso, setSavingTimetableRemarkDateIso] = useState<string | null>(
+    null,
+  );
   const [rescheduleEntries, setRescheduleEntries] = useState<RescheduleEntry[]>([]);
   const RESCHEDULE_STORAGE_KEY = `reschedule:${studentId}:${targetYear}`;
   const [extraEntries, setExtraEntries] = useState<ExtraEntry[]>([]);
@@ -679,6 +699,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>([]);
   const yearMin = getLessonSystemStartIso(targetYear);
   const yearMax = `${targetYear}-12-31`;
+  const scheduleTableColSpan = canEditTimetableRemarks ? 12 : 11;
 
   function displayTutorInCell(raw: string): string {
     const t = raw.trim();
@@ -750,6 +771,32 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!studentId || !accessReady || !canEditTimetableRemarks) {
+      setTimetableRemarksByDateIso({});
+      timetableRemarksByDateIsoRef.current = {};
+      return;
+    }
+    let mounted = true;
+    void (async () => {
+      try {
+        const remarks = await loadTimetableDayRemarksForStudent(studentId, yearMin, yearMax);
+        if (mounted) {
+          setTimetableRemarksByDateIso(remarks);
+          timetableRemarksByDateIsoRef.current = remarks;
+        }
+      } catch {
+        if (mounted) {
+          setTimetableRemarksByDateIso({});
+          timetableRemarksByDateIsoRef.current = {};
+        }
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [studentId, accessReady, canEditTimetableRemarks, yearMin, yearMax]);
 
   useEffect(() => {
     if (!studentId || !accessReady) return;

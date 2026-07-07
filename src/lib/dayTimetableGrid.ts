@@ -16,7 +16,7 @@ import {
 } from "@/lib/yearScheduleCore";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
-import { filterActiveStudentsOnDate, studentIdsOf } from "@/lib/activeStudentIds";
+import { filterActiveStudentsOnDate, filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
 import { buildStudentVisibilityMaps } from "@/lib/studentVisibility";
 import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
 import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
@@ -405,6 +405,28 @@ function buildFeePaymentToneByStudentId(
   return out;
 }
 
+function studentMayAppearOnTimetableDate(
+  records: YearLessonRecord[],
+  state: YearLessonState,
+  dateIso: string,
+  targetWeekday: string,
+  regularOnly: boolean,
+): boolean {
+  if (getActiveWeekdaysForDate(records, dateIso).includes(targetWeekday)) return true;
+  for (const ex of state.extraEntries ?? []) {
+    if (String((ex as { date?: string | null }).date ?? "").trim() === dateIso) {
+      return !regularOnly;
+    }
+  }
+  for (const e of state.rescheduleEntries ?? []) {
+    const from = String(e.fromDate ?? "").trim();
+    const to = String(e.toDate ?? "").trim();
+    if (from === dateIso) return true;
+    if (!regularOnly && to === dateIso && !isPendingRescheduleEntry(e)) return true;
+  }
+  return false;
+}
+
 /** 未在 classrooms.regular_period_max 設定時的預設上限 */
 export const DEFAULT_REGULAR_PERIOD_MAX_BY_ROOM: Record<RoomGroup, number> = {
   B: 5,
@@ -442,6 +464,12 @@ type DayTimetableStaticBundle = {
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
   examById: Record<string, string>;
   roomSlotTutorRules: RoomSlotTutorRule[];
+  feeTierBundle: StudentFeeTierBundle;
+};
+
+type DayTimetableYearScheduleData = {
+  normalizedRecordsById: Record<string, YearLessonRecord[]>;
+  stateById: Record<string, YearLessonState>;
 };
 
 const loadDayTimetableStaticBundle = unstable_cache(
@@ -453,16 +481,19 @@ const loadDayTimetableStaticBundle = unstable_cache(
       { data: visibilityRows },
       { data: tutorRows },
       { data: classroomRows },
+      roomSlotTutorRules,
+      feeTierBundle,
     ] = await Promise.all([
       supabase.from("students").select("id, name_zh, name_en, nickname_en, grade").order("id"),
       supabase.from("student_exam_dates").select("student_id, exam_date"),
       supabase.from("student_visibility_modes").select("student_id, mode, effective_date, reactivate_date"),
       supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
       supabase.from("classrooms").select("name, regular_period_max"),
+      loadRoomSlotTutorRulesServer(supabase),
+      loadStudentFeeTierSettingsAdmin(supabase),
     ]);
 
     const { inactiveEffectiveById, reactivateDateById } = buildStudentVisibilityMaps(visibilityRows ?? []);
-    const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(supabase);
 
     const examById: Record<string, string> = {};
     for (const row of examRows ?? []) {
@@ -480,10 +511,67 @@ const loadDayTimetableStaticBundle = unstable_cache(
       ),
       examById,
       roomSlotTutorRules,
+      feeTierBundle,
     };
   },
-  ["day-timetable-static-v4"],
+  ["day-timetable-static-v5"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
+);
+
+const loadDayTimetableYearScheduleData = unstable_cache(
+  async (year: number): Promise<DayTimetableYearScheduleData> => {
+    const supabase = getSupabaseAdmin();
+    const staticBundle = await loadDayTimetableStaticBundle();
+    const studentsForYear = filterStudentsWithAnyActivityInYear(
+      staticBundle.studentList,
+      staticBundle.manualInactiveEffectiveById,
+      year,
+    );
+    const ids = studentIdsOf(studentsForYear);
+    if (!ids.length) {
+      return { normalizedRecordsById: {}, stateById: {} };
+    }
+
+    const [{ data: recRows, error: recErr }, { data: stateRows, error: stateErr }] = await Promise.all([
+      fetchRowsInChunks({
+        ids,
+        concurrency: 8,
+        query: (chunk) =>
+          supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
+      }),
+      fetchRowsInChunks({
+        ids,
+        concurrency: 8,
+        query: (chunk) =>
+          supabase
+            .from("student_lessons_year_state")
+            .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
+            .eq("year", year)
+            .in("student_id", chunk),
+      }),
+    ]);
+
+    if (recErr || stateErr) {
+      throw new Error(recErr || stateErr || "Failed to load timetable year schedule data");
+    }
+
+    const normalizedRecordsById: Record<string, YearLessonRecord[]> = {};
+    for (const row of recRows ?? []) {
+      const sid = String((row as { student_id?: string }).student_id ?? "");
+      if (!sid) continue;
+      normalizedRecordsById[sid] = normalizeRecords((row as { records?: unknown }).records);
+    }
+
+    const stateById: Record<string, YearLessonState> = {};
+    for (const row of stateRows ?? []) {
+      const sid = String((row as { student_id?: string }).student_id ?? "");
+      if (sid) stateById[sid] = normalizeYearState(row);
+    }
+
+    return { normalizedRecordsById, stateById };
+  },
+  ["day-timetable-year-schedule-v1"],
+  { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
 async function fetchDayTimetablePayloadUncached(
@@ -499,12 +587,15 @@ async function fetchDayTimetablePayloadUncached(
   const { regularOnly } = options;
 
   const supabase = getSupabaseAdmin();
-  const [staticBundle, timetableStyle, feeTierBundle] = await Promise.all([
+  const targetWeekday = weekdayCnFromIsoDateHk(dateIso);
+  const [staticBundle, yearSchedule, timetableStyle, { data: remarkRows }] = await Promise.all([
     loadDayTimetableStaticBundle(),
+    loadDayTimetableYearScheduleData(year),
     loadDayTimetableStyleSettings(),
-    loadStudentFeeTierSettingsAdmin(supabase),
+    supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
   ]);
-  const { regularPeriodMaxByRoom, tutorColorByName, examById, roomSlotTutorRules } = staticBundle;
+  const { regularPeriodMaxByRoom, tutorColorByName, examById, roomSlotTutorRules, feeTierBundle } =
+    staticBundle;
   const manualInactiveEffectiveById = new Map(Object.entries(staticBundle.manualInactiveEffectiveById));
   const reactivateDateById = staticBundle.reactivateDateById;
 
@@ -515,51 +606,9 @@ async function fetchDayTimetablePayloadUncached(
     dateIso,
     reactivateDateById,
   );
-  const activeStudentIds = studentIdsOf(studentList);
 
-  const [
-    { data: recRows, error: recErr },
-    { data: stateRows, error: stateErr },
-    { data: remarkRows },
-  ] = await Promise.all([
-    activeStudentIds.length
-      ? fetchRowsInChunks({
-          ids: activeStudentIds,
-          query: (chunk) =>
-            supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
-        })
-      : Promise.resolve({ data: [], error: null }),
-    activeStudentIds.length
-      ? fetchRowsInChunks({
-          ids: activeStudentIds,
-          query: (chunk) =>
-            supabase
-              .from("student_lessons_year_state")
-              .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-              .eq("year", year)
-              .in("student_id", chunk),
-        })
-      : Promise.resolve({ data: [], error: null }),
-    supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
-  ]);
-
-  if (recErr || stateErr) {
-    throw new Error(recErr || stateErr || "Failed to load timetable schedule data");
-  }
-  const recordsById = new Map<string, unknown>();
-  for (const row of recRows ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    if (sid) recordsById.set(sid, (row as { records?: unknown }).records);
-  }
-  const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
-  for (const [sid, raw] of recordsById) {
-    normalizedRecordsById.set(sid, normalizeRecords(raw));
-  }
-  const stateById = new Map<string, YearLessonState>();
-  for (const row of stateRows ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    if (sid) stateById.set(sid, normalizeYearState(row));
-  }
+  const normalizedRecordsById = new Map(Object.entries(yearSchedule.normalizedRecordsById));
+  const stateById = new Map(Object.entries(yearSchedule.stateById));
   const timetableRemarksById: Record<string, string> = {};
   for (const row of remarkRows ?? []) {
     const sid = String((row as { student_id?: string }).student_id ?? "");
@@ -568,10 +617,15 @@ async function fetchDayTimetablePayloadUncached(
   }
   const byTimeRoom: Record<string, DayTimetableCell[]> = {};
   const timeSet = new Set<string>();
+  let skippedStudents = 0;
 
   for (const st of studentList) {
     const records = normalizedRecordsById.get(st.id) ?? EMPTY_RECORDS;
     const state = stateById.get(st.id) ?? EMPTY_YEAR_STATE;
+    if (!studentMayAppearOnTimetableDate(records, state, dateIso, targetWeekday, regularOnly)) {
+      skippedStudents += 1;
+      continue;
+    }
 
     const studentDisplayName = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
@@ -650,57 +704,56 @@ async function fetchDayTimetablePayloadUncached(
   }
   const timetableStudentIds = Array.from(studentIdsOnTimetable);
 
-  const feeStartMonth = feeSystemStartMonth1to12(year);
-  const [{ data: feeRowsAll }, { data: openingRows }] = await Promise.all([
-    timetableStudentIds.length > 0
-      ? supabase
-          .from("student_monthly_fee_records")
-          .select("student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade")
-          .eq("year", year)
-          .gte("month", feeStartMonth)
-          .lte("month", month)
-          .in("student_id", timetableStudentIds)
-      : Promise.resolve({ data: [] }),
-    year === FEE_OPENING_BALANCE_AS_OF_YEAR && timetableStudentIds.length > 0
-      ? supabase
-          .from("student_fee_opening_balances")
-          .select("student_id, opening_balance")
-          .eq("as_of_year", FEE_OPENING_BALANCE_AS_OF_YEAR)
-          .eq("as_of_month", FEE_OPENING_BALANCE_AS_OF_MONTH)
-          .in("student_id", timetableStudentIds)
-      : Promise.resolve({ data: [] }),
-  ]);
+  let feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone> = {};
+  if (!regularOnly && timetableStudentIds.length > 0) {
+    const feeStartMonth = feeSystemStartMonth1to12(year);
+    const [{ data: feeRowsAll }, { data: openingRows }] = await Promise.all([
+      supabase
+        .from("student_monthly_fee_records")
+        .select("student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade")
+        .eq("year", year)
+        .gte("month", feeStartMonth)
+        .lte("month", month)
+        .in("student_id", timetableStudentIds),
+      year === FEE_OPENING_BALANCE_AS_OF_YEAR
+        ? supabase
+            .from("student_fee_opening_balances")
+            .select("student_id, opening_balance")
+            .eq("as_of_year", FEE_OPENING_BALANCE_AS_OF_YEAR)
+            .eq("as_of_month", FEE_OPENING_BALANCE_AS_OF_MONTH)
+            .in("student_id", timetableStudentIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const openingBalanceByStudentId: Record<string, number> = {};
+    for (const row of (openingRows ?? []) as Array<{ student_id?: string; opening_balance?: number | null }>) {
+      const sid = normalizeStudentId(String(row.student_id ?? ""));
+      if (!sid) continue;
+      openingBalanceByStudentId[sid] = Number(row.opening_balance ?? 0) || 0;
+    }
+    const studentsById = new Map(studentList.map((s) => [normalizeStudentId(s.id), s]));
+    feePaymentToneByStudentId = buildFeePaymentToneByStudentId(
+      timetableStudentIds,
+      studentsById,
+      normalizedRecordsById,
+      stateById,
+      ((feeRowsAll ?? []) as Array<{
+        student_id?: string;
+        year?: number;
+        month?: number;
+        submitted_amount?: number | null;
+        lesson_unit_price?: number | null;
+        fee_pricing_grade?: string | null;
+      }>) ?? [],
+      openingBalanceByStudentId,
+      year,
+      month,
+      dateIso,
+      feeTierBundle,
+    );
+  }
 
   const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
-  const openingBalanceByStudentId: Record<string, number> = {};
-  for (const row of (openingRows ?? []) as Array<{ student_id?: string; opening_balance?: number | null }>) {
-    const sid = normalizeStudentId(String(row.student_id ?? ""));
-    if (!sid) continue;
-    openingBalanceByStudentId[sid] = Number(row.opening_balance ?? 0) || 0;
-  }
-  const studentsById = new Map(studentList.map((s) => [normalizeStudentId(s.id), s]));
-  const feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone> =
-    timetableStudentIds.length > 0
-      ? buildFeePaymentToneByStudentId(
-          timetableStudentIds,
-          studentsById,
-          normalizedRecordsById,
-          stateById,
-          ((feeRowsAll ?? []) as Array<{
-            student_id?: string;
-            year?: number;
-            month?: number;
-            submitted_amount?: number | null;
-            lesson_unit_price?: number | null;
-            fee_pricing_grade?: string | null;
-          }>) ?? [],
-          openingBalanceByStudentId,
-          year,
-          month,
-          dateIso,
-          feeTierBundle,
-        )
-      : {};
 
   const payload = {
     year,
@@ -723,7 +776,7 @@ async function fetchDayTimetablePayloadUncached(
     console.info(
       `[perf] fetchDayTimetablePayloadUncached y=${year} m=${month} d=${day} regularOnly=${String(
         options.regularOnly,
-      )} students=${studentList.length} timeSlots=${rowFrames.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
+      )} students=${studentList.length} skipped=${skippedStudents} timeSlots=${rowFrames.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
     );
   }
 
@@ -733,7 +786,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v12"],
+  ["day-timetable-payload-v13"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

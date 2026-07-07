@@ -175,6 +175,33 @@ export async function saveExamDate(studentId: string, examDate: string) {
 }
 
 /** Daily / Regular timetable 當日 Remarks（學生 + 日期 YYYY-MM-DD） */
+export async function loadTimetableDayRemarksForStudent(
+  studentId: string,
+  startIso: string,
+  endIso: string,
+): Promise<Record<string, string>> {
+  const { data, error } = await supabase
+    .from("student_timetable_day_remarks")
+    .select("date_iso, remarks")
+    .eq("student_id", studentId)
+    .gte("date_iso", startIso)
+    .lte("date_iso", endIso);
+
+  if (error) {
+    if (/student_timetable_day_remarks/i.test(error.message) && /does not exist/i.test(error.message)) {
+      return {};
+    }
+    throw new Error(error.message);
+  }
+
+  const out: Record<string, string> = {};
+  for (const row of data ?? []) {
+    const iso = String((row as { date_iso?: string }).date_iso ?? "").trim();
+    if (iso) out[iso] = String((row as { remarks?: string | null }).remarks ?? "");
+  }
+  return out;
+}
+
 export async function upsertTimetableDayRemark(studentId: string, dateIso: string, remarks: string) {
   await supabase.from("student_timetable_day_remarks").upsert(
     {
