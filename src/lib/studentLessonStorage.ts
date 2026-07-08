@@ -57,6 +57,14 @@ type VisibilityModeDbRow = {
   reactivate_date?: string | null;
 };
 
+type VisibilityPeriodDbRow = {
+  id?: number | null;
+  student_id?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  note?: string | null;
+};
+
 function readExamDateRow(row: ExamDateDbRow | null | undefined) {
   return {
     examDate: String(row?.exam_date ?? ""),
@@ -487,6 +495,14 @@ export type StudentVisibilityMode = {
   reactivate_date: string | null;
 };
 
+export type StudentInactivePeriod = {
+  student_id: string;
+  start_date: string;
+  /** First day the student becomes Active again (exclusive end), or null for indefinite pause. */
+  end_date: string | null;
+  note: string;
+};
+
 /** One round-trip for submit/history rows across inclusive month range. */
 export async function loadStudentMonthlyFeeRecordsInMonthRange(params: {
   studentIds: string[];
@@ -604,7 +620,149 @@ export async function upsertStudentMonthlyFeeRecord(input: {
   if (error) throw error;
 }
 
+function hkTodayIso(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+function normalizePeriodRow(row: VisibilityPeriodDbRow): StudentInactivePeriod | null {
+  const sid = String(row.student_id ?? "").trim();
+  const start = normalizeOptionalIsoDate(row.start_date);
+  if (!sid || !start) return null;
+  return {
+    student_id: sid,
+    start_date: start,
+    end_date: normalizeOptionalIsoDate(row.end_date),
+    note: String(row.note ?? ""),
+  };
+}
+
+export async function loadStudentInactivePeriods(studentId: string): Promise<StudentInactivePeriod[]> {
+  const { data, error } = await supabase
+    .from("student_visibility_periods")
+    .select("id, student_id, start_date, end_date, note")
+    .eq("student_id", studentId)
+    .order("start_date", { ascending: true });
+
+  // Backward compatibility: older DB may not have this table yet.
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes("student_visibility_periods") && (msg.includes("does not exist") || msg.includes("not found"))) {
+      // Inline legacy read (avoid recursion).
+      const legacy = await (async () => {
+        const { data, error } = await supabase
+          .from("student_visibility_modes")
+          .select("student_id, mode, effective_date, reactivate_date")
+          .eq("student_id", studentId)
+          .maybeSingle();
+        if (error && /reactivate_date/i.test(error.message)) {
+          const fallback = await supabase
+            .from("student_visibility_modes")
+            .select("student_id, mode, effective_date")
+            .eq("student_id", studentId)
+            .maybeSingle();
+          const row = fallback.data as VisibilityModeDbRow | null;
+          const rawMode = String(row?.mode ?? "active").toLowerCase();
+          return {
+            mode: rawMode === "inactive" ? "inactive" : "active",
+            effective_date: String(row?.effective_date ?? new Date().toISOString().slice(0, 10)),
+            reactivate_date: null as string | null,
+          };
+        }
+        const row = data as VisibilityModeDbRow | null;
+        const rawMode = String(row?.mode ?? "active").toLowerCase();
+        return {
+          mode: rawMode === "inactive" ? "inactive" : "active",
+          effective_date: String(row?.effective_date ?? new Date().toISOString().slice(0, 10)),
+          reactivate_date: normalizeOptionalIsoDate(row?.reactivate_date),
+        };
+      })();
+
+      if (legacy.mode !== "inactive") return [];
+      return [
+        {
+          student_id: studentId,
+          start_date: String(legacy.effective_date),
+          end_date: normalizeOptionalIsoDate(legacy.reactivate_date),
+          note: "fallback: student_visibility_modes",
+        },
+      ];
+    }
+    throw error;
+  }
+
+  return (data ?? [])
+    .map((r) => normalizePeriodRow(r as VisibilityPeriodDbRow))
+    .filter((x): x is StudentInactivePeriod => Boolean(x));
+}
+
+export async function appendStudentInactivePeriod(input: {
+  studentId: string;
+  startDate: string;
+  endDate?: string | null;
+  note?: string;
+}) {
+  const payload = {
+    student_id: input.studentId,
+    start_date: input.startDate,
+    end_date: normalizeOptionalIsoDate(input.endDate ?? ""),
+    note: String(input.note ?? ""),
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("student_visibility_periods").insert(payload);
+  if (error) throw error;
+}
+
+export async function closeLatestOpenStudentInactivePeriod(input: { studentId: string; endDate: string }) {
+  const { data, error } = await supabase
+    .from("student_visibility_periods")
+    .select("id, start_date")
+    .eq("student_id", input.studentId)
+    .is("end_date", null)
+    .order("start_date", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const row = (data ?? [])[0] as VisibilityPeriodDbRow | undefined;
+  const id = Number(row?.id ?? 0);
+  if (!Number.isFinite(id) || id <= 0) return;
+  const { error: upErr } = await supabase
+    .from("student_visibility_periods")
+    .update({ end_date: input.endDate, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (upErr) throw upErr;
+}
+
 export async function loadStudentVisibilityMode(studentId: string): Promise<StudentVisibilityMode> {
+  // Prefer new periods model; fall back to legacy single-row mode.
+  try {
+    const periods = await loadStudentInactivePeriods(studentId);
+    const today = hkTodayIso();
+    const activePeriod = periods
+      .filter((p) => p.start_date <= today && (!p.end_date || today < p.end_date))
+      .sort((a, b) => b.start_date.localeCompare(a.start_date))[0];
+
+    if (activePeriod) {
+      return {
+        student_id: studentId,
+        mode: "inactive",
+        effective_date: activePeriod.start_date,
+        reactivate_date: normalizeOptionalIsoDate(activePeriod.end_date),
+      };
+    }
+    return {
+      student_id: studentId,
+      mode: "active",
+      effective_date: today,
+      reactivate_date: null,
+    };
+  } catch {
+    // ignore and fall through to legacy loader
+  }
+
   const { data, error } = await supabase
     .from("student_visibility_modes")
     .select("student_id, mode, effective_date, reactivate_date")
@@ -659,8 +817,26 @@ export async function saveStudentVisibilityMode(input: {
   mode: "active" | "inactive";
   effectiveDate: string;
   reactivateDate?: string | null;
+  note?: string | null;
 }) {
-  const { studentId, mode, effectiveDate, reactivateDate } = input;
+  const { studentId, mode, effectiveDate, reactivateDate, note } = input;
+  // New canonical storage: append/close inactive periods.
+  // - Inactive: add a new period (keeps history)
+  // - Active: close the latest open-ended period (if any) using effectiveDate as the first active day
+  try {
+    if (mode === "inactive") {
+      await appendStudentInactivePeriod({
+        studentId,
+        startDate: effectiveDate,
+        endDate: normalizeOptionalIsoDate(reactivateDate ?? ""),
+        note,
+      });
+    } else {
+      await closeLatestOpenStudentInactivePeriod({ studentId, endDate: effectiveDate });
+    }
+  } catch {
+    // keep legacy write path below for older DBs; caller still gets caches invalidated.
+  }
   const payload = {
     student_id: studentId,
     mode,

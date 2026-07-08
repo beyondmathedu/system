@@ -2,10 +2,82 @@ import { describe, expect, it } from "vitest";
 import {
   getInactiveMonthGapsInYear,
   isStudentHiddenForFeeSheetMonth,
+  isStudentHiddenForFeeSheetMonthFromPeriods,
+  isStudentInactiveOnDateFromPeriods,
   makeStudentInactiveDateChecker,
+  makeStudentInactiveDateCheckerFromPeriods,
   normalizeReactivateAsFirstActiveDay,
+  type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import { collectBillableLessonDatesForMonth } from "@/lib/feeRecordLessonDates";
+
+describe("period-based inactivity", () => {
+  const studentId = "00265";
+  const periods: StudentInactivePeriod[] = [
+    { studentId, startDate: "2026-07-01", endDate: "2026-09-01" },
+    { studentId, startDate: "2026-11-15", endDate: null },
+  ];
+
+  it("treats any matching period as inactive", () => {
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-07-15" })).toBe(true);
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-08-31" })).toBe(true);
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-09-01" })).toBe(false);
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-11-14" })).toBe(false);
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-11-15" })).toBe(true);
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2027-01-01" })).toBe(true);
+  });
+
+  it("creates a date checker from periods", () => {
+    const checker = makeStudentInactiveDateCheckerFromPeriods({
+      periods,
+      studentId,
+      grade: "F3",
+      year: 2026,
+    });
+    expect(checker("2026-07-02")).toBe(true);
+    expect(checker("2026-10-01")).toBe(false);
+    expect(checker("2026-12-01")).toBe(true);
+  });
+
+  it("hides a fee month only when fully covered by inactivity", () => {
+    expect(
+      isStudentHiddenForFeeSheetMonthFromPeriods({
+        periods,
+        studentId,
+        grade: "F3",
+        sheetYear: 2026,
+        sheetMonth: 7,
+      }),
+    ).toBe(true);
+    expect(
+      isStudentHiddenForFeeSheetMonthFromPeriods({
+        periods,
+        studentId,
+        grade: "F3",
+        sheetYear: 2026,
+        sheetMonth: 9,
+      }),
+    ).toBe(false);
+    expect(
+      isStudentHiddenForFeeSheetMonthFromPeriods({
+        periods,
+        studentId,
+        grade: "F3",
+        sheetYear: 2026,
+        sheetMonth: 11,
+      }),
+    ).toBe(false);
+    expect(
+      isStudentHiddenForFeeSheetMonthFromPeriods({
+        periods,
+        studentId,
+        grade: "F3",
+        sheetYear: 2026,
+        sheetMonth: 12,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("isStudentHiddenForFeeSheetMonth", () => {
   const base = {

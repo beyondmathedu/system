@@ -27,8 +27,9 @@ import {
 } from "@/lib/studentMonthlyFeeRecordsCompat";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import {
-  buildStudentVisibilityMaps,
+  buildStudentInactivePeriodsById,
   normalizeOptionalIsoDate,
+  type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 
 export type StudentExamInfo = {
@@ -84,11 +85,114 @@ export type StudentVisibilityModeServer = {
   reactivate_date: string | null;
 };
 
+function hkTodayIso(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+export type StudentInactivePeriodRowServer = {
+  student_id: string;
+  start_date: string;
+  end_date: string | null;
+  note: string;
+};
+
+function isMissingVisibilityPeriodsTableError(message: string): boolean {
+  const m = String(message ?? "").toLowerCase();
+  return (
+    m.includes("student_visibility_periods") &&
+    (m.includes("does not exist") || m.includes("schema cache") || m.includes("not found"))
+  );
+}
+
+export async function loadStudentInactivePeriodsBatchServer(
+  supabase: SupabaseClient,
+  studentIds: string[],
+): Promise<StudentInactivePeriodRowServer[]> {
+  if (!studentIds.length) return [];
+  const { data, error } = await fetchRowsInChunks({
+    ids: studentIds,
+    concurrency: 8,
+    query: (chunk) =>
+      supabase
+        .from("student_visibility_periods")
+        .select("student_id, start_date, end_date, note")
+        .in("student_id", chunk)
+        .order("start_date", { ascending: true }),
+  });
+
+  if (error) {
+    if (!isMissingVisibilityPeriodsTableError(error)) throw new Error(error);
+    // Fallback to legacy single-row mode.
+    const legacy = await fetchRowsInChunks({
+      ids: studentIds,
+      concurrency: 8,
+      query: (chunk) =>
+        supabase
+          .from("student_visibility_modes")
+          .select("student_id, mode, effective_date, reactivate_date")
+          .in("student_id", chunk),
+    });
+    if (legacy.error) throw new Error(legacy.error);
+    const out: StudentInactivePeriodRowServer[] = [];
+    for (const row of legacy.data ?? []) {
+      const mode = String((row as { mode?: string }).mode ?? "active").toLowerCase();
+      if (mode !== "inactive") continue;
+      const sid = String((row as { student_id?: string }).student_id ?? "").trim();
+      const start = String((row as { effective_date?: string }).effective_date ?? "").trim();
+      if (!sid || !start) continue;
+      out.push({
+        student_id: sid,
+        start_date: start,
+        end_date: normalizeOptionalIsoDate((row as { reactivate_date?: string | null }).reactivate_date),
+        note: "fallback: student_visibility_modes",
+      });
+    }
+    return out;
+  }
+
+  return (data ?? []).map((row) => ({
+    student_id: String((row as { student_id?: string }).student_id ?? ""),
+    start_date: String((row as { start_date?: string }).start_date ?? ""),
+    end_date: normalizeOptionalIsoDate((row as { end_date?: string | null }).end_date),
+    note: String((row as { note?: string | null }).note ?? ""),
+  }));
+}
+
 export async function loadStudentVisibilityModeServer(
   supabase: SupabaseClient,
   studentId: string,
 ): Promise<StudentVisibilityModeServer> {
-  const defaultDate = new Date().toISOString().slice(0, 10);
+  const defaultDate = hkTodayIso();
+
+  // Prefer new periods model.
+  try {
+    const { data, error } = await supabase
+      .from("student_visibility_periods")
+      .select("start_date, end_date")
+      .eq("student_id", studentId)
+      .order("start_date", { ascending: true });
+    if (error) throw error;
+    const today = defaultDate;
+    const active = (data ?? [])
+      .map((r) => ({
+        start: String((r as { start_date?: string }).start_date ?? "").trim(),
+        end: normalizeOptionalIsoDate((r as { end_date?: string | null }).end_date),
+      }))
+      .filter((p) => p.start && p.start <= today && (!p.end || today < p.end))
+      .sort((a, b) => b.start.localeCompare(a.start))[0];
+    if (active) {
+      return { mode: "inactive", effective_date: active.start, reactivate_date: active.end };
+    }
+    return { mode: "active", effective_date: defaultDate, reactivate_date: null };
+  } catch {
+    // fall back to legacy below
+  }
+
   const { data, error } = await supabase
     .from("student_visibility_modes")
     .select("student_id, mode, effective_date, reactivate_date")
@@ -377,8 +481,7 @@ export async function loadStudentFeeOpeningBalancesServer(
 }
 
 export type FeeRecordStudentVisibility = {
-  manualInactiveEffective: string | null;
-  reactivateDate: string | null;
+  periods: StudentInactivePeriod[];
 };
 
 export type FeeRecordBootstrapStudent = {
@@ -408,9 +511,9 @@ export async function loadFeeRecordBootstrap(
   const allIds = (studentRows ?? []).map((r) => String(r.id ?? "")).filter(Boolean);
   let visibilityRows: Array<{
     student_id?: string;
-    mode?: string;
-    effective_date?: string;
-    reactivate_date?: string | null;
+    start_date?: string;
+    end_date?: string | null;
+    note?: string | null;
   }> = [];
   if (allIds.length) {
     const vis = await fetchRowsInChunks({
@@ -418,15 +521,15 @@ export async function loadFeeRecordBootstrap(
       concurrency: 8,
       query: (chunk) =>
         supabase
-          .from("student_visibility_modes")
-          .select("student_id, mode, effective_date, reactivate_date")
+          .from("student_visibility_periods")
+          .select("student_id, start_date, end_date, note")
           .in("student_id", chunk),
     });
     if (vis.error) throw new Error(vis.error);
     visibilityRows = vis.data;
   }
 
-  const { inactiveEffectiveById, reactivateDateById } = buildStudentVisibilityMaps(visibilityRows ?? []);
+  const periodsById = buildStudentInactivePeriodsById(visibilityRows ?? []);
 
   const students: FeeRecordBootstrapStudent[] = (studentRows ?? [])
     .map((r) => ({
@@ -469,8 +572,7 @@ export async function loadFeeRecordBootstrap(
   const visibilityByStudentId: Record<string, FeeRecordStudentVisibility> = {};
   for (const id of ids) {
     visibilityByStudentId[id] = {
-      manualInactiveEffective: inactiveEffectiveById[id] ?? null,
-      reactivateDate: reactivateDateById[id] ?? null,
+      periods: periodsById[id] ?? [],
     };
   }
 

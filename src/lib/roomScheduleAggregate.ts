@@ -4,7 +4,12 @@ import { SCHEDULE_CACHE_TAG_AGGREGATES } from "@/lib/scheduleCacheTags";
 import { fetchClassroomScheduleLabel } from "@/lib/classroomsRegistry";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import {
+  buildStudentInactivePeriodsById,
+  isStudentInactiveOnDateFromPeriods,
+  withAutoF6InactivePeriod,
+  type StudentInactivePeriod,
+} from "@/lib/studentVisibility";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { isInactiveTutorName } from "@/lib/tutorVisibility";
@@ -292,7 +297,7 @@ async function loadStateRoomSignalsForYear(
 async function loadActiveStudentsScheduleContext(year: number): Promise<{
   supabase: SupabaseClient;
   activeStudents: ScheduleStudentRow[];
-  inactiveEffectiveById: Map<string, string>;
+  inactivePeriodsById: Map<string, StudentInactivePeriod[]>;
   error: string | null;
 }> {
   const supabase = getSupabaseAdmin();
@@ -305,7 +310,7 @@ async function loadActiveStudentsScheduleContext(year: number): Promise<{
     return {
       supabase,
       activeStudents: [],
-      inactiveEffectiveById: new Map(),
+      inactivePeriodsById: new Map(),
       error: stErr.message,
     };
   }
@@ -314,46 +319,48 @@ async function loadActiveStudentsScheduleContext(year: number): Promise<{
     return {
       supabase,
       activeStudents: [],
-      inactiveEffectiveById: new Map(),
+      inactivePeriodsById: new Map(),
       error: null,
     };
   }
 
-  const manualInactiveEffectiveById = new Map<string, string>();
   const allIds = students.map((s) => String(s.id ?? "")).filter(Boolean);
-  const { data: visibilityRows } = await fetchRowsInChunks({
+  const { data: periodRows, error: periodErr } = await fetchRowsInChunks({
     ids: allIds,
     query: (chunk) =>
-      supabase.from("student_visibility_modes").select("student_id, mode, effective_date").in("student_id", chunk),
+      supabase
+        .from("student_visibility_periods")
+        .select("student_id, start_date, end_date, note")
+        .in("student_id", chunk),
   });
-
-  for (const row of visibilityRows ?? []) {
-    const mode = String((row as { mode?: string }).mode ?? "active").toLowerCase();
-    if (mode !== "inactive") continue;
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    const eff = String((row as { effective_date?: string }).effective_date ?? "");
-    if (sid && eff) manualInactiveEffectiveById.set(sid, eff);
+  if (periodErr) {
+    return { supabase, activeStudents: [], inactivePeriodsById: new Map(), error: periodErr };
   }
+
+  const periodsById = buildStudentInactivePeriodsById(periodRows ?? []);
 
   const activeStudents = filterStudentsWithAnyActivityInYear(
     students as ScheduleStudentRow[],
-    manualInactiveEffectiveById,
+    periodsById,
     year,
   );
 
-  const inactiveEffectiveById = new Map<string, string>();
+  const inactivePeriodsById = new Map<string, StudentInactivePeriod[]>();
   for (const s of activeStudents) {
     const sid = String(s.id ?? "");
     if (!sid) continue;
-    const eff = resolveStudentInactiveEffectiveDate({
-      grade: s.grade,
-      manualInactiveEffective: manualInactiveEffectiveById.get(sid) ?? null,
-      year,
-    });
-    if (eff) inactiveEffectiveById.set(sid, eff);
+    inactivePeriodsById.set(
+      sid,
+      withAutoF6InactivePeriod({
+        periods: periodsById[sid] ?? [],
+        studentId: sid,
+        grade: s.grade,
+        year,
+      }),
+    );
   }
 
-  return { supabase, activeStudents, inactiveEffectiveById, error: null };
+  return { supabase, activeStudents, inactivePeriodsById, error: null };
 }
 
 async function loadLessonRecordsMap(
@@ -388,7 +395,7 @@ async function loadRoomScheduleBundleUncached(
         students: [],
         recMap: new Map(),
         stateMap: new Map(),
-        inactiveEffectiveById: ctx.inactiveEffectiveById,
+        inactivePeriodsById: ctx.inactivePeriodsById,
       },
       error: null,
       stats: { active: 0, stateLoads: 0 },
@@ -432,10 +439,10 @@ async function loadRoomScheduleBundleUncached(
     if (recMap.has(sid)) candidateRecMap.set(sid, recMap.get(sid));
   }
 
-  const candidateInactive = new Map<string, string>();
+  const candidateInactive = new Map<string, StudentInactivePeriod[]>();
   for (const sid of candidateIdList) {
-    const eff = ctx.inactiveEffectiveById.get(sid);
-    if (eff) candidateInactive.set(sid, eff);
+    const periods = ctx.inactivePeriodsById.get(sid);
+    if (periods?.length) candidateInactive.set(sid, periods);
   }
 
   return {
@@ -443,7 +450,7 @@ async function loadRoomScheduleBundleUncached(
       students: candidateStudents,
       recMap: candidateRecMap,
       stateMap,
-      inactiveEffectiveById: candidateInactive,
+        inactivePeriodsById: candidateInactive,
     },
     error: null,
     stats: { active: ids.length, stateLoads: candidateIdList.length },
@@ -520,14 +527,14 @@ type StudentsScheduleBundle = {
   students: ScheduleStudentRow[];
   recMap: Map<string, unknown>;
   stateMap: Map<string, YearLessonState>;
-  inactiveEffectiveById: Map<string, string>;
+  inactivePeriodsById: Map<string, StudentInactivePeriod[]>;
 };
 
 type SerializableScheduleBundle = {
   students: ScheduleStudentRow[];
   recEntries: Array<[string, unknown]>;
   stateEntries: Array<[string, YearLessonState]>;
-  inactiveEntries: Array<[string, string]>;
+  inactiveEntries: Array<[string, StudentInactivePeriod[]]>;
 };
 
 function serializeScheduleBundle(bundle: StudentsScheduleBundle): SerializableScheduleBundle {
@@ -535,7 +542,7 @@ function serializeScheduleBundle(bundle: StudentsScheduleBundle): SerializableSc
     students: bundle.students,
     recEntries: [...bundle.recMap.entries()],
     stateEntries: [...bundle.stateMap.entries()],
-    inactiveEntries: [...bundle.inactiveEffectiveById.entries()],
+    inactiveEntries: [...bundle.inactivePeriodsById.entries()],
   };
 }
 
@@ -544,7 +551,7 @@ function deserializeScheduleBundle(serialized: SerializableScheduleBundle): Stud
     students: serialized.students,
     recMap: new Map(serialized.recEntries),
     stateMap: new Map(serialized.stateEntries),
-    inactiveEffectiveById: new Map(serialized.inactiveEntries),
+    inactivePeriodsById: new Map(serialized.inactiveEntries),
   };
 }
 
@@ -568,7 +575,7 @@ async function loadStudentsScheduleBundleUncached(year: number): Promise<{
       students: ctx.activeStudents,
       recMap,
       stateMap,
-      inactiveEffectiveById: ctx.inactiveEffectiveById,
+      inactivePeriodsById: ctx.inactivePeriodsById,
     },
     error: null,
   };
@@ -599,7 +606,7 @@ async function loadStudentsScheduleBundle(year: number): Promise<{
         students: [],
         recMap: new Map(),
         stateMap: new Map(),
-        inactiveEffectiveById: new Map(),
+        inactivePeriodsById: new Map(),
       },
       error: null,
     };
@@ -629,7 +636,7 @@ async function fetchRoomScheduleAggregateUncached(
     return { roomLabel, rows: [], loadError: null };
   }
 
-  const { students, recMap, stateMap, inactiveEffectiveById } = bundle;
+  const { students, recMap, stateMap, inactivePeriodsById } = bundle;
   const supabase = getSupabaseAdmin();
   const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(supabase);
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
@@ -661,9 +668,9 @@ async function fetchRoomScheduleAggregateUncached(
         const ne = normalizeCalendarDateIso(endIso) ?? endIso;
         return nd >= ns && nd <= ne;
       });
-    const inactiveEffective = inactiveEffectiveById.get(st.id);
-    const visibilityFiltered = inactiveEffective
-      ? filtered.filter((r) => r.date < inactiveEffective)
+    const periods = inactivePeriodsById.get(st.id) ?? [];
+    const visibilityFiltered = periods.length
+      ? filtered.filter((r) => !isStudentInactiveOnDateFromPeriods({ periods, dateIso: r.date }))
       : filtered;
     const name = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
@@ -772,7 +779,7 @@ async function fetchTutorMonthLessonRowsUncached(
     return { rows: [], loadError: null };
   }
 
-  const { students, recMap, stateMap, inactiveEffectiveById } = bundle;
+  const { students, recMap, stateMap, inactivePeriodsById } = bundle;
   const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(getSupabaseAdmin());
   const out: TutorMonthLessonRow[] = [];
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
@@ -791,9 +798,9 @@ async function fetchTutorMonthLessonRowsUncached(
     let filtered = buildYearScheduleRowsForMonth(records, state, year, month, { roomSlotTutorRules }).filter(
       (r) => r.lessonType !== "取消",
     );
-    const inactiveEffective = inactiveEffectiveById.get(st.id);
-    if (inactiveEffective) {
-      filtered = filtered.filter((r) => r.date < inactiveEffective);
+    const periods = inactivePeriodsById.get(st.id) ?? [];
+    if (periods.length) {
+      filtered = filtered.filter((r) => !isStudentInactiveOnDateFromPeriods({ periods, dateIso: r.date }));
     }
     const studentName = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },

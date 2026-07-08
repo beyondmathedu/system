@@ -2,14 +2,26 @@ import { isF6Grade } from "@/lib/grade";
 
 /**
  * 學生可見性規則：
- * - 手動 Inactive（student_visibility_modes）沿用既有邏輯；
+ * - 手動 Inactive（legacy: student_visibility_modes；new: student_visibility_periods）；
  * - F.6 學生自該年 05-01 起自動視為 Inactive（畢業）。
- * 回傳最早生效日（字串 YYYY-MM-DD 可直接做 lexicographical compare）。
+ *
+ * NOTE: The codebase previously assumed a single inactive effective date per student.
+ * This module now supports multiple inactive periods while keeping legacy helpers
+ * for backwards compatibility.
  */
 export function normalizeOptionalIsoDate(raw: unknown): string | null {
   const s = String(raw ?? "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
+
+export type StudentInactivePeriod = {
+  studentId: string;
+  /** Inclusive start (YYYY-MM-DD). */
+  startDate: string;
+  /** Exclusive end = first active day (YYYY-MM-DD), or null for indefinite. */
+  endDate: string | null;
+  note?: string;
+};
 
 function daysBetweenIso(startIso: string, endIso: string): number {
   const start = Date.parse(`${startIso}T00:00:00+08:00`);
@@ -43,6 +55,107 @@ export function compareStudentReactivateReminders(a: string, b: string, ymdToday
   if (ra !== rb) return ra - rb;
   return a.localeCompare(b);
 }
+
+function isoIsValid(iso: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(iso ?? "").trim());
+}
+
+function isIsoDateInHalfOpenRange(dateIso: string, startIso: string, endIso: string | null): boolean {
+  if (!isoIsValid(dateIso) || !isoIsValid(startIso)) return false;
+  if (dateIso < startIso) return false;
+  const end = endIso ? normalizeOptionalIsoDate(endIso) : null;
+  if (end && dateIso >= end) return false;
+  return true;
+}
+
+function sortAndCoalescePeriods(periods: StudentInactivePeriod[]): StudentInactivePeriod[] {
+  const normalized = periods
+    .map((p) => ({
+      studentId: String(p.studentId ?? "").trim(),
+      startDate: String(p.startDate ?? "").trim(),
+      endDate: normalizeOptionalIsoDate(p.endDate),
+      note: typeof p.note === "string" ? p.note : undefined,
+    }))
+    .filter((p) => isoIsValid(p.startDate));
+
+  normalized.sort((a, b) => {
+    const sd = a.startDate.localeCompare(b.startDate);
+    if (sd !== 0) return sd;
+    const ea = a.endDate ?? "9999-12-31";
+    const eb = b.endDate ?? "9999-12-31";
+    return ea.localeCompare(eb);
+  });
+
+  const out: StudentInactivePeriod[] = [];
+  for (const p of normalized) {
+    const last = out[out.length - 1];
+    if (!last) {
+      out.push(p);
+      continue;
+    }
+    if (last.studentId !== p.studentId) {
+      out.push(p);
+      continue;
+    }
+
+    const lastEnd = last.endDate;
+    const pEnd = p.endDate;
+    const lastEndComparable = lastEnd ?? "9999-12-31";
+
+    // Overlap / touch: merge into last.
+    if (p.startDate <= lastEndComparable) {
+      const mergedEnd =
+        lastEnd == null || pEnd == null
+          ? null
+          : pEnd > lastEnd
+            ? pEnd
+            : lastEnd;
+      last.endDate = mergedEnd;
+      continue;
+    }
+    out.push(p);
+  }
+  return out;
+}
+
+export function isStudentInactiveOnDateFromPeriods(input: {
+  periods: readonly StudentInactivePeriod[];
+  dateIso: string;
+}): boolean {
+  const dateIso = String(input.dateIso ?? "").trim();
+  const periods = input.periods ?? [];
+  // periods are expected small; linear scan is fine, but allow pre-coalesced.
+  for (const p of periods) {
+    if (isIsoDateInHalfOpenRange(dateIso, p.startDate, p.endDate)) return true;
+  }
+  return false;
+}
+
+export function autoF6InactivePeriod(input: {
+  studentId: string;
+  grade?: string | null;
+  year: number;
+}): StudentInactivePeriod | null {
+  if (!isF6Grade(input.grade)) return null;
+  return {
+    studentId: String(input.studentId ?? "").trim(),
+    startDate: `${input.year}-05-01`,
+    endDate: null,
+    note: "auto: F6 graduation",
+  };
+}
+
+export function withAutoF6InactivePeriod(input: {
+  periods: readonly StudentInactivePeriod[];
+  studentId: string;
+  grade?: string | null;
+  year: number;
+}): StudentInactivePeriod[] {
+  const auto = autoF6InactivePeriod(input);
+  const merged = auto ? [...input.periods, auto] : [...input.periods];
+  return sortAndCoalescePeriods(merged);
+}
+
 export function resolveStudentInactiveEffectiveDate(input: {
   grade?: string | null;
   manualInactiveEffective?: string | null;
@@ -57,6 +170,10 @@ export function resolveStudentInactiveEffectiveDate(input: {
 function monthEndIsoDate(year: number, month1to12: number): string {
   const day = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
   return `${year}-${String(month1to12).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function monthStartIsoDate(year: number, month1to12: number): string {
+  return `${year}-${String(month1to12).padStart(2, "0")}-01`;
 }
 
 function firstDayOfNextMonthIso(year: number, month1to12: number): string {
@@ -124,10 +241,22 @@ export function isStudentInactiveOnDate(input: {
     manualInactiveEffective: input.manualInactiveEffective,
     year: input.year,
   });
-  if (!eff || input.dateIso < eff) return false;
-  const reactivate = resolveReactivateForInactiveLogic(input.reactivateDate);
-  if (reactivate && input.dateIso >= reactivate) return false;
-  return true;
+  const manualPeriod: StudentInactivePeriod[] = eff
+    ? [
+        {
+          studentId: "",
+          startDate: eff,
+          endDate: resolveReactivateForInactiveLogic(input.reactivateDate),
+        },
+      ]
+    : [];
+  const periods = withAutoF6InactivePeriod({
+    periods: manualPeriod,
+    studentId: "",
+    grade: input.grade,
+    year: input.year,
+  });
+  return isStudentInactiveOnDateFromPeriods({ periods, dateIso: input.dateIso });
 }
 
 export type InactiveMonthGap = {
@@ -151,16 +280,29 @@ export function getInactiveMonthGapsInYear(input: {
     manualInactiveEffective: input.manualInactiveEffective,
     year: input.year,
   });
-  if (!eff) return [];
+  const manualPeriod: StudentInactivePeriod[] = eff
+    ? [
+        {
+          studentId: "",
+          startDate: eff,
+          endDate: normalizeReactivateAsFirstActiveDay(input.reactivateDate),
+        },
+      ]
+    : [];
+  const periods = withAutoF6InactivePeriod({
+    periods: manualPeriod,
+    studentId: "",
+    grade: input.grade,
+    year: input.year,
+  });
+  if (!periods.length) return [];
 
-  const reactivate = normalizeReactivateAsFirstActiveDay(input.reactivateDate);
   const startMonth = input.firstMonth ?? 1;
   const fullyInactive: number[] = [];
-
   for (let m = startMonth; m <= 12; m++) {
-    const monthStart = `${input.year}-${String(m).padStart(2, "0")}-01`;
-    const monthEnd = monthEndIsoDate(input.year, m);
-    if (monthStart >= eff && (!reactivate || monthEnd < reactivate)) {
+    const monthStart = monthStartIsoDate(input.year, m);
+    const monthEndExclusive = firstDayOfNextMonthIso(input.year, m);
+    if (isIsoRangeFullyInactive({ periods, startIso: monthStart, endExclusiveIso: monthEndExclusive })) {
       fullyInactive.push(m);
     }
   }
@@ -179,8 +321,8 @@ export function getInactiveMonthGapsInYear(input: {
     gaps.push({
       afterMonth: group[0]! - 1,
       months: group,
-      effectiveDate: eff,
-      reactivateDate: reactivate,
+      effectiveDate: periods[0]!.startDate,
+      reactivateDate: periods[0]!.endDate,
     });
     group = [month];
   }
@@ -188,11 +330,39 @@ export function getInactiveMonthGapsInYear(input: {
   gaps.push({
     afterMonth: group[0]! - 1,
     months: group,
-    effectiveDate: eff,
-    reactivateDate: reactivate,
+    effectiveDate: periods[0]!.startDate,
+    reactivateDate: periods[0]!.endDate,
   });
 
   return gaps;
+}
+
+function isIsoRangeFullyInactive(input: {
+  periods: readonly StudentInactivePeriod[];
+  startIso: string;
+  endExclusiveIso: string;
+}): boolean {
+  const start = String(input.startIso ?? "").trim();
+  const end = String(input.endExclusiveIso ?? "").trim();
+  if (!isoIsValid(start) || !isoIsValid(end) || end <= start) return false;
+  const coalesced = sortAndCoalescePeriods([...input.periods]);
+  // Filter to periods that might overlap [start,end)
+  const relevant = coalesced.filter((p) => {
+    const pEnd = p.endDate ?? "9999-12-31";
+    return p.startDate < end && pEnd > start;
+  });
+  if (!relevant.length) return false;
+
+  // Walk coverage from start to end.
+  let cursor = start;
+  for (const p of relevant) {
+    const pEnd = p.endDate ?? "9999-12-31";
+    if (pEnd <= cursor) continue;
+    if (p.startDate > cursor) return false; // gap before next coverage
+    cursor = pEnd;
+    if (cursor >= end) return true;
+  }
+  return cursor >= end;
 }
 
 /** Returns a date checker for fee/lesson billing, or undefined when the student has no manual inactive date. */
@@ -214,6 +384,21 @@ export function makeStudentInactiveDateChecker(input: {
     });
 }
 
+export function makeStudentInactiveDateCheckerFromPeriods(input: {
+  periods: readonly StudentInactivePeriod[];
+  studentId: string;
+  grade?: string | null;
+  year: number;
+}): (dateIso: string) => boolean {
+  const periods = withAutoF6InactivePeriod({
+    periods: input.periods,
+    studentId: input.studentId,
+    grade: input.grade,
+    year: input.year,
+  });
+  return (dateIso: string) => isStudentInactiveOnDateFromPeriods({ periods, dateIso });
+}
+
 /** Fee sheet month: hide only while pause covers that month; show again from reactivate month onward. */
 export function isStudentHiddenForFeeSheetMonth(input: {
   grade?: string | null;
@@ -222,14 +407,78 @@ export function isStudentHiddenForFeeSheetMonth(input: {
   sheetYear: number;
   sheetMonth: number;
 }): boolean {
-  const monthEnd = monthEndIsoDate(input.sheetYear, input.sheetMonth);
   const eff = resolveStudentInactiveEffectiveDate({
     grade: input.grade,
     manualInactiveEffective: input.manualInactiveEffective,
     year: input.sheetYear,
   });
-  if (!eff || eff > monthEnd) return false;
-  const reactivate = resolveReactivateForInactiveLogic(input.reactivateDate);
-  if (reactivate && reactivate <= monthEnd) return false;
-  return true;
+  const manualPeriod: StudentInactivePeriod[] = eff
+    ? [
+        {
+          studentId: "",
+          startDate: eff,
+          endDate: resolveReactivateForInactiveLogic(input.reactivateDate),
+        },
+      ]
+    : [];
+  const periods = withAutoF6InactivePeriod({
+    periods: manualPeriod,
+    studentId: "",
+    grade: input.grade,
+    year: input.sheetYear,
+  });
+  if (!periods.length) return false;
+
+  const monthStart = monthStartIsoDate(input.sheetYear, input.sheetMonth);
+  const monthEndExclusive = firstDayOfNextMonthIso(input.sheetYear, input.sheetMonth);
+  return isIsoRangeFullyInactive({ periods, startIso: monthStart, endExclusiveIso: monthEndExclusive });
+}
+
+export function isStudentHiddenForFeeSheetMonthFromPeriods(input: {
+  periods: readonly StudentInactivePeriod[];
+  studentId: string;
+  grade?: string | null;
+  sheetYear: number;
+  sheetMonth: number;
+}): boolean {
+  const periods = withAutoF6InactivePeriod({
+    periods: input.periods,
+    studentId: input.studentId,
+    grade: input.grade,
+    year: input.sheetYear,
+  });
+  if (!periods.length) return false;
+  const monthStart = monthStartIsoDate(input.sheetYear, input.sheetMonth);
+  const monthEndExclusive = firstDayOfNextMonthIso(input.sheetYear, input.sheetMonth);
+  return isIsoRangeFullyInactive({ periods, startIso: monthStart, endExclusiveIso: monthEndExclusive });
+}
+
+export type StudentInactivePeriodsById = Record<string, StudentInactivePeriod[]>;
+
+export function buildStudentInactivePeriodsById(
+  rows: Array<{
+    student_id?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    note?: string | null;
+  }>,
+): StudentInactivePeriodsById {
+  const byId: StudentInactivePeriodsById = {};
+  for (const row of rows ?? []) {
+    const sid = String(row.student_id ?? "").trim();
+    const start = normalizeOptionalIsoDate(row.start_date);
+    const end = normalizeOptionalIsoDate(row.end_date);
+    if (!sid || !start) continue;
+    const p: StudentInactivePeriod = {
+      studentId: sid,
+      startDate: start,
+      endDate: end,
+      ...(row.note ? { note: String(row.note) } : {}),
+    };
+    (byId[sid] ??= []).push(p);
+  }
+  for (const sid of Object.keys(byId)) {
+    byId[sid] = sortAndCoalescePeriods(byId[sid]!);
+  }
+  return byId;
 }

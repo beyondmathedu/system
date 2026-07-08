@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { resolveStudentInactiveEffectiveDate } from "@/lib/studentVisibility";
+import {
+  buildStudentInactivePeriodsById,
+  isStudentInactiveOnDateFromPeriods,
+  withAutoF6InactivePeriod,
+} from "@/lib/studentVisibility";
 
 export type StudentsListRow = {
   id: string;
@@ -26,6 +30,7 @@ export type StudentsListResult = {
   rows: StudentsListRow[];
   total: number;
   hasMore: boolean;
+  /** Compatibility payload for /api/students/list; contains active inactive-start for currently-inactive students only. */
   manualInactiveEffectiveById: Record<string, string>;
 };
 
@@ -48,18 +53,19 @@ function escapeIlikePattern(raw: string): string {
 
 function studentMatchesStatus(
   row: StudentsListRow,
-  manualInactiveEffectiveById: Record<string, string>,
+  inactivePeriodsById: Record<string, import("@/lib/studentVisibility").StudentInactivePeriod[]>,
   status: StudentsListParams["status"],
   todayHkIso: string,
   year: number,
 ): boolean {
   if (!status || status === "all") return true;
-  const eff = resolveStudentInactiveEffectiveDate({
+  const periods = withAutoF6InactivePeriod({
+    periods: inactivePeriodsById[row.id] ?? [],
+    studentId: row.id,
     grade: row.grade ?? "",
-    manualInactiveEffective: manualInactiveEffectiveById[row.id] ?? null,
     year,
   });
-  const isInactive = Boolean(eff && eff <= todayHkIso);
+  const isInactive = isStudentInactiveOnDateFromPeriods({ periods, dateIso: todayHkIso });
   return status === "inactive" ? isInactive : !isInactive;
 }
 
@@ -104,19 +110,22 @@ export async function listStudentsForPage(
 
     const rows = (data ?? []) as StudentsListRow[];
     const ids = rows.map((r) => r.id).filter(Boolean);
-    const manualInactiveEffectiveById = await loadManualInactiveMap(supabase, ids);
+    const { currentInactiveStartById } = await loadInactivePeriodsMaps(supabase, ids, todayHkIso);
 
     const total = count ?? rows.length;
     return {
       rows,
       total,
       hasMore: offset + rows.length < total,
-      manualInactiveEffectiveById,
+      manualInactiveEffectiveById: currentInactiveStartById,
     };
   }
 
   // Status filter uses grade + manual visibility — scan full list, then paginate.
-  const manualInactiveEffectiveById = await loadAllManualInactiveMap(supabase);
+  const { inactivePeriodsById, currentInactiveStartById } = await loadAllInactivePeriodsMaps(
+    supabase,
+    todayHkIso,
+  );
   const matched: StudentsListRow[] = [];
   let scanOffset = 0;
   const scanChunk = 200;
@@ -152,7 +161,7 @@ export async function listStudentsForPage(
     if (!chunk.length) break;
 
     for (const row of chunk) {
-      if (!studentMatchesStatus(row, manualInactiveEffectiveById, status, todayHkIso, year)) continue;
+      if (!studentMatchesStatus(row, inactivePeriodsById, status, todayHkIso, year)) continue;
       matched.push(row);
     }
 
@@ -167,52 +176,58 @@ export async function listStudentsForPage(
     rows: pageRows,
     total,
     hasMore: offset + pageRows.length < total,
-    manualInactiveEffectiveById,
+    manualInactiveEffectiveById: currentInactiveStartById,
   };
 }
 
-async function loadAllManualInactiveMap(
-  supabase: SupabaseClient,
-): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
-  const { data, error } = await supabase
-    .from("student_visibility_modes")
-    .select("student_id, mode, effective_date");
-
-  if (error) throw new Error(error.message);
-
-  for (const row of data ?? []) {
-    const mode = String((row as { mode?: string }).mode ?? "").toLowerCase();
-    if (mode !== "inactive") continue;
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    const eff = String((row as { effective_date?: string }).effective_date ?? "");
-    if (sid && eff) out[sid] = eff;
-  }
-  return out;
-}
-
-async function loadManualInactiveMap(
+async function loadInactivePeriodsMaps(
   supabase: SupabaseClient,
   studentIds: string[],
-): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
-  if (!studentIds.length) return out;
-
+  todayHkIso: string,
+): Promise<{
+  inactivePeriodsById: Record<string, import("@/lib/studentVisibility").StudentInactivePeriod[]>;
+  currentInactiveStartById: Record<string, string>;
+}> {
+  if (!studentIds.length) return { inactivePeriodsById: {}, currentInactiveStartById: {} };
   const { data, error } = await supabase
-    .from("student_visibility_modes")
-    .select("student_id, mode, effective_date")
-    .in("student_id", studentIds);
-
+    .from("student_visibility_periods")
+    .select("student_id, start_date, end_date, note")
+    .in("student_id", studentIds)
+    .order("start_date", { ascending: true });
   if (error) throw new Error(error.message);
-
-  for (const row of data ?? []) {
-    const mode = String((row as { mode?: string }).mode ?? "").toLowerCase();
-    if (mode !== "inactive") continue;
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    const eff = String((row as { effective_date?: string }).effective_date ?? "");
-    if (sid && eff) out[sid] = eff;
+  const inactivePeriodsById = buildStudentInactivePeriodsById(data ?? []);
+  const currentInactiveStartById: Record<string, string> = {};
+  for (const sid of studentIds) {
+    const periods = inactivePeriodsById[sid] ?? [];
+    const active = periods
+      .filter((p) => p.startDate <= todayHkIso && (!p.endDate || todayHkIso < p.endDate))
+      .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
+    if (active) currentInactiveStartById[sid] = active.startDate;
   }
-  return out;
+  return { inactivePeriodsById, currentInactiveStartById };
+}
+
+async function loadAllInactivePeriodsMaps(
+  supabase: SupabaseClient,
+  todayHkIso: string,
+): Promise<{
+  inactivePeriodsById: Record<string, import("@/lib/studentVisibility").StudentInactivePeriod[]>;
+  currentInactiveStartById: Record<string, string>;
+}> {
+  const { data, error } = await supabase
+    .from("student_visibility_periods")
+    .select("student_id, start_date, end_date, note")
+    .order("start_date", { ascending: true });
+  if (error) throw new Error(error.message);
+  const inactivePeriodsById = buildStudentInactivePeriodsById(data ?? []);
+  const currentInactiveStartById: Record<string, string> = {};
+  for (const [sid, periods] of Object.entries(inactivePeriodsById)) {
+    const active = (periods ?? [])
+      .filter((p) => p.startDate <= todayHkIso && (!p.endDate || todayHkIso < p.endDate))
+      .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
+    if (active) currentInactiveStartById[sid] = active.startDate;
+  }
+  return { inactivePeriodsById, currentInactiveStartById };
 }
 
 export async function fetchNextStudentIdFromDbServer(

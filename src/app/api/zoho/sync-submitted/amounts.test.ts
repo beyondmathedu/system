@@ -6,8 +6,8 @@ function allocateReceiptPaidAmounts(
 ): number[] {
   if (!rows.length) return [];
   const grossSum = rows.reduce((s, r) => s + r.gross, 0);
-  const net = receiptNet > 0 ? receiptNet : grossSum;
-  if (net <= 0) return rows.map(() => 0);
+  if (!Number.isFinite(receiptNet) || receiptNet <= 0) return rows.map(() => 0);
+  const net = receiptNet;
   if (grossSum <= 0) {
     if (rows.length === 1) return [Math.round(net * 100) / 100];
     const each = Math.round((net / rows.length) * 100) / 100;

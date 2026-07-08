@@ -53,8 +53,9 @@ import {
   toYearLessonStateFromClient,
 } from "@/lib/feeRecordLessonDates";
 import {
-  isStudentHiddenForFeeSheetMonth,
-  makeStudentInactiveDateChecker,
+  isStudentHiddenForFeeSheetMonthFromPeriods,
+  makeStudentInactiveDateCheckerFromPeriods,
+  type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import {
   availableLessonYears,
@@ -582,8 +583,7 @@ type LessonRecord = {
 };
 
 type StudentVisibilityFeeContext = {
-  manualInactiveEffective: string | null;
-  reactivateDate: string | null;
+  periods: StudentInactivePeriod[];
 };
 
 type SortDirection = "asc" | "desc";
@@ -1020,11 +1020,11 @@ export default function StudentsLessonTimeFeeRecordPage() {
     const out: Record<string, ((dateIso: string) => boolean) | undefined> = {};
     for (const st of students) {
       const vis = visibilityByStudentId[st.id];
-      out[st.id] = makeStudentInactiveDateChecker({
+      out[st.id] = makeStudentInactiveDateCheckerFromPeriods({
+        studentId: st.id,
         grade: st.grade,
-        manualInactiveEffective: vis?.manualInactiveEffective ?? null,
-        reactivateDate: vis?.reactivateDate ?? null,
         year: sheetYear,
+        periods: vis?.periods ?? [],
       });
     }
     return out;
@@ -1035,10 +1035,10 @@ export default function StudentsLessonTimeFeeRecordPage() {
     for (const st of students) {
       const vis = visibilityByStudentId[st.id];
       out[st.id] = (month1to12: number) =>
-        isStudentHiddenForFeeSheetMonth({
+        isStudentHiddenForFeeSheetMonthFromPeriods({
+          studentId: st.id,
           grade: st.grade,
-          manualInactiveEffective: vis?.manualInactiveEffective ?? null,
-          reactivateDate: vis?.reactivateDate ?? null,
+          periods: vis?.periods ?? [],
           sheetYear,
           sheetMonth: month1to12,
         });

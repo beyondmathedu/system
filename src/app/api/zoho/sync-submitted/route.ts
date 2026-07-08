@@ -304,7 +304,7 @@ function allocateReceiptPaidAmounts(
 ): number[] {
   if (!rows.length) return [];
   const grossSum = rows.reduce((s, r) => s + r.gross, 0);
-  if (receiptNet <= 0) return rows.map(() => 0);
+  if (!Number.isFinite(receiptNet) || receiptNet <= 0) return rows.map(() => 0);
   if (grossSum <= 0) {
     if (rows.length === 1) return [Math.round(receiptNet * 100) / 100];
     const each = Math.round((receiptNet / rows.length) * 100) / 100;

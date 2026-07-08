@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import {
   loadLessonScheduleRecords,
   loadLessonYearState,
+  loadStudentInactivePeriods,
   loadStudentVisibilityMode,
   saveStudentVisibilityMode,
   saveLessonYearMetrics,
@@ -72,7 +73,12 @@ export default function StudentLessonsPage() {
   const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">("active");
   const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
   const [visibilityReactivateDate, setVisibilityReactivateDate] = useState("");
+  const [visibilityNote, setVisibilityNote] = useState("");
   const [visibilitySaving, setVisibilitySaving] = useState(false);
+  const [inactiveHistoryOpen, setInactiveHistoryOpen] = useState(false);
+  const [inactivePeriods, setInactivePeriods] = useState<
+    Array<{ start_date: string; end_date: string | null; note: string }>
+  >([]);
   const [scheduleRecords, setScheduleRecords] = useState<LessonScheduleRecord[] | null>(null);
   const [isTutorReadOnly, setIsTutorReadOnly] = useState(false);
   const availableYears = useMemo(() => availableLessonYears(), []);
@@ -118,13 +124,14 @@ export default function StudentLessonsPage() {
     setScheduleRecords(null);
 
     void (async () => {
-      const [studentRes, visibility, records, yearState] = await Promise.all([
+      const [studentRes, visibility, periods, records, yearState] = await Promise.all([
         supabase
           .from("students")
           .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
           .eq("id", studentId)
           .maybeSingle(),
         loadStudentVisibilityMode(studentId),
+        loadStudentInactivePeriods(studentId),
         loadLessonScheduleRecords(studentId),
         loadLessonYearState(studentId, hubYear),
       ]);
@@ -160,6 +167,13 @@ export default function StudentLessonsPage() {
       setVisibilityMode(visibility.mode);
       setVisibilityEffectiveDate(visibility.effective_date || new Date().toISOString().slice(0, 10));
       setVisibilityReactivateDate(visibility.reactivate_date ?? "");
+      setInactivePeriods(
+        (periods ?? []).map((p) => ({
+          start_date: String(p.start_date ?? ""),
+          end_date: p.end_date ?? null,
+          note: String(p.note ?? ""),
+        })),
+      );
 
       const metrics = getLessonUntickedMetrics(
         records as Parameters<typeof getLessonUntickedMetrics>[0],
@@ -274,6 +288,7 @@ export default function StudentLessonsPage() {
                           const next = e.target.value === "inactive" ? "inactive" : "active";
                           setVisibilityMode(next);
                           if (next === "active") setVisibilityReactivateDate("");
+                          if (next === "active") setVisibilityNote("");
                         }}
                         className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
                       >
@@ -300,6 +315,18 @@ export default function StudentLessonsPage() {
                           />
                         </label>
                       ) : null}
+                      {visibilityMode === "inactive" ? (
+                        <label className="inline-flex flex-col gap-0.5">
+                          <span className="text-[10px] font-semibold text-slate-500">Reason (optional)</span>
+                          <input
+                            type="text"
+                            value={visibilityNote}
+                            onChange={(e) => setVisibilityNote(e.target.value)}
+                            placeholder="e.g. holiday / exam / family travel"
+                            className="w-64 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                          />
+                        </label>
+                      ) : null}
                       <button
                         type="button"
                         disabled={visibilitySaving || !visibilityEffectiveDate}
@@ -314,6 +341,7 @@ export default function StudentLessonsPage() {
                                 effectiveDate: visibilityEffectiveDate,
                                 reactivateDate:
                                   visibilityMode === "inactive" ? visibilityReactivateDate || null : null,
+                                note: visibilityMode === "inactive" ? visibilityNote || null : null,
                               });
                             } finally {
                               setVisibilitySaving(false);
@@ -332,6 +360,59 @@ export default function StudentLessonsPage() {
                   <p className="mt-1 text-xs text-slate-500">
                     Inactive from 該日起，學生會從 Room、Daily Timetable、學費表、及該年課表（Inactive 期間的課）隱藏。Expected return 請填<strong>復課首日</strong>（例：7–8 月停 → 填 2026-09-01，唔好填 8/31）；到時請改回 Active。
                   </p>
+                  {inactivePeriods.length > 0 ? (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 text-left"
+                        onClick={() => setInactiveHistoryOpen((v) => !v)}
+                        aria-expanded={inactiveHistoryOpen}
+                      >
+                        <span className="text-xs font-semibold tracking-wider text-slate-500">Inactive history</span>
+                        <svg
+                          viewBox="0 0 20 20"
+                          className={`h-4 w-4 flex-none text-slate-500 transition-transform ${
+                            inactiveHistoryOpen ? "rotate-90" : "rotate-0"
+                          }`}
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
+                          {/* Right-pointing triangle (rotate to point down when expanded) */}
+                          <path d="M7.5 5.2a1 1 0 011.6-.8l7.1 4.9a1 1 0 010 1.6l-7.1 4.9a1 1 0 01-1.6-.8V5.2z" />
+                        </svg>
+                      </button>
+
+                      {inactiveHistoryOpen ? (
+                        <div className="mt-2 overflow-hidden rounded-md border border-slate-200">
+                          <table className="w-full text-sm">
+                            <thead className="bg-slate-50 text-xs font-bold text-slate-600">
+                              <tr className="divide-x divide-slate-200">
+                                <th className="px-3 py-2 text-left">From</th>
+                                <th className="px-3 py-2 text-left">Return</th>
+                                <th className="px-3 py-2 text-left">Note</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {[...inactivePeriods]
+                                .sort((a, b) => b.start_date.localeCompare(a.start_date))
+                                .map((p) => (
+                                  <tr
+                                    key={`${p.start_date}-${p.end_date ?? "open"}`}
+                                    className="divide-x divide-slate-100"
+                                  >
+                                    <td className="px-3 py-2 font-semibold text-slate-800">
+                                      {p.start_date || "—"}
+                                    </td>
+                                    <td className="px-3 py-2 text-slate-700">{p.end_date || "—"}</td>
+                                    <td className="px-3 py-2 text-slate-600">{p.note || ""}</td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div>

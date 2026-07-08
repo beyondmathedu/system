@@ -9,10 +9,11 @@ import { SCHEDULE_CACHE_TAG_HOME } from "@/lib/scheduleCacheTags";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  buildStudentVisibilityMaps,
   compareStudentReactivateReminders,
   formatStudentReactivateReminderDetail,
-  isStudentInactiveOnDate,
+  buildStudentInactivePeriodsById,
+  isStudentInactiveOnDateFromPeriods,
+  withAutoF6InactivePeriod,
 } from "@/lib/studentVisibility";
 import type { HomeReminderRow } from "@/app/home/HomeReminderPanel";
 import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
@@ -202,12 +203,12 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   const [
     { data: studentRows },
     { data: tutorRows },
-    { data: visibilityRows },
+    { data: periodRows },
     { data: feeRowsAll },
   ] = await Promise.all([
     supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
     supabase.from("tutors").select("id, name_zh, name_en, birth_date, status"),
-    supabase.from("student_visibility_modes").select("student_id, mode, effective_date, reactivate_date"),
+    supabase.from("student_visibility_periods").select("student_id, start_date, end_date, note"),
     supabase
       .from("student_monthly_fee_records")
       .select("student_id, submitted_amount, lesson_unit_price, fee_pricing_grade")
@@ -215,12 +216,14 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       .eq("month", month),
   ]);
 
-  const { inactiveEffectiveById, reactivateDateById } = buildStudentVisibilityMaps(visibilityRows ?? []);
+  const inactivePeriodsById = buildStudentInactivePeriodsById(periodRows ?? []);
   const inactiveReturnCandidates: Array<{ studentId: string; reactivateDate: string }> = [];
-  for (const [sid, eff] of Object.entries(inactiveEffectiveById)) {
-    const reactivateDate = reactivateDateById[sid] ?? null;
-    if (reactivateDate && eff <= ymdToday) {
-      inactiveReturnCandidates.push({ studentId: sid, reactivateDate });
+  for (const [sid, periods] of Object.entries(inactivePeriodsById)) {
+    const mostRecentWithReturn = [...(periods ?? [])]
+      .filter((p) => p.startDate <= ymdToday && Boolean(p.endDate))
+      .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
+    if (mostRecentWithReturn?.endDate) {
+      inactiveReturnCandidates.push({ studentId: sid, reactivateDate: mostRecentWithReturn.endDate });
     }
   }
 
@@ -256,13 +259,13 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   const activeStudentRows = (studentRows ?? []).filter((r) => {
     const sid = String(r.id ?? "");
     const grade = String((r as { grade?: string }).grade ?? "");
-    return !isStudentInactiveOnDate({
+    const periods = withAutoF6InactivePeriod({
+      periods: inactivePeriodsById[sid] ?? [],
+      studentId: sid,
       grade,
-      manualInactiveEffective: inactiveEffectiveById[sid] ?? null,
-      reactivateDate: reactivateDateById[sid] ?? null,
       year,
-      dateIso: ymdToday,
     });
+    return !isStudentInactiveOnDateFromPeriods({ periods, dateIso: ymdToday });
   });
 
   const activeStudentMeta = activeStudentRows.map((r) => {
