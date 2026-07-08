@@ -829,7 +829,7 @@ export async function saveStudentVisibilityMode(input: {
         studentId,
         startDate: effectiveDate,
         endDate: normalizeOptionalIsoDate(reactivateDate ?? ""),
-        note,
+        note: note ?? undefined,
       });
     } else {
       await closeLatestOpenStudentInactivePeriod({ studentId, endDate: effectiveDate });
