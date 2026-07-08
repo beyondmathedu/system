@@ -3,11 +3,17 @@
 export const FEE_RECORD_SELECT_PRICING =
   "student_id, year, month, lesson_unit_price, fee_pricing_grade";
 
-export const FEE_RECORD_SELECT_BASE =
+export const FEE_RECORD_SELECT_LEGACY_NO_PAID_COUNT =
   "student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade, remarks, send_fee";
+
+export const FEE_RECORD_SELECT_BASE =
+  "student_id, year, month, submitted_amount, submitted_lesson_count, lesson_unit_price, fee_pricing_grade, remarks, send_fee";
 
 export const FEE_RECORD_SELECT_WITH_SPLIT_REMARKS =
   `${FEE_RECORD_SELECT_BASE}, makeup_remarks, balance_due_remarks`;
+
+export const FEE_RECORD_SELECT_WITH_SPLIT_REMARKS_LEGACY =
+  `${FEE_RECORD_SELECT_LEGACY_NO_PAID_COUNT}, makeup_remarks, balance_due_remarks`;
 
 export function isMissingFeeRecordColumnError(message: string): boolean {
   return /could not find the .* column/i.test(message) || /column .* does not exist/i.test(message);
@@ -19,6 +25,10 @@ export function normalizeFeeRecordRow(row: Record<string, unknown>) {
     year: Number(row.year ?? 0),
     month: Number(row.month ?? 0),
     submitted_amount: Number(row.submitted_amount ?? 0) || 0,
+    submitted_lesson_count:
+      row.submitted_lesson_count == null || Number.isNaN(Number(row.submitted_lesson_count))
+        ? null
+        : Number(row.submitted_lesson_count),
     lesson_unit_price:
       row.lesson_unit_price == null || Number.isNaN(Number(row.lesson_unit_price))
         ? null

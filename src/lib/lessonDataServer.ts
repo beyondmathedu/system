@@ -20,6 +20,8 @@ import {
 import {
   FEE_RECORD_SELECT_BASE,
   FEE_RECORD_SELECT_WITH_SPLIT_REMARKS,
+  FEE_RECORD_SELECT_WITH_SPLIT_REMARKS_LEGACY,
+  FEE_RECORD_SELECT_LEGACY_NO_PAID_COUNT,
   isMissingFeeRecordColumnError,
   normalizeFeeRecordRow,
 } from "@/lib/studentMonthlyFeeRecordsCompat";
@@ -317,7 +319,13 @@ export async function loadStudentMonthlyFeeRecordsInMonthRangeServer(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (!isMissingFeeRecordColumnError(msg)) throw e;
-    rows = await loadWithSelect(FEE_RECORD_SELECT_BASE);
+    try {
+      rows = await loadWithSelect(FEE_RECORD_SELECT_WITH_SPLIT_REMARKS_LEGACY);
+    } catch (e2) {
+      const msg2 = e2 instanceof Error ? e2.message : String(e2);
+      if (!isMissingFeeRecordColumnError(msg2)) throw e2;
+      rows = await loadWithSelect(FEE_RECORD_SELECT_LEGACY_NO_PAID_COUNT);
+    }
   }
 
   return rows.map((row) => normalizeFeeRecordRow(row));

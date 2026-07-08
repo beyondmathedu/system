@@ -283,7 +283,7 @@ export default async function HomeLandingPage() {
               logicLines={[
                 "讀取 student_monthly_fee_records 當月 submitted_amount。",
                 "≤ $0 視為未交（含未填、Zoho 未同步）。",
-                "Zoho 同步：收據 quantity（堂數）× 該生每堂單價 → 寫入 Tuition Paid。",
+                "Zoho 同步：只計 F.1–F.6 / Math Course 課程行；Total HKD → Tuition Paid，quantity → 括號堂數（文具等不計）。",
               ]}
               rows={unpaidRows}
               emptyTitle="本月全部已有 Tuition Paid 紀錄"

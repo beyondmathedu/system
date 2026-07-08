@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
@@ -9,6 +9,11 @@ import { loadExamInfo } from "@/lib/studentLessonStorage";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
+import {
+  isUpcomingExamDate,
+  visibleExamContent,
+  visibleExamDateIso,
+} from "@/lib/examDateVisibility";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import {
   CUT_OFF_SHEET,
@@ -488,6 +493,14 @@ export default function StudentProgressByIdPage() {
     examDate: "",
     examContent: "",
   });
+  const visibleExamInfo = useMemo(
+    () => ({
+      examDate: visibleExamDateIso(examInfo.examDate),
+      examContent: visibleExamContent(examInfo.examDate, examInfo.examContent),
+    }),
+    [examInfo],
+  );
+  const showExamInfo = isUpcomingExamDate(examInfo.examDate);
   const [studentLoaded, setStudentLoaded] = useState(false);
   const [studentNotFound, setStudentNotFound] = useState(false);
   const [progressSheets, setProgressSheets] = useState<ProgressSheet[]>([]);
@@ -775,14 +788,20 @@ export default function StudentProgressByIdPage() {
 
               <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                 <div className="grid grid-cols-1 gap-3">
-                  <div>
-                    <p className="text-xs font-semibold tracking-wider text-slate-500">Latest Exam Date</p>
-                    <p className="mt-1 text-sm font-bold text-slate-900">{examInfo.examDate || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold tracking-wider text-slate-500">Exam Content</p>
-                    <p className="mt-1 break-words text-sm font-bold text-slate-900">{examInfo.examContent || "—"}</p>
-                  </div>
+                  {showExamInfo ? (
+                    <>
+                      <div>
+                        <p className="text-xs font-semibold tracking-wider text-slate-500">Latest Exam Date</p>
+                        <p className="mt-1 text-sm font-bold text-slate-900">{visibleExamInfo.examDate || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold tracking-wider text-slate-500">Exam Content</p>
+                        <p className="mt-1 break-words text-sm font-bold text-slate-900">
+                          {visibleExamInfo.examContent || "—"}
+                        </p>
+                      </div>
+                    </>
+                  ) : null}
                   <div>
                     <p className="text-xs font-semibold tracking-wider text-slate-500">Textbook publisher</p>
                     <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.textbookPublisher || "—"}</p>

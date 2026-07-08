@@ -19,8 +19,9 @@ import {
   studentIdsNeedingLegacyStateFallback,
 } from "@/lib/lessonYearStateLegacy";
 import {
-  FEE_RECORD_SELECT_BASE,
   FEE_RECORD_SELECT_WITH_SPLIT_REMARKS,
+  FEE_RECORD_SELECT_WITH_SPLIT_REMARKS_LEGACY,
+  FEE_RECORD_SELECT_LEGACY_NO_PAID_COUNT,
   isMissingFeeRecordColumnError,
   normalizeFeeRecordRow,
 } from "@/lib/studentMonthlyFeeRecordsCompat";
@@ -466,6 +467,8 @@ export type StudentMonthlyFeeRecord = {
   year: number;
   month: number;
   submitted_amount: number;
+  /** Zoho receipt quantity; Tuition Paid hint e.g. $820(4堂). */
+  submitted_lesson_count: number | null;
   /** HKD flat per lesson; when set, overrides tiered FIFO for that month. */
   lesson_unit_price: number | null;
   /** Optional F1–F6; when null, infer from students.grade + Sept 1 promotions. */
@@ -521,7 +524,13 @@ export async function loadStudentMonthlyFeeRecordsInMonthRange(params: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (!isMissingFeeRecordColumnError(msg)) throw e;
-    rows = await loadWithSelect(FEE_RECORD_SELECT_BASE);
+    try {
+      rows = await loadWithSelect(FEE_RECORD_SELECT_WITH_SPLIT_REMARKS_LEGACY);
+    } catch (e2) {
+      const msg2 = e2 instanceof Error ? e2.message : String(e2);
+      if (!isMissingFeeRecordColumnError(msg2)) throw e2;
+      rows = await loadWithSelect(FEE_RECORD_SELECT_LEGACY_NO_PAID_COUNT);
+    }
   }
 
   return rows.map((row) => normalizeFeeRecordRow(row)) as StudentMonthlyFeeRecord[];

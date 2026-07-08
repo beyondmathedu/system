@@ -64,6 +64,11 @@ import {
   type RoomSlotTutorRule,
 } from "@/lib/roomSlotTutorRules";
 import { isStudentInactiveOnDate, getInactiveMonthGapsInYear, type InactiveMonthGap } from "@/lib/studentVisibility";
+import {
+  isUpcomingExamDate,
+  visibleExamContent,
+  visibleExamDateIso,
+} from "@/lib/examDateVisibility";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const ROOM_OPTIONS = [...ROOM_GROUPS];
@@ -683,6 +688,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const [cloudSaveFailed, setCloudSaveFailed] = useState(false);
   const cloudSaveKindRef = useRef<"year" | "records">("year");
   const awaitingBulkEditSyncRef = useRef(false);
+  const reschedulePanelRef = useRef<HTMLDivElement>(null);
   const [filterMonth, setFilterMonth] = useState(() => {
     const hk = hkYmdNow();
     if (hk.y === targetYear) return String(hk.m);
@@ -722,11 +728,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       studentId,
       targetYear,
       {
-        attendance: next.attendance ?? attendance,
-        hiddenDates: next.hiddenDates ?? hiddenDates,
-        overrides: next.overrides ?? overrides,
-        rescheduleEntries: next.rescheduleEntries ?? rescheduleEntries,
-        extraEntries: next.extraEntries ?? extraEntries,
+        attendance: next.attendance ?? attendanceRef.current,
+        hiddenDates: next.hiddenDates ?? hiddenDatesRef.current,
+        overrides: next.overrides ?? overridesRef.current,
+        rescheduleEntries: next.rescheduleEntries ?? rescheduleEntriesRef.current,
+        extraEntries: next.extraEntries ?? extraEntriesRef.current,
       },
       dirtyFields,
     );
@@ -1011,6 +1017,14 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     });
   }, [studentId, targetYear]);
 
+  useEffect(() => {
+    if (!showBulkEditPanel && !showEditPanel) return;
+    const frame = window.requestAnimationFrame(() => {
+      reschedulePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [showBulkEditPanel, showEditPanel]);
+
   function retryCloudSave() {
     if (!studentId) return;
     if (cloudSaveKindRef.current === "records") {
@@ -1021,6 +1035,15 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   }
 
   const hkTodayYmd = useMemo(() => toHkIsoDateFromMs(Date.now()), []);
+
+  const visibleExamInfo = useMemo(
+    () => ({
+      examDate: visibleExamDateIso(examInfo.examDate, hkTodayYmd),
+      examContent: visibleExamContent(examInfo.examDate, examInfo.examContent, hkTodayYmd),
+    }),
+    [examInfo, hkTodayYmd],
+  );
+  const showExamInfo = isUpcomingExamDate(examInfo.examDate, hkTodayYmd);
 
   const scheduleBuildOptions = useMemo((): StudentScheduleBuildOptions | undefined => {
     const from = filterDateFrom.trim();
@@ -1069,33 +1092,28 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     targetYear,
   ]);
 
-  const baseScheduleRows = useMemo(() => {
-    if (!studentId) return [];
+  /** Full-year regular lesson dates for reschedule validation (not month/range filtered). */
+  const validationBaseRowByDate = useMemo(() => {
+    if (!studentId) return new Map<string, ScheduleRow>();
     const rows = buildStudentBaseScheduleRows(
       records,
       scheduleMapperState,
       targetYear,
       hkTodayYmd,
-      scheduleBuildOptions,
-    );
-    return rows.filter((r) => !isLessonDateHiddenByInactive(r.date));
+    ).filter((r) => !isLessonDateHiddenByInactive(r.date));
+    const map = new Map<string, ScheduleRow>();
+    for (const r of rows) {
+      if (!map.has(r.date)) map.set(r.date, r);
+    }
+    return map;
   }, [
     records,
     studentId,
     scheduleMapperState,
     targetYear,
     hkTodayYmd,
-    scheduleBuildOptions,
     isLessonDateHiddenByInactive,
   ]);
-
-  const baseRowByDate = useMemo(() => {
-    const map = new Map<string, ScheduleRow>();
-    for (const r of baseScheduleRows) {
-      if (!map.has(r.date)) map.set(r.date, r);
-    }
-    return map;
-  }, [baseScheduleRows]);
 
   const rescheduleEntryById = useMemo(() => {
     const map = new Map<string, RescheduleEntry>();
@@ -1508,7 +1526,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         }
 
         if (newDate !== originalDate) {
-          if (!baseRowByDate.has(originalDate)) {
+          if (!validationBaseRowByDate.has(originalDate)) {
             setBulkEditSaveStatus(`${lessonLabel}: original date is not a regular lesson.`);
             setSelectionError(`${lessonLabel}: original date must be an existing regular lesson date.`);
             return;
@@ -1549,9 +1567,15 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       persistYearState({ rescheduleEntries: nextReschedule });
       persistOverrides(nextOverrides);
 
-      awaitingBulkEditSyncRef.current = true;
-      setBulkEditSaveStatus("Syncing…");
-      setSelectionError("Syncing…");
+      setBulkEditSaveStatus("Saved.");
+      setSelectionError("Saved.");
+      window.setTimeout(() => {
+        setBulkEditSaveStatus("");
+        setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+        setShowBulkEditPanel(false);
+        setBulkEditLessonDrafts([]);
+        setSelectedRowIds([]);
+      }, 1200);
       return;
     }
 
@@ -1592,7 +1616,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       }
 
       if (newDate !== originalDate) {
-        if (!baseRowByDate.has(originalDate)) {
+        if (!validationBaseRowByDate.has(originalDate)) {
           setBulkEditSaveStatus("Original date is not a regular lesson date.");
           setSelectionError("Original date must be an existing regular lesson date.");
           return;
@@ -1635,9 +1659,15 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         persistOverrides(nextOverrides);
       }
 
-      awaitingBulkEditSyncRef.current = true;
-      setBulkEditSaveStatus("Syncing…");
-      setSelectionError("Syncing…");
+      setBulkEditSaveStatus("Saved.");
+      setSelectionError("Saved.");
+      window.setTimeout(() => {
+        setBulkEditSaveStatus("");
+        setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+        setShowBulkEditPanel(false);
+        setBulkEditLessonDrafts([]);
+        setSelectedRowIds([]);
+      }, 1200);
     }
   }
 
@@ -1815,7 +1845,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   function applyEditDefaultsForDate(iso: string) {
     const wd = weekdayFromIsoDate(iso);
     const opts = wd === "六" ? SATURDAY_TIME_SUGGESTIONS : WEEKDAY_TIME_SUGGESTIONS;
-    const row = baseRowByDate.get(iso);
+    const row = validationBaseRowByDate.get(iso);
     setEditForm((prev) => {
       const effectiveTime = row?.time ?? "";
       const timePreset =
@@ -1840,7 +1870,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     if (!fromLessonDate) {
       return { kind: "empty" as const };
     }
-    const row = baseRowByDate.get(fromLessonDate);
+    const row = validationBaseRowByDate.get(fromLessonDate);
     if (!row) {
       return { kind: "noRow" as const, date: fromLessonDate };
     }
@@ -1855,7 +1885,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       displayRoom: row.room,
       hasOverride,
     };
-  }, [fromLessonDate, baseRowByDate, overrides]);
+  }, [fromLessonDate, validationBaseRowByDate, overrides]);
 
   const LESSON_SUMMARY_SAVE_DEBOUNCE_MS = 600;
 
@@ -2040,14 +2070,20 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
               </div>
               <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                 <div className="grid grid-cols-1 gap-3">
-                  <div>
-                    <p className="text-xs font-semibold tracking-wider text-slate-500">Latest Exam Date</p>
-                    <p className="mt-1 text-sm font-bold text-slate-900">{examInfo.examDate || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold tracking-wider text-slate-500">Exam Content</p>
-                    <p className="mt-1 text-sm font-bold text-slate-900 break-words">{examInfo.examContent || "—"}</p>
-                  </div>
+                  {showExamInfo ? (
+                    <>
+                      <div>
+                        <p className="text-xs font-semibold tracking-wider text-slate-500">Latest Exam Date</p>
+                        <p className="mt-1 text-sm font-bold text-slate-900">{visibleExamInfo.examDate || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold tracking-wider text-slate-500">Exam Content</p>
+                        <p className="mt-1 text-sm font-bold text-slate-900 break-words">
+                          {visibleExamInfo.examContent || "—"}
+                        </p>
+                      </div>
+                    </>
+                  ) : null}
                   <div>
                     <p className="text-xs font-semibold tracking-wider text-slate-500">Textbook publisher</p>
                     <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.textbookPublisher || "—"}</p>
@@ -2170,6 +2206,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
               ) : null}
             </fieldset>
 
+            <div ref={reschedulePanelRef} className="scroll-mt-4 scroll-mb-32">
             {showBulkEditPanel && (
               <div className="mt-4 rounded-xl border border-[#1d76c2]/30 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2625,7 +2662,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                             }
                             const from = fromLessonDate.trim();
                             const to = toLessonDate.trim();
-                            if (!baseRowByDate.has(from)) {
+                            if (!validationBaseRowByDate.has(from)) {
                               setEditSaveStatus("Original date is not a regular lesson date.");
                               setSelectionError("Original date must be an existing regular lesson date.");
                               return;
@@ -2668,6 +2705,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                   },
                                 ];
                             setRescheduleEntries(nextList);
+                            rescheduleEntriesRef.current = nextList;
                             window.localStorage.setItem(
                               RESCHEDULE_STORAGE_KEY,
                               JSON.stringify(nextList),
@@ -2684,6 +2722,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                 },
                               ];
                               setExtraEntries(nextExtraEntries);
+                              extraEntriesRef.current = nextExtraEntries;
                               window.localStorage.setItem(
                                 EXTRA_STORAGE_KEY,
                                 JSON.stringify(nextExtraEntries),
@@ -2795,7 +2834,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                               return;
                             }
                             const from = fromLessonDate.trim();
-                            if (!baseRowByDate.has(from)) {
+                            if (!validationBaseRowByDate.has(from)) {
                               setEditSaveStatus("Original date is not a regular lesson date.");
                               setSelectionError("Original date must be an existing regular lesson date.");
                               return;
@@ -2818,6 +2857,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                               },
                             ];
                             setRescheduleEntries(nextList);
+                            rescheduleEntriesRef.current = nextList;
                             window.localStorage.setItem(
                               RESCHEDULE_STORAGE_KEY,
                               JSON.stringify(nextList),
@@ -2855,6 +2895,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
 
               </div>
             )}
+            </div>
 
             {showExtraPanel && (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

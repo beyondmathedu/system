@@ -6,6 +6,11 @@ import { usePathname, useSearchParams } from "next/navigation";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import { normalizeStudentId } from "@/lib/studentId";
 import {
+  formatVisibleExamDateSlashed,
+  visibleExamContent,
+  visibleExamDateIso,
+} from "@/lib/examDateVisibility";
+import {
   loadExamInfoBatch,
   loadLessonYearStatesBatch,
   type StudentLesson2026State,
@@ -217,9 +222,7 @@ export default function RoomScheduleTable({
   }
 
   function formatExamDateDisplay(iso: string) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-    if (!m) return iso;
-    return `${Number(m[2])}/${Number(m[3])}`;
+    return formatVisibleExamDateSlashed(iso);
   }
 
   function getWeekdayNumFromIso(iso: string) {
@@ -387,7 +390,7 @@ export default function RoomScheduleTable({
 
       for (const id of studentIds) {
         const cached = examDateCache.current.get(id);
-        if (cached !== undefined) nextDateMap[id] = cached;
+        if (cached !== undefined) nextDateMap[id] = visibleExamDateIso(cached);
         else missing.push(id);
       }
 
@@ -401,10 +404,13 @@ export default function RoomScheduleTable({
       for (const id of missing) {
         const info = batch[id] ?? { examDate: "", examContent: "" };
         examDateCache.current.set(id, info.examDate);
-        nextContentMap[id] = info.examContent;
+        const visibleDate = visibleExamDateIso(info.examDate);
+        nextContentMap[id] = visibleDate ? visibleExamContent(info.examDate, info.examContent) : "";
       }
       const dateBatch: Record<string, string> = {};
-      for (const [id, info] of Object.entries(batch)) dateBatch[id] = info.examDate ?? "";
+      for (const [id, info] of Object.entries(batch)) {
+        dateBatch[id] = visibleExamDateIso(info.examDate ?? "");
+      }
       setExamDatesByStudentId((prev) => ({ ...prev, ...dateBatch }));
       setExamContentsByStudentId((prev) => ({ ...prev, ...nextContentMap }));
     })();

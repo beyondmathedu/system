@@ -220,14 +220,17 @@ function formatHkdWithLessons(amount: number, lessonCount: number | null | undef
   return `$${amt}(${n}堂)`;
 }
 
-/** 已繳欄括號堂數：L 檔有日期堂數；再否則 Expected。 */
+/** 已繳欄括號堂數：Zoho quantity；再否則 L 檔有日期堂數；再否則 Expected。 */
 function tuitionPaidLessonHintCount(params: {
   submitted: number;
+  submittedLessonCount?: number | null;
   monthDatedSlotCount: number;
   expectedSessions: number;
 }): number | null {
-  const { submitted, monthDatedSlotCount, expectedSessions } = params;
+  const { submitted, submittedLessonCount, monthDatedSlotCount, expectedSessions } = params;
   if (submitted <= 0) return null;
+  const zohoQty = submittedLessonCount == null ? NaN : Number(submittedLessonCount);
+  if (Number.isFinite(zohoQty) && zohoQty > 0) return Math.round(zohoQty);
   if (monthDatedSlotCount > 0) return monthDatedSlotCount;
   const exp = Math.round(Number(expectedSessions) || 0);
   if (exp > 0 && exp <= 32) return exp;
@@ -543,6 +546,7 @@ const defaultRecordState = (): RecordState => ({
   weekday: "",
   expected: 0,
   submitted: 0,
+  submittedLessonCount: null,
   lessonUnitPrice: 0,
   feePricingGrade: "",
   lValues: Array.from({ length: L_COUNT }, () => 0),
@@ -557,6 +561,8 @@ type RecordState = {
   weekday: string;
   expected: number;
   submitted: number;
+  /** Zoho receipt quantity; Tuition Paid hint e.g. $820(4堂). */
+  submittedLessonCount: number | null;
   /** Legacy DB column; tuition always uses global F1–F3 / F4–F6 tiers. */
   lessonUnitPrice: number;
   /** 空字串＝自動（按該月最後一日反推年級 + 9·1 升級）；否則 F1–F6 鎖定計價年級。 */
@@ -688,6 +694,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
             year: number;
             month: number;
             submitted_amount: number;
+            submitted_lesson_count?: number | null;
             lesson_unit_price: number | null;
             fee_pricing_grade: string | null;
             remarks: string;
@@ -785,6 +792,10 @@ export default function StudentsLessonTimeFeeRecordPage() {
             next[id] = {
               ...next[id],
               submitted: Number(r.submitted_amount ?? 0) || 0,
+              submittedLessonCount:
+                r.submitted_lesson_count == null || Number.isNaN(Number(r.submitted_lesson_count))
+                  ? null
+                  : Number(r.submitted_lesson_count),
               lessonUnitPrice: Number(r.lesson_unit_price ?? 0) || 0,
               feePricingGrade: (() => {
                 const raw = String(r.fee_pricing_grade ?? "").trim();
@@ -1236,13 +1247,19 @@ export default function StudentsLessonTimeFeeRecordPage() {
         detailErrorSamples?: string[];
       };
       const monthMap = (json?.monthSubmittedByStudentId ?? {}) as Record<string, number>;
+      const lessonCountMap = (json?.monthSubmittedLessonCountByStudentId ?? {}) as Record<string, number>;
       if (Object.keys(monthMap).length > 0) {
         setRecordsByStudentId((prev) => {
           const next = { ...prev };
           for (const [sid, submitted] of Object.entries(monthMap)) {
+            const lessonCount = lessonCountMap[sid];
             next[sid] = {
               ...(next[sid] ?? defaultRecordState()),
               submitted: Number(submitted) || 0,
+              submittedLessonCount:
+                lessonCount != null && Number.isFinite(Number(lessonCount)) && Number(lessonCount) > 0
+                  ? Number(lessonCount)
+                  : (next[sid]?.submittedLessonCount ?? null),
             };
           }
           return next;
@@ -1259,6 +1276,9 @@ export default function StudentsLessonTimeFeeRecordPage() {
             : ""
         }.`,
       );
+      if (Number(json?.syncedRows ?? 0) > 0) {
+        window.location.reload();
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("aborted")) {
@@ -1642,7 +1662,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                     onClick={() =>
                       void syncZohoSubmitted({
                         studentIds: filteredSortedStudents.map((s) => s.id),
-                        idOnly: true,
+                        idOnly: false,
                       })
                     }
                     disabled={syncingZoho}
@@ -2329,6 +2349,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
 
   const paidLessonHintCount = tuitionPaidLessonHintCount({
     submitted: record.submitted,
+    submittedLessonCount: record.submittedLessonCount,
     monthDatedSlotCount: thisMonthDatedSlotCount,
     expectedSessions: record.expected,
   });

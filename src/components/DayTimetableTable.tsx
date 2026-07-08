@@ -34,11 +34,7 @@ import { dayTimetableTableStrings } from "@/lib/dayTimetableUiStrings";
 const TD_BASE = "h-9 border border-slate-300 px-2 py-1 text-sm";
 const TD_BASE_WIDE = "h-9 border border-slate-300 px-3 py-1 text-sm";
 
-export function formatExamDateSlashed(iso: string) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return iso;
-  return `${Number(m[2])}/${Number(m[3])}`;
-}
+import { formatVisibleExamDateSlashed } from "@/lib/examDateVisibility";
 
 /** Daily compact name (`中文 暱稱`) → two lines. */
 function splitTimetableDisplayName(name: string): { line1: string; line2?: string } {
@@ -651,7 +647,7 @@ export default function DayTimetableTable({
                               {formatGradeDisplay(item?.grade ?? "")}
                             </td>
                             <td className={`${examSurf.className} ${tdExamExtra} ${noGridCls}`} style={examSurf.style}>
-                              {item ? formatExamDateSlashed(examById[item.studentId] ?? "") : ""}
+                              {item ? formatVisibleExamDateSlashed(examById[item.studentId] ?? "") : ""}
                             </td>
                           </Fragment>
                         );

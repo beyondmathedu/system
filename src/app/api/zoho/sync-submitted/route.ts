@@ -115,17 +115,202 @@ function monthFromText(text: string): number | null {
   return MONTH_MAP[en[1].toLowerCase()] ?? null;
 }
 
-/** Zoho 行 quantity＝已繳堂數；Tuition Paid = 堂數 × 該生每堂單價（非 Zoho 行金額）。 */
+/** Zoho 行 quantity＝已繳堂數（括號提示）；Total HKD（item_total 等）＝ Tuition Paid 金額。 */
+function parseZohoNumber(v: unknown): number {
+  if (v == null) return NaN;
+  if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+  const x = parseFloat(String(v).replace(/,/g, ""));
+  return Number.isFinite(x) ? x : NaN;
+}
+
+function lineItemDescriptionText(li: Record<string, unknown>): string {
+  return [li.item_name, li.name, li.description]
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** F.1–F.6 課程行（含 "Math Course" 或 "F.5 Jul Sat" 等）；排除文具。 */
+function isTuitionLineItem(li: Record<string, unknown>): boolean {
+  const text = lineItemDescriptionText(li).toLowerCase();
+  if (text.includes("math course")) return true;
+  return /\bf\.?\s*[1-6]\b/.test(text);
+}
+
+function tuitionLineGrossFromItems(
+  lineItems: Array<NonNullable<ZohoSalesReceipt["line_items"]>[number]>,
+): number {
+  let gross = 0;
+  for (const li of lineItems) {
+    const liRec = li as Record<string, unknown>;
+    if (!isTuitionLineItem(liRec)) continue;
+    gross += lineItemGrossHkd(liRec);
+  }
+  return Math.round(gross * 100) / 100;
+}
+
+/** List API 常缺折扣後 total；有課程行就拉 detail 取實收 Total HKD。 */
+function shouldFetchReceiptDetail(
+  receiptId: string,
+  lineItems: Array<NonNullable<ZohoSalesReceipt["line_items"]>[number]>,
+  receiptNet: number,
+): boolean {
+  if (!receiptId) return false;
+  if (lineItems.length === 0 || receiptNet <= 0) return true;
+  const tuitionGross = tuitionLineGrossFromItems(lineItems);
+  if (tuitionGross > 0) return true;
+  return false;
+}
+
+function matchStudentIdFromReceipt(
+  r: ZohoSalesReceipt,
+  studentIdSet: Set<string>,
+  byName: Map<string, string>,
+  idOnly: boolean,
+  narrowStudents?: StudentNameRow[],
+): string | null {
+  for (const field of [r.company_name, r.customer_name, r.customer_name_formatted]) {
+    const code = extractBillToCode(String(field ?? ""));
+    if (!code) continue;
+    const sid = studentIdFromBillToCode(code, studentIdSet);
+    if (sid) return sid;
+  }
+
+  const keyA = normalizeName(String(r.customer_name ?? ""));
+  const keyB = normalizeName(String(r.customer_name_formatted ?? ""));
+
+  if (!idOnly) {
+    return byName.get(keyA) ?? byName.get(keyB) ?? null;
+  }
+
+  if (!narrowStudents?.length) return null;
+  const byId = byName.get(keyA) ?? byName.get(keyB);
+  if (byId) return byId;
+
+  const blob = normalizeName(
+    [r.customer_name, r.customer_name_formatted, r.company_name]
+      .map((x) => String(x ?? ""))
+      .join(" "),
+  );
+  if (!blob) return null;
+
+  let found: string | null = null;
+  for (const s of narrowStudents) {
+    const id = String(s.id ?? "").trim();
+    if (!id || !studentIdSet.has(id)) continue;
+    const idNorm = normalizeName(id);
+    const zh = normalizeName(String(s.name_zh ?? ""));
+    const nick = normalizeName(String(s.nickname_en ?? ""));
+    const en = normalizeName(String(s.name_en ?? ""));
+
+    if (idNorm && blob.includes(idNorm)) {
+      if (found && found !== id) return null;
+      found = id;
+      continue;
+    }
+    if (zh.length >= 2 && blob.includes(zh)) {
+      if (!nick || blob.includes(nick) || blob.includes(idNorm)) {
+        if (found && found !== id) return null;
+        found = id;
+        continue;
+      }
+    }
+    const alias = nick || en;
+    if (alias.length >= 4 && blob.includes(alias)) {
+      if (found && found !== id) return null;
+      found = id;
+    }
+  }
+  return found;
+}
+
 function lineItemLessonCount(li: Record<string, unknown>): number {
-  const n = (v: unknown): number => {
-    if (v == null) return NaN;
-    if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
-    const x = parseFloat(String(v).replace(/,/g, ""));
-    return Number.isFinite(x) ? x : NaN;
-  };
-  const qty = n(li.quantity);
+  const qty = parseZohoNumber(li.quantity);
   if (!Number.isFinite(qty) || qty <= 0) return 0;
   return Math.round(qty * 100) / 100;
+}
+
+/** Receipt header Total HKD（折扣後實收）。 */
+function receiptTotalHkd(receipt: Record<string, unknown>): number {
+  const total = parseZohoNumber(receipt.total ?? receipt.bcy_total ?? receipt.grand_total);
+  const subTotal = parseZohoNumber(receipt.sub_total ?? receipt.bcy_sub_total);
+  const discount = parseZohoNumber(
+    receipt.discount_total ?? receipt.discount_amount ?? receipt.total_discount ?? receipt.discount,
+  );
+  if (Number.isFinite(total) && total > 0) {
+    if (
+      Number.isFinite(subTotal) &&
+      Number.isFinite(discount) &&
+      discount > 0 &&
+      Math.abs(subTotal - discount - total) < 0.02
+    ) {
+      return Math.round(total * 100) / 100;
+    }
+    return Math.round(total * 100) / 100;
+  }
+  if (Number.isFinite(subTotal) && Number.isFinite(discount) && discount > 0 && subTotal > discount) {
+    return Math.round((subTotal - discount) * 100) / 100;
+  }
+  if (Number.isFinite(subTotal) && subTotal > 0) {
+    return Math.round(subTotal * 100) / 100;
+  }
+  return 0;
+}
+
+/** Line gross before receipt-level discount (rate×qty preferred). */
+function lineItemGrossHkd(li: Record<string, unknown>): number {
+  const rate = parseZohoNumber(li.rate);
+  const qty = parseZohoNumber(li.quantity);
+  if (Number.isFinite(rate) && Number.isFinite(qty) && rate > 0 && qty > 0) {
+    return Math.round(rate * qty * 100) / 100;
+  }
+  for (const key of ["item_total", "line_item_total", "amount", "bcy_amount"]) {
+    const n = parseZohoNumber(li[key]);
+    if (Number.isFinite(n) && n > 0) return Math.round(n * 100) / 100;
+  }
+  return 0;
+}
+
+/** Line net after line-level discount (item_total may be less than rate×qty). */
+function lineItemNetHkd(li: Record<string, unknown>): number {
+  const gross = lineItemGrossHkd(li);
+  for (const key of ["item_total", "item_total_inclusive_of_tax", "line_item_total", "bcy_amount"]) {
+    const n = parseZohoNumber(li[key]);
+    if (Number.isFinite(n) && n > 0 && gross > 0 && n + 0.005 < gross) {
+      return Math.round(n * 100) / 100;
+    }
+  }
+  const discount = parseZohoNumber(li.discount_amount ?? li.discount);
+  if (Number.isFinite(discount) && discount > 0 && gross > discount) {
+    return Math.round((gross - discount) * 100) / 100;
+  }
+  return gross;
+}
+
+function lineItemLessonCountWithFallback(li: Record<string, unknown>, receiptNotes: string): number {
+  const qty = lineItemLessonCount(li);
+  if (qty > 0) return qty;
+  const blob = [receiptNotes, lineItemDescriptionText(li), JSON.stringify(li)].join(" ");
+  const zh = /(\d+(?:\.\d+)?)\s*堂/.exec(blob);
+  if (zh) return Math.round(Number(zh[1]) * 100) / 100;
+  const en = /\bqty\b[^0-9]*(\d+(?:\.\d+)?)/i.exec(blob);
+  if (en) return Math.round(Number(en[1]) * 100) / 100;
+  return 0;
+}
+
+function allocateReceiptPaidAmounts(
+  receiptNet: number,
+  rows: Array<{ month: number; lessonCount: number; gross: number }>,
+): number[] {
+  if (!rows.length) return [];
+  const grossSum = rows.reduce((s, r) => s + r.gross, 0);
+  if (receiptNet <= 0) return rows.map(() => 0);
+  if (grossSum <= 0) {
+    if (rows.length === 1) return [Math.round(receiptNet * 100) / 100];
+    const each = Math.round((receiptNet / rows.length) * 100) / 100;
+    return rows.map(() => each);
+  }
+  return rows.map((r) => Math.round((r.gross / grossSum) * receiptNet * 100) / 100);
 }
 
 async function getZohoAccessToken(): Promise<string> {
@@ -161,11 +346,27 @@ function toIsoYmdUtc(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function buildSyncWindow(year: number, month: number): { dateStart: string; dateEnd: string } {
+function buildSyncWindow(
+  year: number,
+  month: number,
+  widenToFullYear: boolean,
+): { dateStart: string; dateEnd: string } {
+  if (widenToFullYear) {
+    return { dateStart: `${year}-01-01`, dateEnd: `${year}-12-31` };
+  }
   const base = new Date(Date.UTC(year, month - 1, 1));
   const start = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() - 1, 1));
   const end = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 2, 0));
   return { dateStart: toIsoYmdUtc(start), dateEnd: toIsoYmdUtc(end) };
+}
+
+function monthFromReceiptDate(receipt: Record<string, unknown>, targetYear: number): number | null {
+  const d = String(receipt.date ?? receipt.receipt_date ?? "").trim();
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(d);
+  if (!m) return null;
+  if (Number(m[1]) !== targetYear) return null;
+  const mo = Number(m[2]);
+  return mo >= 1 && mo <= 12 ? mo : null;
 }
 
 async function fetchAllReceipts(
@@ -316,6 +517,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: stErr.message }, { status: 500 });
     }
 
+    const narrowNameMatch = Boolean(requestedStudentIds?.length);
+    const narrowStudents = narrowNameMatch ? (students ?? []) : undefined;
+
     const byName = new Map<string, string>();
     const studentIdSet = new Set<string>();
     const gradeByStudentId = new Map<string, string>();
@@ -324,11 +528,22 @@ export async function POST(request: Request) {
       if (!id) continue;
       studentIdSet.add(id);
       gradeByStudentId.set(id, String(s.grade ?? "").trim());
-      if (idOnly) continue;
+      if (idOnly && !narrowNameMatch) continue;
       const zh = String(s.name_zh ?? "").trim();
       const en = String(s.name_en ?? "").trim();
       const nick = String(s.nickname_en ?? "").trim();
-      const variants = [id, zh, en, nick, `${zh} ${en}`, `${zh} ${nick}`, `${zh}${en}`, `${zh}${nick}`];
+      const variants = [
+        id,
+        zh,
+        en,
+        nick,
+        `${zh} ${en}`,
+        `${zh} ${nick}`,
+        `${zh}${en}`,
+        `${zh}${nick}`,
+        `${zh} (${id})`,
+        `${zh}${nick} (${id})`,
+      ];
       for (const v of variants) {
         const key = normalizeName(v);
         if (key) byName.set(key, id);
@@ -336,9 +551,10 @@ export async function POST(request: Request) {
     }
 
     const accessToken = await getZohoAccessToken();
-    const { dateStart, dateEnd } = buildSyncWindow(year, targetMonth);
+    const widenWindow = Boolean(requestedStudentIds?.length);
+    const { dateStart, dateEnd } = buildSyncWindow(year, targetMonth, widenWindow);
     const receipts = await fetchAllReceipts(accessToken, orgId, dateStart, dateEnd);
-    const maxDetailCalls = 300;
+    const maxDetailCalls = 500;
     let detailCalls = 0;
     let skippedDetailByLimit = 0;
     let detailFetchSuccess = 0;
@@ -347,18 +563,25 @@ export async function POST(request: Request) {
     const detailErrorSamples: string[] = [];
 
     const lessonsByStudentMonth = new Map<string, number>();
+    const amountByStudentMonth = new Map<string, number>();
     let unmatchedReceipts = 0;
     let parsedMonthLineItems = 0;
     let totalLineItems = 0;
     let skippedZeroQuantity = 0;
+    let skippedNonCourseLineItems = 0;
+    let detailFetchPreDiscount = 0;
+    const zohoMatchedKeys = new Set<string>();
+    const zohoMissingNetKeys = new Set<string>();
 
     const matchedReceipts: Array<{ receipt: ZohoSalesReceipt; studentId: string }> = [];
     for (const r of receipts) {
-      const billToCode = extractBillToCode(String(r.company_name ?? ""));
-      const byBillTo = billToCode ? studentIdFromBillToCode(billToCode, studentIdSet) : null;
-      const customerName = idOnly ? "" : normalizeName(String(r.customer_name ?? ""));
-      const byCustomerName = idOnly ? null : byName.get(customerName) ?? null;
-      const studentId = byBillTo || byCustomerName;
+      const studentId = matchStudentIdFromReceipt(
+        r,
+        studentIdSet,
+        byName,
+        idOnly,
+        narrowStudents,
+      );
       if (!studentId) {
         unmatchedReceipts += 1;
         continue;
@@ -367,9 +590,15 @@ export async function POST(request: Request) {
     }
 
     const withItems = await mapWithConcurrency(matchedReceipts, 8, async ({ receipt, studentId }) => {
+      let activeReceipt: Record<string, unknown> = receipt as Record<string, unknown>;
       let lineItems = pickLineItems(receipt);
       const receiptId = String(receipt.sales_receipt_id ?? receipt.salesreceipt_id ?? "").trim();
-      if ((!lineItems || lineItems.length === 0) && receiptId) {
+      let receiptNet = receiptTotalHkd(activeReceipt);
+      const needsDetail = shouldFetchReceiptDetail(receiptId, lineItems, receiptNet);
+      if (needsDetail && lineItems.length > 0 && receiptNet > 0) {
+        detailFetchPreDiscount += 1;
+      }
+      if (needsDetail) {
         if (detailCalls >= maxDetailCalls) {
           skippedDetailByLimit += 1;
         } else {
@@ -377,7 +606,9 @@ export async function POST(request: Request) {
           const detail = await fetchReceiptDetail(accessToken, orgId, receiptId);
           if (detail.receipt) {
             detailFetchSuccess += 1;
+            activeReceipt = detail.receipt as Record<string, unknown>;
             lineItems = pickLineItems(detail.receipt);
+            receiptNet = receiptTotalHkd(activeReceipt);
             if (!lineItems.length) detailFetchEmpty += 1;
           } else {
             detailFetchError += 1;
@@ -389,39 +620,75 @@ export async function POST(request: Request) {
           }
         }
       }
-      return { studentId, lineItems };
+      return { studentId, lineItems, receiptNet, activeReceipt, detailFetched: needsDetail && detailCalls > 0 };
     });
 
-    for (const { studentId, lineItems } of withItems) {
+    for (const { studentId, lineItems, receiptNet, activeReceipt } of withItems) {
+      type ParsedLine = { month: number; lessonCount: number; gross: number; net: number };
+      const parsed: ParsedLine[] = [];
+      let nonMathGross = 0;
+      const receiptMonthFallback = monthFromReceiptDate(activeReceipt, year);
+      const receiptNotes = String(activeReceipt.notes ?? activeReceipt.note ?? "");
+
       for (const li of lineItems) {
         totalLineItems += 1;
-        const text = [
-          li.item_name,
-          li.name,
-          li.description,
-          // 某些 Zoho org 把月份放在其他 custom 欄位，直接掃整個 line item 最穩。
-          JSON.stringify(li),
-        ]
+        const liRec = li as Record<string, unknown>;
+        if (!isTuitionLineItem(liRec)) {
+          skippedNonCourseLineItems += 1;
+          nonMathGross += lineItemGrossHkd(liRec);
+          continue;
+        }
+        const text = [li.item_name, li.name, li.description, receiptNotes, JSON.stringify(li)]
           .map((x) => String(x ?? "").trim())
           .join(" ");
-        const month = monthFromText(text);
+        const month = monthFromText(text) ?? receiptMonthFallback;
         if (!month) continue;
         parsedMonthLineItems += 1;
-        const lessonCount = lineItemLessonCount(li as Record<string, unknown>);
-        if (lessonCount <= 0) {
+        const lessonCount = lineItemLessonCountWithFallback(liRec, receiptNotes);
+        const gross = lineItemGrossHkd(liRec);
+        const net = lineItemNetHkd(liRec);
+        if (lessonCount <= 0 && gross <= 0 && net <= 0) {
           skippedZeroQuantity += 1;
           continue;
         }
-        const key = `${studentId}:${month}`;
-        lessonsByStudentMonth.set(key, (lessonsByStudentMonth.get(key) ?? 0) + lessonCount);
+        parsed.push({ month, lessonCount, gross, net });
+        zohoMatchedKeys.add(`${studentId}:${month}`);
+      }
+
+      const totalGross = parsed.reduce((s, r) => s + r.gross, 0);
+      const totalNet = parsed.reduce((s, r) => s + r.net, 0);
+      const mathOnlyNet =
+        receiptNet > 0 ? Math.max(0, Math.round((receiptNet - nonMathGross) * 100) / 100) : 0;
+      if (parsed.length > 0 && mathOnlyNet <= 0 && totalNet <= 0) {
+        for (const row of parsed) {
+          zohoMissingNetKeys.add(`${studentId}:${row.month}`);
+        }
+      }
+
+      for (const row of parsed) {
+        let paid = row.net;
+        if (paid + 0.005 >= row.gross && mathOnlyNet > 0 && totalGross > 0 && mathOnlyNet + 0.005 < totalGross) {
+          paid = Math.round((row.gross / totalGross) * mathOnlyNet * 100) / 100;
+        } else if (paid + 0.005 >= row.gross && totalNet + 0.005 < totalGross) {
+          paid = row.net;
+        }
+        const key = `${studentId}:${row.month}`;
+        if (row.lessonCount > 0) {
+          lessonsByStudentMonth.set(key, (lessonsByStudentMonth.get(key) ?? 0) + row.lessonCount);
+        }
+        if (paid > 0) {
+          amountByStudentMonth.set(key, (amountByStudentMonth.get(key) ?? 0) + paid);
+        }
       }
     }
 
     const feeTierBundle = await loadStudentFeeTierSettingsAdmin(admin);
-    const amountByStudentMonth = new Map<string, number>();
 
     const studentIds = Array.from(
-      new Set(Array.from(lessonsByStudentMonth.keys()).map((k) => k.split(":")[0])),
+      new Set([
+        ...Array.from(lessonsByStudentMonth.keys()).map((k) => k.split(":")[0]),
+        ...Array.from(amountByStudentMonth.keys()).map((k) => k.split(":")[0]),
+      ]),
     );
     const { data: existing } = studentIds.length
       ? await admin
@@ -454,50 +721,70 @@ export async function POST(request: Request) {
       year: number;
       month: number;
       submitted_amount: number;
+      submitted_lesson_count: number | null;
     }> = [];
-    for (const [key, lessonCount] of lessonsByStudentMonth) {
+    const allKeys = new Set([
+      ...Array.from(lessonsByStudentMonth.keys()),
+      ...Array.from(amountByStudentMonth.keys()),
+    ]);
+    for (const key of allKeys) {
       const [student_id, mStr] = key.split(":");
       const month = Number(mStr);
-      const ex = existingMap.get(key);
-      const gradeFor = gradeForFeePricing(
-        gradeByStudentId.get(student_id) ?? "",
-        year,
-        month,
-        ex?.fee_pricing_grade ?? "",
-      );
-      const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student_id, year, month);
-      const submitted = Math.round(
-        sumSlotTuitionHkdByLessonCount({ lessonCount, gradeFor, feeTierSettings: tier }) * 100,
-      ) / 100;
-      amountByStudentMonth.set(key, submitted);
-    }
-
-    for (const [key, amt] of amountByStudentMonth) {
-      const [student_id, mStr] = key.split(":");
-      const month = Number(mStr);
+      const lessonCount = lessonsByStudentMonth.get(key) ?? 0;
+      let submitted = amountByStudentMonth.get(key) ?? 0;
+      if (submitted <= 0 && lessonCount > 0) {
+        if (zohoMatchedKeys.has(key)) {
+          continue;
+        }
+        const ex = existingMap.get(key);
+        const gradeFor = gradeForFeePricing(
+          gradeByStudentId.get(student_id) ?? "",
+          year,
+          month,
+          ex?.fee_pricing_grade ?? "",
+        );
+        const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student_id, year, month);
+        submitted =
+          Math.round(
+            sumSlotTuitionHkdByLessonCount({ lessonCount, gradeFor, feeTierSettings: tier }) * 100,
+          ) / 100;
+      }
+      if (submitted <= 0 && lessonCount <= 0) continue;
       upserts.push({
         student_id,
         year,
         month,
-        submitted_amount: Math.round(amt * 100) / 100,
+        submitted_amount: Math.round(submitted * 100) / 100,
+        submitted_lesson_count: lessonCount > 0 ? lessonCount : null,
       });
     }
 
     if (upserts.length > 0) {
-      const { error: upErr } = await admin
+      let { error: upErr } = await admin
         .from("student_monthly_fee_records")
         .upsert(upserts, { onConflict: "student_id,year,month" });
+      if (upErr && /submitted_lesson_count/i.test(upErr.message) && /column|schema cache/i.test(upErr.message)) {
+        ({ error: upErr } = await admin.from("student_monthly_fee_records").upsert(
+          upserts.map(({ submitted_lesson_count: _lc, ...row }) => row),
+          { onConflict: "student_id,year,month" },
+        ));
+      }
       if (upErr) {
         return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
       }
     }
 
     const monthSubmittedByStudentId: Record<string, number> = {};
+    const monthSubmittedLessonCountByStudentId: Record<string, number> = {};
     if (Number.isFinite(targetMonth) && targetMonth >= 1 && targetMonth <= 12) {
-      for (const [key, amt] of amountByStudentMonth) {
-        const [sid, mStr] = key.split(":");
-        if (Number(mStr) !== targetMonth) continue;
-        monthSubmittedByStudentId[sid] = (monthSubmittedByStudentId[sid] ?? 0) + amt;
+      for (const row of upserts) {
+        if (row.month !== targetMonth) continue;
+        monthSubmittedByStudentId[row.student_id] =
+          (monthSubmittedByStudentId[row.student_id] ?? 0) + row.submitted_amount;
+        if (row.submitted_lesson_count != null && row.submitted_lesson_count > 0) {
+          monthSubmittedLessonCountByStudentId[row.student_id] =
+            (monthSubmittedLessonCountByStudentId[row.student_id] ?? 0) + row.submitted_lesson_count;
+        }
       }
     }
 
@@ -512,12 +799,14 @@ export async function POST(request: Request) {
         totalLineItems,
         parsedMonthLineItems,
         skippedZeroQuantity,
-        tierAmountSamples: Array.from(amountByStudentMonth.entries())
-          .slice(0, 5)
-          .map(([k, amt]) => {
-            const lessons = lessonsByStudentMonth.get(k) ?? 0;
-            return `${k}:${lessons}堂=$${amt}`;
-          }),
+        skippedNonCourseLineItems,
+        detailFetchPreDiscount,
+        zohoMatchedKeys: zohoMatchedKeys.size,
+        zohoMissingNetKeys: zohoMissingNetKeys.size,
+        tierAmountSamples: upserts.slice(0, 5).map((row) => {
+          const lessons = row.submitted_lesson_count ?? 0;
+          return `${row.student_id}:${row.month}:${lessons}堂=$${row.submitted_amount}`;
+        }),
         detailCalls,
         skippedDetailByLimit,
         detailFetchSuccess,
@@ -526,14 +815,7 @@ export async function POST(request: Request) {
         detailErrorSamples,
       },
       unmatchedExamples: receipts
-        .filter((r) => {
-          const billToCode = extractBillToCode(String(r.company_name ?? ""));
-          const byBillTo = billToCode ? studentIdFromBillToCode(billToCode, studentIdSet) : null;
-          if (idOnly) return !byBillTo;
-          const keyA = normalizeName(String(r.customer_name ?? ""));
-          const keyB = normalizeName(String(r.customer_name_formatted ?? ""));
-          return !(byBillTo || byName.get(keyA) || byName.get(keyB));
-        })
+        .filter((r) => !matchStudentIdFromReceipt(r, studentIdSet, byName, idOnly, narrowStudents))
         .slice(0, 5)
         .map((r) =>
           String(
@@ -543,6 +825,7 @@ export async function POST(request: Request) {
           ),
         ),
       monthSubmittedByStudentId,
+      monthSubmittedLessonCountByStudentId,
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
