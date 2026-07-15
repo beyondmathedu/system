@@ -4,6 +4,7 @@ import AppTopNav from "@/components/AppTopNav";
 import TutorMonthlyYearMonthPicker from "@/components/TutorMonthlyYearMonthPicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { fetchTutorMonthLessonRows } from "@/lib/roomScheduleAggregate";
+import { formatDateSlash } from "@/lib/yearScheduleCore";
 import {
   fetchTutorNavEntryById,
   TUTOR_NAV_STATUS_LABEL,
@@ -48,15 +49,13 @@ function toCsvCell(v: string | number) {
 }
 
 function formatMonthDay(dateIso: string) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((dateIso ?? "").trim());
-  if (!m) return dateIso;
-  return `${Number(m[2])}/${Number(m[3])}`;
+  return formatDateSlash((dateIso ?? "").trim());
 }
 
-/** CSV 下載時避免被 Excel 自動轉成本地日期格式（例如 7月4日 / Apr-14） */
+/** CSV 下載時避免被 Excel 自動轉成本地日期格式（例如 4月7日 / Apr-14） */
 function csvDateText(dateIso: string) {
   const md = formatMonthDay(dateIso);
-  // 以公式字串輸出，Excel 會顯示為純文字 4/7、4/14
+  // 以公式字串輸出，Excel 會顯示為純文字 7/4、14/4
   return `="${md}"`;
 }
 
@@ -325,7 +324,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
             {ratesMissing ? (
               <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
                 No record found for this tutor in latest rates. Please go to the{" "}
-                <Link href="/tutor" className="font-medium text-[#1d76c2] hover:underline">
+                <Link href="/teacher" className="font-medium text-[#1d76c2] hover:underline">
                   Tutor
                 </Link>{" "}
                 page and save <strong>Junior Rate, Senior Rate, and Single Student Rate</strong> so subtotals can be

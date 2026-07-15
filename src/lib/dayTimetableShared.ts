@@ -88,8 +88,10 @@ export type DayTimetableCell = {
   grade: string;
   scheduleRemarks: string;
   lessonType: "恆常" | "補堂" | "加堂" | "取消" | typeof PENDING_MAKEUP_TYPE_LABEL;
-  /** Leave / pending makeup — e.g. "Make up within 3 days" */
+  /** Leave / pending makeup — e.g. "Makeup until end of June" */
   pendingMakeupLabel?: string;
+  /** Inactive / pause on this date; keeps regular slot for capacity planning */
+  isInactive?: boolean;
   tutorDisplay: string;
   tutorColorHex?: string;
 };
@@ -110,6 +112,77 @@ export type DayTimetablePayload = {
   feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>;
   timetableStyle: DayTimetableStyleSettings;
 };
+
+/** Regular timetable page: filter rows shown below the heading. */
+export type RegularTimetableLessonView =
+  | "regular"
+  | "all"
+  | "extra"
+  | "reschedule"
+  | "inactive";
+
+const REGULAR_TIMETABLE_REGULAR_TYPES = new Set<string>(["恆常", PENDING_MAKEUP_TYPE_LABEL]);
+
+function regularTimetableCellMatchesView(
+  cell: DayTimetableCell,
+  view: RegularTimetableLessonView,
+): boolean {
+  if (cell.lessonType === "取消") return false;
+  const isPaused = Boolean(cell.isInactive);
+  const isRegular = !isPaused && REGULAR_TIMETABLE_REGULAR_TYPES.has(cell.lessonType);
+  switch (view) {
+    case "regular":
+      // Regular only (active)
+      return isRegular;
+    case "all":
+      // Regular + Extra + Reschedule + Inactive
+      return (
+        isRegular ||
+        isPaused ||
+        cell.lessonType === "加堂" ||
+        cell.lessonType === "補堂"
+      );
+    case "extra":
+      // Regular + Extra
+      return isRegular || cell.lessonType === "加堂";
+    case "reschedule":
+      // Regular + Reschedule
+      return isRegular || cell.lessonType === "補堂";
+    case "inactive":
+      // Regular + Inactive (paused keep-slot)
+      return isRegular || isPaused;
+    default:
+      return false;
+  }
+}
+
+/** Keep time slots / maxRows in sync after filtering lesson types client-side. */
+export function filterDayTimetablePayloadByLessonView(
+  payload: DayTimetablePayload,
+  view: RegularTimetableLessonView,
+): DayTimetablePayload {
+  const byTimeRoom: Record<string, DayTimetableCell[]> = {};
+  for (const [key, cells] of Object.entries(payload.byTimeRoom)) {
+    const filtered = cells.filter((c) => regularTimetableCellMatchesView(c, view));
+    if (filtered.length > 0) byTimeRoom[key] = filtered;
+  }
+
+  const rowFrames: DayTimetableRowFrame[] = [];
+  for (const frame of payload.rowFrames) {
+    let maxRows = 0;
+    for (const room of ROOM_GROUPS) {
+      const size = (byTimeRoom[`${frame.time}::${room}`] ?? []).length;
+      if (size > maxRows) maxRows = size;
+    }
+    if (maxRows > 0) rowFrames.push({ time: frame.time, maxRows });
+  }
+
+  return {
+    ...payload,
+    byTimeRoom,
+    rowFrames,
+  };
+}
 
 export function redactDayTimetableRemarks(payload: DayTimetablePayload): DayTimetablePayload {
   const byTimeRoom: Record<string, DayTimetableCell[]> = {};

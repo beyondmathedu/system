@@ -5,7 +5,7 @@ import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getViewerContext } from "@/lib/authz";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
-import { PENDING_MAKEUP_BUTTON_LABEL_ZH, PENDING_MAKEUP_WITHIN_DAYS } from "@/lib/pendingMakeup";
+import { PENDING_MAKEUP_BUTTON_LABEL_ZH } from "@/lib/pendingMakeup";
 import HomeReminderPanel from "./HomeReminderPanel";
 import UpcomingBirthdayReminder from "./UpcomingBirthdayReminder";
 
@@ -253,9 +253,10 @@ export default async function HomeLandingPage() {
                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:col-span-2">
                   <p className="font-semibold text-slate-800">C. {PENDING_MAKEUP_BUTTON_LABEL_ZH}</p>
                   <p className="mt-1">
-                    只在課表記了原課日、新日留空（按「{PENDING_MAKEUP_BUTTON_LABEL_ZH}」）。須{" "}
-                    {PENDING_MAKEUP_WITHIN_DAYS} 日內安排補堂；日課表顯示「X 天內待補」。與 A、B
-                    不同，唔會計入 B 列表。
+                    只在課表記了原課日、新日留空（按「{PENDING_MAKEUP_BUTTON_LABEL_ZH}」）。以原課日所在月
+                    M 計：可補至 M+1 月底（例：5 月請假 → 可補至 6 月底）；由 M+2 月 1 日起不可再改（例：7
+                    月 1 日起），顯示「已過補堂限期」；M+3 月 1 日起列表／課表不再顯示（例：8
+                    月起）。與 A、B 不同，唔會計入 B 列表。
                   </p>
                 </div>
               </div>
@@ -323,7 +324,7 @@ export default async function HomeLandingPage() {
                 `學生課表 2026 → 勾選恆常課 →「${PENDING_MAKEUP_BUTTON_LABEL_ZH}」。`,
                 "只記原課日；新日留空；pending 存入 reschedule_entries。",
                 "確定補堂日後改用 Reschedule 填新日期（會離開此列表）。",
-                `原課日起 ${PENDING_MAKEUP_WITHIN_DAYS} 日內須安排；日課表顯示「X 天內待補」。`,
+                "原課月 M：可補至 M+1 月底；M+2 起不可改；M+3 起此列表唔再顯示。",
               ]}
               rows={pendingLeaveRows}
               emptyTitle={`目前沒有 ${PENDING_MAKEUP_BUTTON_LABEL_ZH}`}

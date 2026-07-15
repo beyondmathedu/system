@@ -106,7 +106,7 @@ export function gradeForFeePricing(
   return /^F[1-6]$/.test(fgRaw) ? fgRaw : inferGradeAtSheetEnd(currentGrade, sheetYear, sheetMonth);
 }
 
-/** F1–F3 tier 第 1–N 堂 Normal 價（N = lesson_tier_break_after）；供提示用。 */
+/** F1–F3 / F4–F6 Normal unit price；供提示用。 */
 export function tierNormalLessonUnitPrice(
   gradeForPricing: string,
   tier: StudentFeeTierSettings,
@@ -121,28 +121,40 @@ export function isLowerFeeTier(grade: string): boolean {
   return r <= 3;
 }
 
-/** 按 L1→L9 有日期嘅順序，第 1–N 堂用高價、第 N+1 堂起用低價（N = tier.lesson_tier_break_after，預設 8）。 */
+/**
+ * Monthly threshold pricing (whole month one rate):
+ * - dated lessons < break (default 8 → ≤7): every slot Normal
+ * - dated lessons ≥ break (default 8): every slot Discount
+ */
+export function monthLessonUnitPrice(
+  lessonCount: number,
+  gradeForPricing: string,
+  tier: StudentFeeTierSettings,
+): number {
+  const br = Math.max(1, Math.floor(tier.lesson_tier_break_after || 8));
+  const low = isLowerFeeTier(gradeForPricing);
+  const hi = low ? tier.f_low_tier_1_8 : tier.f_high_tier_1_8;
+  const lo = low ? tier.f_low_tier_9_plus : tier.f_high_tier_9_plus;
+  if (!Number.isFinite(lessonCount) || lessonCount <= 0) return hi;
+  return lessonCount >= br ? lo : hi;
+}
+
+/** 按 L1→L9 有日期嘅順序；本月總堂數決定全部用 Normal 定全部 Discount。 */
 export function buildSlotPricesInLOrder(
   lessonDisplayDatesPerL: string[],
   gradeForPricing: string,
   tier: StudentFeeTierSettings,
 ): number[] {
-  const low = isLowerFeeTier(gradeForPricing);
-  const br = tier.lesson_tier_break_after;
-  const hi = low ? tier.f_low_tier_1_8 : tier.f_high_tier_1_8;
-  const lo = low ? tier.f_low_tier_9_plus : tier.f_high_tier_9_plus;
-  const out: number[] = [];
-  let lessonIdx = 0;
-  for (let i = 0; i < lessonDisplayDatesPerL.length; i++) {
-    const d = String(lessonDisplayDatesPerL[i] ?? "").trim();
-    if (!d) continue;
-    lessonIdx += 1;
-    out.push(lessonIdx <= br ? hi : lo);
+  const dated: string[] = [];
+  for (const raw of lessonDisplayDatesPerL) {
+    const d = String(raw ?? "").trim();
+    if (d) dated.push(d);
   }
-  return out;
+  const unit = monthLessonUnitPrice(dated.length, gradeForPricing, tier);
+  return dated.map(() => unit);
 }
 
-/** Sum tuition for dated slots in L-order using global F1–F3 / F4–F6 tier settings. */
+/** Sum tuition for dated slots using global F1–F3 / F4–F6 tier settings. */
 export function sumSlotTuitionHkdFromDates(params: {
   fullLessonDates: string[];
   gradeFor: string;
@@ -164,10 +176,5 @@ export function sumSlotTuitionHkdByLessonCount(params: {
 }): number {
   const { lessonCount, gradeFor, feeTierSettings } = params;
   if (!Number.isFinite(lessonCount) || lessonCount <= 0) return 0;
-  const br = Math.max(1, Math.floor(feeTierSettings.lesson_tier_break_after || 8));
-  const low = isLowerFeeTier(gradeFor);
-  const hi = low ? feeTierSettings.f_low_tier_1_8 : feeTierSettings.f_high_tier_1_8;
-  const lo = low ? feeTierSettings.f_low_tier_9_plus : feeTierSettings.f_high_tier_9_plus;
-  if (lessonCount <= br) return lessonCount * hi;
-  return br * hi + (lessonCount - br) * lo;
+  return lessonCount * monthLessonUnitPrice(lessonCount, gradeFor, feeTierSettings);
 }

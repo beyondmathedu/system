@@ -17,6 +17,7 @@ import { deleteTimetableDayRemark, upsertTimetableDayRemark } from "@/lib/studen
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { normalizeStudentId } from "@/lib/studentId";
 import { buildRoomPageHref } from "@/lib/roomConstants";
+import "./dayTimetableNameCell.css";
 
 function feeToneForStudent(
   feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>,
@@ -99,6 +100,21 @@ function cellSurface(
       isDarkBg: false,
     };
   }
+  if (item.isInactive) {
+    const stripe = includeFeeStripe ? feeStripeStyle(feeTone, timetableStyle, feeStripeSide) : undefined;
+    return {
+      className: `${td} text-slate-500`,
+      style: mergeCellStyle(
+        {
+          backgroundColor: "#f1f5f9",
+          backgroundImage:
+            "repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(148,163,184,0.25) 4px, rgba(148,163,184,0.25) 5px)",
+        },
+        stripe,
+      ),
+      isDarkBg: false,
+    };
+  }
   const stripe = includeFeeStripe ? feeStripeStyle(feeTone, timetableStyle, feeStripeSide) : undefined;
   if (item.lessonType === PENDING_MAKEUP_TYPE_LABEL) {
     return {
@@ -154,6 +170,8 @@ type Props = {
   emptyMessage: string;
   /** 恆常班時間表：每個時段下方顯示各房「恆常人數／上限／餘額」 */
   showRegularCapacitySummary?: boolean;
+  /** 與 Daily Timetable 相同：Name 兩行（中文／暱稱）與欄寬 */
+  compactStudentNames?: boolean;
   /** 只用每個時段的一條分隔線；不畫每行格線（供 Daily 頁） */
   showPeriodSeparatorOnly?: boolean;
   /** Daily：每個時段前重複 B／M前／… 房名與 Name／Grade／Exam 小標題 */
@@ -196,6 +214,8 @@ const TD_DAILY_GRADE_EXTRA =
   "w-6 min-w-0 max-w-6 px-0 py-0.5 text-center text-[10px] sm:w-7 sm:max-w-7 sm:px-0.5 sm:text-xs lg:w-9 lg:max-w-9";
 const TD_DAILY_EXAM_EXTRA =
   "w-7 min-w-0 max-w-7 px-0 py-0.5 text-center text-[10px] tabular-nums sm:w-8 sm:max-w-8 sm:px-0.5 sm:text-xs lg:w-10 lg:max-w-10";
+const TD_REGULAR_NAME_EXTRA =
+  "tt-name-cell @container/name min-h-9 !h-auto align-top break-words px-2 py-1 sm:px-3";
 const TD_TIME_CAP =
   "border border-emerald-200/80 bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-900";
 
@@ -203,6 +223,7 @@ export default function DayTimetableTable({
   payload,
   emptyMessage,
   showRegularCapacitySummary = false,
+  compactStudentNames = false,
   showPeriodSeparatorOnly = false,
   repeatRoomHeadersPerTimeSlot = false,
   readOnly = false,
@@ -235,17 +256,22 @@ export default function DayTimetableTable({
   const roomColSpan = roomsForTable.length * COLS_PER_ROOM + 1;
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
   const dailyCompactColumns = repeatRoomHeadersPerTimeSlot;
-  const thNameClass = dailyCompactColumns ? TH_SUB_DAILY_NAME : `${TH_SUB} px-3`;
-  const thGradeClass = dailyCompactColumns ? TH_SUB_DAILY_GRADE : `${TH_SUB} w-16 px-2`;
-  const thExamClass = dailyCompactColumns ? TH_SUB_DAILY_EXAM : `${TH_SUB} w-20 px-2`;
-  const tdNameExtra = dailyCompactColumns ? TD_DAILY_NAME_EXTRA : "";
-  const tdGradeExtra = dailyCompactColumns ? TD_DAILY_GRADE_EXTRA : "w-16";
-  const tdExamExtra = dailyCompactColumns ? TD_DAILY_EXAM_EXTRA : "w-20";
+  const dailyNameCells = dailyCompactColumns || compactStudentNames;
+  const fluidNameCell = showRegularCapacitySummary && !compactStudentNames;
+  const thNameClass = dailyNameCells ? TH_SUB_DAILY_NAME : `${TH_SUB} min-w-0 px-2 sm:px-3`;
+  const thGradeClass = dailyCompactColumns ? TH_SUB_DAILY_GRADE : `${TH_SUB} w-16 shrink-0 px-2`;
+  const thExamClass = dailyCompactColumns ? TH_SUB_DAILY_EXAM : `${TH_SUB} w-20 shrink-0 px-2`;
+  const tdNameExtra = dailyNameCells ? TD_DAILY_NAME_EXTRA : fluidNameCell ? TD_REGULAR_NAME_EXTRA : "";
+  const tdGradeExtra = dailyCompactColumns ? TD_DAILY_GRADE_EXTRA : "w-16 shrink-0";
+  const tdExamExtra = dailyCompactColumns ? TD_DAILY_EXAM_EXTRA : "w-20 shrink-0";
   const thTimeClass = dailyCompactColumns ? TH_TIME_DAILY : TH_TIME;
   const thRoomRow1Class = dailyCompactColumns ? TH_ROOM_ROW1_DAILY : TH_ROOM_ROW1;
-  const tableClassName = dailyCompactColumns
-    ? "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
-    : "min-w-[960px] w-full border-collapse text-sm";
+  const tableClassName =
+    dailyCompactColumns || (compactStudentNames && showRegularCapacitySummary)
+      ? "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
+      : fluidNameCell
+        ? "tt-regular-table w-full min-w-0 table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm"
+        : "min-w-[960px] w-full border-collapse text-sm";
   const [hoverPanel, setHoverPanel] = useState<{
     studentId: string;
     name: string;
@@ -348,7 +374,7 @@ export default function DayTimetableTable({
     nameSurf: { isDarkBg: boolean },
     anchorId: string,
   ) {
-    const nameBody = dailyCompactColumns ? (
+    const nameBody = dailyNameCells ? (
       (() => {
         const { line1, line2 } = splitTimetableDisplayName(item.name);
         return line2 ? (
@@ -360,6 +386,8 @@ export default function DayTimetableTable({
           <span className="block text-[10px] leading-snug sm:text-[13px]">{line1}</span>
         );
       })()
+    ) : fluidNameCell ? (
+      <span className="tt-name-fluid block leading-tight">{item.name}</span>
     ) : (
       item.name
     );
@@ -374,13 +402,14 @@ export default function DayTimetableTable({
         />
       ) : null;
     const isClickableName = !readOnly || allowStudentNameLinks;
+    const blockTight = dailyNameCells || fluidNameCell;
     const className = isClickableName
       ? nameSurf.isDarkBg
-        ? `text-sky-200 underline hover:text-white ${dailyCompactColumns ? "block leading-tight" : ""}`
-        : `text-[#1d76c2] underline hover:opacity-90 ${dailyCompactColumns ? "block leading-tight" : ""}`
+        ? `text-sky-200 underline hover:text-white ${blockTight ? "block leading-tight" : ""}`
+        : `text-[#1d76c2] underline hover:opacity-90 ${blockTight ? "block leading-tight" : ""}`
       : `${
           nameSurf.isDarkBg ? "text-white" : "text-slate-800"
-        } ${dailyCompactColumns ? "block leading-tight" : ""}`;
+        } ${blockTight ? "block leading-tight" : ""}`;
 
     if (readOnly && !allowStudentNameLinks) {
       return (
@@ -443,6 +472,16 @@ export default function DayTimetableTable({
       ) : null}
       <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-auto rounded-b-lg">
       <table className={tableClassName}>
+        {fluidNameCell ? (
+          <colgroup>
+            <col className="tt-col-time" />
+            {roomsForTable.flatMap((room) => [
+              <col key={`col-name-${room}`} />,
+              <col key={`col-grade-${room}`} className="tt-col-grade" />,
+              <col key={`col-exam-${room}`} className="tt-col-exam" />,
+            ])}
+          </colgroup>
+        ) : null}
         {repeatRoomHeadersPerTimeSlot ? (
           <thead className="sr-only">
             <tr>
@@ -592,6 +631,11 @@ export default function DayTimetableTable({
                                         {item.pendingMakeupLabel}
                                       </p>
                                     ) : null}
+                                    {item.isInactive ? (
+                                      <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500">
+                                        Inactive
+                                      </p>
+                                    ) : null}
                                   </>
                                 ) : (
                                 <div
@@ -634,6 +678,11 @@ export default function DayTimetableTable({
                                   {item.pendingMakeupLabel ? (
                                     <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-900">
                                       {item.pendingMakeupLabel}
+                                    </p>
+                                  ) : null}
+                                  {item.isInactive ? (
+                                    <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500">
+                                      Inactive
                                     </p>
                                   ) : null}
                                   {hoverPanel?.studentId === item.studentId ? (

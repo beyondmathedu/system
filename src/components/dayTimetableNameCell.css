@@ -1,0 +1,52 @@
+/* Fluid name font for regular-class-timetable: scales with cell width and viewport. */
+.tt-name-cell {
+  container-type: inline-size;
+  container-name: name;
+}
+
+.tt-name-fluid {
+  font-size: clamp(0.5rem, min(18cqi, 3.2vw), min(1.5rem, 4.5vw));
+  line-height: 1.15;
+  word-break: break-word;
+}
+
+@media (max-width: 639px) {
+  .tt-name-fluid {
+    font-size: clamp(0.4375rem, min(20cqi, 3.8vw), min(0.875rem, 4vw));
+  }
+}
+
+/* Narrower fixed columns on small screens so name cells keep readable width. */
+.tt-regular-table col.tt-col-time {
+  width: 2.25rem;
+}
+.tt-regular-table col.tt-col-grade {
+  width: 2rem;
+}
+.tt-regular-table col.tt-col-exam {
+  width: 2.5rem;
+}
+
+@media (min-width: 640px) {
+  .tt-regular-table col.tt-col-time {
+    width: 2.75rem;
+  }
+  .tt-regular-table col.tt-col-grade {
+    width: 3rem;
+  }
+  .tt-regular-table col.tt-col-exam {
+    width: 3.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .tt-regular-table col.tt-col-time {
+    width: 3.5rem;
+  }
+  .tt-regular-table col.tt-col-grade {
+    width: 4rem;
+  }
+  .tt-regular-table col.tt-col-exam {
+    width: 5rem;
+  }
+}

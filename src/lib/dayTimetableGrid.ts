@@ -454,6 +454,11 @@ export function buildRegularPeriodMaxByRoom(
 export type FetchDayTimetableOptions = {
   /** true：只顯示恆常排課（不含補堂／加堂） */
   regularOnly: boolean;
+  /**
+   * Include inactive (paused) students' regular slots marked `isInactive`.
+   * Used by Regular Class Timetable filters (Inactive / All).
+   */
+  includeInactiveSlots?: boolean;
 };
 
 type DayTimetableStaticBundle = {
@@ -582,7 +587,7 @@ async function fetchDayTimetablePayloadUncached(
   const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const dateIso = toDayIso(year, month, day);
   const titleDate = `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
-  const { regularOnly } = options;
+  const { regularOnly, includeInactiveSlots = false } = options;
 
   const supabase = getSupabaseAdmin();
   const targetWeekday = weekdayCnFromIsoDateHk(dateIso);
@@ -596,12 +601,17 @@ async function fetchDayTimetablePayloadUncached(
     staticBundle;
   const inactivePeriodsById = new Map(Object.entries(staticBundle.inactivePeriodsById));
 
-  const studentList = filterActiveStudentsOnDate(
+  const activeStudentList = filterActiveStudentsOnDate(
     staticBundle.studentList,
     inactivePeriodsById,
     year,
     dateIso,
   );
+  const activeIdSet = new Set(activeStudentList.map((s) => s.id));
+  const inactiveStudentList = includeInactiveSlots
+    ? staticBundle.studentList.filter((st) => !activeIdSet.has(st.id))
+    : [];
+  const studentList = activeStudentList;
 
   const normalizedRecordsById = new Map(Object.entries(yearSchedule.normalizedRecordsById));
   const stateById = new Map(Object.entries(yearSchedule.stateById));
@@ -614,13 +624,20 @@ async function fetchDayTimetablePayloadUncached(
   const byTimeRoom: Record<string, DayTimetableCell[]> = {};
   const timeSet = new Set<string>();
   let skippedStudents = 0;
+  const today = hkTodayYmd();
+  const todayIso = toDayIso(today.y, today.m, today.d);
 
-  for (const st of studentList) {
+  function pushStudentDayRows(params: {
+    st: (typeof studentList)[number];
+    onlyRegular: boolean;
+    isInactive: boolean;
+  }) {
+    const { st, onlyRegular, isInactive } = params;
     const records = normalizedRecordsById.get(st.id) ?? EMPTY_RECORDS;
     const state = stateById.get(st.id) ?? EMPTY_YEAR_STATE;
-    if (!studentMayAppearOnTimetableDate(records, state, dateIso, targetWeekday, regularOnly)) {
+    if (!studentMayAppearOnTimetableDate(records, state, dateIso, targetWeekday, onlyRegular)) {
       skippedStudents += 1;
-      continue;
+      return;
     }
 
     const studentDisplayName = formatStudentDisplayName(
@@ -628,16 +645,17 @@ async function fetchDayTimetablePayloadUncached(
       "compact",
     );
 
-    const today = hkTodayYmd();
-    const todayIso = toDayIso(today.y, today.m, today.d);
     const dayRows = buildDayTimetableRowsForDate(records, state, dateIso, todayIso, {
       roomSlotTutorRules,
     })
       .map((r) => ({ ...r, normalizedRoom: normalizeScheduleRoom(r.room) }))
       .filter((r) => {
         if (r.lessonType === "取消") return false;
-        if (regularOnly && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL)
+        if (onlyRegular && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL) {
           return false;
+        }
+        // Inactive: keep their regular slot only (holiday / pause still holds the time).
+        if (isInactive && r.lessonType !== "恆常") return false;
         return ROOM_GROUPS.includes(r.normalizedRoom as RoomGroup);
       });
 
@@ -661,15 +679,26 @@ async function fetchDayTimetablePayloadUncached(
         tutorDisplay,
         tutorColorHex,
         pendingMakeupLabel: row.pendingMakeupLabel,
+        ...(isInactive ? { isInactive: true as const } : {}),
       });
       byTimeRoom[key] = list;
       timeSet.add(time);
     }
   }
 
+  for (const st of studentList) {
+    pushStudentDayRows({ st, onlyRegular: regularOnly, isInactive: false });
+  }
+  for (const st of inactiveStudentList) {
+    pushStudentDayRows({ st, onlyRegular: true, isInactive: true });
+  }
+
   for (const key of Object.keys(byTimeRoom)) {
     const list = byTimeRoom[key];
     list.sort((a, b) => {
+      const ia = a.isInactive ? 1 : 0;
+      const ib = b.isInactive ? 1 : 0;
+      if (ia !== ib) return ia - ib;
       const pa = LESSON_TYPE_DISPLAY_PRIORITY[a.lessonType] ?? 9;
       const pb = LESSON_TYPE_DISPLAY_PRIORITY[b.lessonType] ?? 9;
       if (pa !== pb) return pa - pb;
@@ -780,9 +809,9 @@ async function fetchDayTimetablePayloadUncached(
 }
 
 const fetchDayTimetablePayloadCached = unstable_cache(
-  async (year: number, month: number, day: number, regularOnly: boolean) =>
-    fetchDayTimetablePayloadUncached(year, month, day, { regularOnly }),
-  ["day-timetable-payload-v13"],
+  async (year: number, month: number, day: number, regularOnly: boolean, includeInactiveSlots: boolean) =>
+    fetchDayTimetablePayloadUncached(year, month, day, { regularOnly, includeInactiveSlots }),
+  ["day-timetable-payload-v14"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
@@ -793,5 +822,11 @@ export async function fetchDayTimetablePayload(
   day: number,
   options: FetchDayTimetableOptions,
 ): Promise<DayTimetablePayload> {
-  return fetchDayTimetablePayloadCached(year, month, day, options.regularOnly);
+  return fetchDayTimetablePayloadCached(
+    year,
+    month,
+    day,
+    options.regularOnly,
+    Boolean(options.includeInactiveSlots),
+  );
 }

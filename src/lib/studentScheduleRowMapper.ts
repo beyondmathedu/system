@@ -6,6 +6,7 @@
 import { readLessonDayOverrideField } from "@/lib/lessonScheduleVersions";
 import {
   formatPendingMakeupReminder,
+  isPendingMakeupVisible,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
 import {
@@ -14,7 +15,6 @@ import {
   type YearLessonRecord,
   type YearLessonState,
 } from "@/lib/yearScheduleCore";
-import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
 
 const TYPE_REGULAR = "Regular";
 const TYPE_CANCELLED = "Cancelled";
@@ -245,7 +245,6 @@ export type StudentScheduleBuildOptions = {
   month?: number;
   rangeStartIso?: string;
   rangeEndIso?: string;
-  roomSlotTutorRules?: RoomSlotTutorRule[];
 };
 
 export function buildStudentBaseScheduleRows(
@@ -298,5 +297,8 @@ export function buildStudentScheduleRows(
     targetYear,
     buildOptions,
   );
-  return coreRowsToStudentRows(coreRows, records, state, hkTodayYmd);
+  return coreRowsToStudentRows(coreRows, records, state, hkTodayYmd).filter((row) => {
+    if (row.lessonType !== TYPE_PENDING) return true;
+    return isPendingMakeupVisible(row.date, hkTodayYmd);
+  });
 }

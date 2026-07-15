@@ -31,7 +31,7 @@ export default async function TutorMonthlyLessonRecordPage() {
             <p className="mt-1 text-sm text-blue-100">
               Choose a tutor to view monthly lesson details expanded from schedules. This page shows{" "}
               <strong className="text-white">all tutors</strong>; MPF on the{" "}
-              <Link href="/tutor" className="underline hover:text-white">
+              <Link href="/teacher" className="underline hover:text-white">
                 Tutor
               </Link>{" "}
               page is used for 5% calculations only.{" "}

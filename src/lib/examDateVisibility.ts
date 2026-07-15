@@ -1,4 +1,5 @@
 import { hkYmdNow } from "@/lib/lessonCalendar";
+import { formatDateSlash } from "@/lib/yearScheduleCore";
 
 const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -29,11 +30,9 @@ export function visibleExamContent(
   return isUpcomingExamDate(examDateIso, todayIso) ? examContent.trim() : "";
 }
 
-/** M/D display; empty when exam date has passed. */
+/** D/M display; empty when exam date has passed. */
 export function formatVisibleExamDateSlashed(examDateIso: string, todayIso = hkTodayIso()): string {
   const visible = visibleExamDateIso(examDateIso, todayIso);
   if (!visible) return "";
-  const m = ISO_DATE_RE.exec(visible);
-  if (!m) return visible;
-  return `${Number(m[2])}/${Number(m[3])}`;
+  return formatDateSlash(visible);
 }

@@ -3,6 +3,7 @@ import { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
 import {
   formatPendingMakeupFromDateLabel,
   formatPendingMakeupReminderZh,
+  isPendingMakeupVisible,
   isPendingRescheduleEntry,
 } from "@/lib/pendingMakeup";
 import { SCHEDULE_CACHE_TAG_HOME } from "@/lib/scheduleCacheTags";
@@ -429,6 +430,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       if (!isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;
       const fromDate = String((e as { fromDate?: string }).fromDate ?? "");
       if (!fromDate) continue;
+      if (!isPendingMakeupVisible(fromDate, ymdToday)) continue;
       pendingLeaveRows.push({
         studentId: sid,
         displayName: meta.displayName,

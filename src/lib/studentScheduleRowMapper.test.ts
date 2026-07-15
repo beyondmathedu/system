@@ -88,8 +88,29 @@ describe("studentScheduleRowMapper", () => {
     const pending = rows.find((r) => r.date === "2026-05-25");
 
     expect(pending?.lessonType).toBe(PENDING_MAKEUP_TYPE_LABEL);
-    expect(pending?.pendingMakeupLabel).toBeTruthy();
+    expect(pending?.pendingMakeupLabel).toBe("Makeup until end of June");
     expect(rows.some((r) => r.lessonType === "Reschedule")).toBe(false);
+  });
+
+  it("hides pending makeup from admin UI after M+3", () => {
+    const records = [mondayRule()];
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-pending",
+      fromDate: "2026-05-25",
+      toDate: "",
+      time: "4:00 PM",
+      room: "M前",
+      pending: true,
+    });
+
+    const july = buildStudentScheduleRows(records, state, YEAR, "2026-07-15");
+    expect(july.find((r) => r.date === "2026-05-25")?.pendingMakeupLabel).toBe(
+      "Reschedule deadline passed",
+    );
+
+    const august = buildStudentScheduleRows(records, state, YEAR, "2026-08-01");
+    expect(august.some((r) => r.date === "2026-05-25")).toBe(false);
   });
 
   it("expands only the requested month for base rows (regular lessons for bulk edit)", () => {

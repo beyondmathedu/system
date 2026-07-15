@@ -107,7 +107,7 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
     "daily-timetable": isMatch("/daily-time-table"),
     "regular-timetable": isMatch("/regular-class-timetable"),
     students: isMatch("/students"),
-    reports: isMatch("/tutor") || isMatch("/teacher") || isMatch("/tutor-monthly-lesson-record"),
+    reports: isMatch("/teacher") || isMatch("/tutor-monthly-lesson-record"),
     rooms: isMatch("/rooms"),
     room: isMatch("/rooms"),
   };
@@ -223,7 +223,7 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
                 ) : null}
                 {isAdminNav ? (
                   <>
-                    <Link href="/tutor" className={`${base} ${isActive("reports") ? active : idle}`}>
+                    <Link href="/teacher" className={`${base} ${isActive("reports") ? active : idle}`}>
                       Tutors
                     </Link>
                     <Link

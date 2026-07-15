@@ -8,6 +8,7 @@ import { isScheduleAttendanceMarked } from "@/lib/lessonScheduleVersions";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import {
   buildYearScheduleRowsForMonth,
+  formatDateSlash,
   type YearLessonRecord,
   type YearLessonState,
 } from "@/lib/yearScheduleCore";
@@ -29,11 +30,9 @@ const HK_WEEKDAY_SHORT_TO_CN: Record<string, string> = {
   Sun: "日",
 };
 
-/** "2026-05-08" → "5/8" */
+/** "2026-05-08" → "8/5" (day/month) */
 export function isoYmdToMonthDay(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso ?? "").trim());
-  if (!m) return iso;
-  return `${Number(m[2])}/${Number(m[3])}`;
+  return formatDateSlash(String(iso ?? "").trim());
 }
 
 function toHkIsoDateFromMs(ms: number) {
@@ -50,22 +49,43 @@ function toHkIsoDateFromMs(ms: number) {
 function sortMonthDayDates(dates: string[]): string[] {
   const copied = [...dates];
   copied.sort((a, b) => {
-    const [am, ad] = a.split("/").map((v) => Number(v));
-    const [bm, bd] = b.split("/").map((v) => Number(v));
+    const [ad, am] = a.split("/").map((v) => Number(v));
+    const [bd, bm] = b.split("/").map((v) => Number(v));
     if (am !== bm) return am - bm;
     return ad - bd;
   });
   return copied;
 }
 
+function hasBillableScheduleOverrides(state: YearLessonState): boolean {
+  return (state.rescheduleEntries?.length ?? 0) > 0 || (state.extraEntries?.length ?? 0) > 0;
+}
+
+function collectBillableDatesFromScheduleRows(params: {
+  records: YearLessonRecord[];
+  state: YearLessonState;
+  year: number;
+  month1to12: number;
+  isDateInactive?: (dateIso: string) => boolean;
+}): string[] {
+  const { records, state, year, month1to12, isDateInactive } = params;
+  const rows = buildYearScheduleRowsForMonth(records, state, year, month1to12);
+  const dates: string[] = [];
+  for (const row of rows) {
+    if (!BILLABLE_LESSON_TYPES.has(row.lessonType)) continue;
+    if (isDateInactive?.(row.date)) continue;
+    dates.push(isoYmdToMonthDay(row.date));
+  }
+  return dates;
+}
+
 function buildLegacyWeekdayLessonDatesForMonth(params: {
   year: number;
   month1to12: number;
   weekdays: string[];
-  extraEntries: Array<{ id: string; date: string }>;
   isDateInactive?: (dateIso: string) => boolean;
 }): string[] {
-  const { year, month1to12, weekdays, extraEntries, isDateInactive } = params;
+  const { year, month1to12, weekdays, isDateInactive } = params;
   const baseMap: Record<string, string[]> = {
     一: [],
     二: [],
@@ -86,24 +106,14 @@ function buildLegacyWeekdayLessonDatesForMonth(params: {
     const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12));
     const short = weekdayFormatter.format(dt);
     const cn = HK_WEEKDAY_SHORT_TO_CN[short];
-    if (cn) baseMap[cn].push(`${month1to12}/${d}`);
+    if (cn) baseMap[cn].push(`${d}/${month1to12}`);
   }
 
   const base: string[] = [];
   for (const wd of weekdays) {
     base.push(...(baseMap[wd] ?? []));
   }
-  for (const e of extraEntries) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date);
-    if (!m) continue;
-    const y = Number(m[1]);
-    const mo = Number(m[2]);
-    const day = Number(m[3]);
-    if (y === year && mo === month1to12) {
-      if (!isDateInactive?.(e.date)) base.push(`${mo}/${day}`);
-    }
-  }
-  return sortMonthDayDates(Array.from(new Set(base)));
+  return sortMonthDayDates(base);
 }
 
 export function normalizeFeeLessonRecords(raw: unknown): YearLessonRecord[] {
@@ -159,23 +169,34 @@ export function collectBillableLessonDatesForMonth(params: {
   isDateInactive?: (dateIso: string) => boolean;
 }): string[] {
   const { records, state, year, month1to12, legacyWeekdays, isDateInactive } = params;
-  if (records.length === 0) {
+  if (records.length === 0 && !hasBillableScheduleOverrides(state)) {
     return buildLegacyWeekdayLessonDatesForMonth({
       year,
       month1to12,
       weekdays: legacyWeekdays ?? [],
-      extraEntries: state.extraEntries ?? [],
       isDateInactive,
     });
   }
 
-  const rows = buildYearScheduleRowsForMonth(records, state, year, month1to12);
-  const dates: string[] = [];
-  for (const row of rows) {
-    if (!BILLABLE_LESSON_TYPES.has(row.lessonType)) continue;
-    if (isDateInactive?.(row.date)) continue;
-    dates.push(isoYmdToMonthDay(row.date));
+  const dates = collectBillableDatesFromScheduleRows({
+    records,
+    state,
+    year,
+    month1to12,
+    isDateInactive,
+  });
+
+  if (records.length === 0 && (legacyWeekdays?.length ?? 0) > 0) {
+    dates.push(
+      ...buildLegacyWeekdayLessonDatesForMonth({
+        year,
+        month1to12,
+        weekdays: legacyWeekdays ?? [],
+        isDateInactive,
+      }),
+    );
   }
+
   return sortMonthDayDates(dates);
 }
 
@@ -227,7 +248,7 @@ export function countAttendedBillableLessonsInMonth(params: {
   isDateInactive?: (dateIso: string) => boolean;
 }): number {
   const { records, state, year, month1to12, isDateInactive } = params;
-  if (records.length === 0) {
+  if (records.length === 0 && !hasBillableScheduleOverrides(state)) {
     return countLegacyAttendedLessonsInMonth({
       attendance: state.attendance,
       year,

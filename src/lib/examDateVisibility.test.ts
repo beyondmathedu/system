@@ -20,8 +20,8 @@ describe("examDateVisibility", () => {
     expect(formatVisibleExamDateSlashed("2026-07-07", today)).toBe("");
   });
 
-  it("formats upcoming dates as M/D", () => {
-    expect(formatVisibleExamDateSlashed("2026-07-15", today)).toBe("7/15");
+  it("formats upcoming dates as D/M", () => {
+    expect(formatVisibleExamDateSlashed("2026-07-15", today)).toBe("15/7");
   });
 
   it("hides exam content when date has passed", () => {

@@ -1,9 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
-import DayTimetableLegend from "@/components/DayTimetableLegend";
-import DayTimetableStyleEditorLazy from "@/components/DayTimetableStyleEditorLazy";
-import DayTimetableTable from "@/components/DayTimetableTable";
 import { dayTimetablePageIntroStrings } from "@/lib/dayTimetableUiStrings";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
@@ -12,6 +9,7 @@ import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchDayTimetablePayload, parseDayParams } from "@/lib/dayTimetableGrid";
 import { normalizeStudentId } from "@/lib/studentId";
+import RegularClassTimetablePanel from "./RegularClassTimetablePanel";
 
 type PageProps = {
   searchParams?: Promise<{ year?: string; month?: string; day?: string }>;
@@ -28,7 +26,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   const nextHref = `/regular-class-timetable?year=${year}&month=${month}&day=${day}`;
   const [viewer, payload] = await Promise.all([
     getViewerContext(),
-    fetchDayTimetablePayload(year, month, day, { regularOnly: true }),
+    fetchDayTimetablePayload(year, month, day, { regularOnly: false, includeInactiveSlots: true }),
   ]);
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
@@ -82,17 +80,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
 
           <div className="p-4 sm:p-6">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="mb-3 text-sm font-bold text-slate-700">Regular lessons (selected day)</div>
-              <DayTimetableTable
-                key={payload.dateIso}
-                payload={payload}
-                emptyMessage="No regular lessons on this day."
-                showRegularCapacitySummary
-              />
-              <DayTimetableLegend timetableStyle={payload.timetableStyle} showCapacityLegend />
-              <div className="mt-6">
-                <DayTimetableStyleEditorLazy initial={payload.timetableStyle} />
-              </div>
+              <RegularClassTimetablePanel payload={payload} />
             </div>
           </div>
         </div>

@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppTopNav from "@/components/AppTopNav";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
-import RoomSlotTutorRulesPanel from "@/components/RoomSlotTutorRulesPanel";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { supabase } from "@/lib/supabase";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
@@ -1020,9 +1019,6 @@ export default function TeacherPage() {
           </div>
         </div>
 
-        <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <RoomSlotTutorRulesPanel tutorOptions={activeTutorNames} />
-        </div>
         </ClientOnlyAfterMount>
       </div>
     </div>

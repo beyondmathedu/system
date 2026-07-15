@@ -5,6 +5,7 @@
 import { normalizeScheduleRoom } from "@/lib/dayTimetableShared";
 import {
   formatPendingMakeupReminder,
+  isPendingMakeupVisible,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
 import {
@@ -127,5 +128,10 @@ export function buildDayTimetableRowsForDate(
     targetDateIso,
     { roomSlotTutorRules: options?.roomSlotTutorRules },
   );
-  return coreRows.map((row) => mapCoreRowToDayRow(row, todayYmd));
+  return coreRows
+    .map((row) => mapCoreRowToDayRow(row, todayYmd))
+    .filter((row) => {
+      if (row.lessonType !== PENDING_MAKEUP_TYPE_LABEL) return true;
+      return isPendingMakeupVisible(row.date, todayYmd);
+    });
 }

@@ -9,6 +9,7 @@ import TextbookPublisherPicker from "@/components/TextbookPublisherPicker";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 import { gradeToTextbookBand, resolveTextbookSelection } from "@/lib/textbookPublisherCatalog";
+import { parseStudentPasteBatch } from "@/lib/parseStudentPasteText";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 
 type Student = {
@@ -103,6 +104,9 @@ export default function StudentsPage() {
   const [dataError, setDataError] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
   const [savingForm, setSavingForm] = useState(false);
+  const [pasteDraft, setPasteDraft] = useState("");
+  const [pasteNotice, setPasteNotice] = useState("");
+  const [pasteWarnings, setPasteWarnings] = useState<string[]>([]);
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -287,6 +291,101 @@ export default function StudentsPage() {
       return next;
     });
   };
+
+  const partialFieldsToForm = useCallback((fields: Partial<StudentForm>): StudentForm => {
+    const next = { ...emptyForm };
+    for (const [key, value] of Object.entries(fields) as Array<
+      [keyof StudentForm, string | undefined]
+    >) {
+      if (value == null || value === "") continue;
+      next[key] = value;
+    }
+    return next;
+  }, []);
+
+  const applyPasteToForm = useCallback(() => {
+    const batch = parseStudentPasteBatch(pasteDraft);
+    if (batch.students.length === 0) {
+      setPasteNotice("");
+      setPasteWarnings(batch.warnings);
+      return;
+    }
+
+    const first = batch.students[0]!;
+    setForm(partialFieldsToForm(first.fields));
+    setEditingId(null);
+    setFormError("");
+    setFormNotice("");
+    setPasteNotice(
+      batch.students.length === 1
+        ? `Filled ${first.matchedLabels.length} field(s) into the form. Review, then Add student record.`
+        : `Detected ${batch.students.length} students. Filled row 1 into the form — use “Add all students” to insert everyone at once.`,
+    );
+    setPasteWarnings(batch.warnings);
+  }, [pasteDraft, partialFieldsToForm]);
+
+  const addAllFromPaste = useCallback(async () => {
+    const batch = parseStudentPasteBatch(pasteDraft);
+    if (batch.students.length === 0) {
+      setPasteNotice("");
+      setPasteWarnings(batch.warnings);
+      return;
+    }
+
+    setSavingForm(true);
+    setFormError("");
+    setFormNotice("");
+    setPasteNotice("");
+    const addedIds: string[] = [];
+    const failures: string[] = [];
+
+    try {
+      for (let i = 0; i < batch.students.length; i += 1) {
+        const row = batch.students[i]!;
+        const formRow = partialFieldsToForm(row.fields);
+        let inserted = false;
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const candidateId = await fetchNextStudentIdFromDb();
+          const { error } = await supabase
+            .from("students")
+            .insert([{ id: candidateId, ...mapFormToRow(formRow) }]);
+          if (!error) {
+            addedIds.push(candidateId);
+            inserted = true;
+            break;
+          }
+          if (!isDuplicateStudentIdError(error)) {
+            failures.push(
+              `Row ${i + 1} (${formRow.nameEn || formRow.nameZh || formRow.nicknameEn || "student"}): ${error.message}`,
+            );
+            inserted = true; // stop retrying this row
+            break;
+          }
+        }
+        if (!inserted) {
+          failures.push(`Row ${i + 1}: could not allocate student ID.`);
+        }
+      }
+
+      await reloadStudentsList();
+      setEditingId(null);
+      setForm(emptyForm);
+      if (addedIds.length > 0) {
+        setPasteDraft("");
+        setPasteNotice(
+          addedIds.length === 1
+            ? `Added 1 student (ID ${addedIds[0]}).`
+            : `Added ${addedIds.length} students (IDs ${addedIds[0]}–${addedIds[addedIds.length - 1]}).`,
+        );
+      }
+      setPasteWarnings([...batch.warnings, ...failures]);
+      if (addedIds.length === 0 && failures.length > 0) {
+        setFormError(failures[0] ?? "Failed to add students.");
+      }
+    } finally {
+      setSavingForm(false);
+    }
+  }, [pasteDraft, partialFieldsToForm]);
 
   const saveStudent = () => {
     void saveStudentAsync();
@@ -554,6 +653,64 @@ export default function StudentsPage() {
               <p className="mt-2 text-sm font-medium text-red-600">{formError}</p>
             )}
           </div>
+        </div>
+
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-bold text-slate-800">Paste to add students</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                One student per line (tab-separated). Empty cells OK. Use “Add all students” for multiple rows,
+                or “Fill form” to preview the first row.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void addAllFromPaste()}
+                disabled={savingForm || !pasteDraft.trim()}
+                className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1663a3] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingForm ? "Adding…" : "Add all students"}
+              </button>
+              <button
+                type="button"
+                onClick={applyPasteToForm}
+                disabled={savingForm || !pasteDraft.trim()}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Fill form (1st row)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPasteDraft("");
+                  setPasteNotice("");
+                  setPasteWarnings([]);
+                }}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Clear paste
+              </button>
+            </div>
+          </div>
+          <textarea
+            value={pasteDraft}
+            onChange={(e) => setPasteDraft(e.target.value)}
+            rows={5}
+            placeholder={`One student per line:\nLau tsun kit	Bosco	2007年3月25日	54071413	boscolau02@gmail.com	華德福會瑪利亞書院	中六	中文\nChan Tai Man	Tom		91234567		聖保羅	中三	英文`}
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+          />
+          {pasteNotice ? (
+            <p className="mt-2 text-sm font-medium text-emerald-700">{pasteNotice}</p>
+          ) : null}
+          {pasteWarnings.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-amber-800">
+              {pasteWarnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          ) : null}
         </div>
 
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

@@ -62,9 +62,9 @@ function formatIsoRangeShort(startIso: string, endIso: string): string {
   const a = parse(startIso);
   const b = parse(endIso);
   if (!a || !b) return `${startIso} - ${endIso}`;
-  const left = `${MONTH_SHORT[Math.max(0, Math.min(11, a.month - 1))]} ${a.day}`;
-  const right = `${MONTH_SHORT[Math.max(0, Math.min(11, b.month - 1))]} ${b.day}`;
-  if (a.month === b.month) return `${MONTH_SHORT[a.month - 1]} ${a.day} - ${b.day}`;
+  const left = `${a.day} ${MONTH_SHORT[Math.max(0, Math.min(11, a.month - 1))]}`;
+  const right = `${b.day} ${MONTH_SHORT[Math.max(0, Math.min(11, b.month - 1))]}`;
+  if (a.month === b.month) return `${a.day} - ${b.day} ${MONTH_SHORT[a.month - 1]}`;
   return `${left} - ${right}`;
 }
 

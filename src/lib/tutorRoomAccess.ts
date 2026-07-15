@@ -86,7 +86,6 @@ const TUTOR_BLOCKED_PREFIXES = [
   "/students",
   "/students-lesson-time-fee-record",
   "/regular-class-timetable",
-  "/tutor",
   "/teacher",
   "/tutor-monthly-lesson-record",
 ] as const;

@@ -77,7 +77,7 @@ function formatEffectiveDateZh(iso: string) {
   const mo = Number(m[2]);
   const day = Number(m[3]);
   const dt = new Date(y, mo - 1, day);
-  return dt.toLocaleDateString("en-US", {
+  return dt.toLocaleDateString("en-GB", {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -596,7 +596,7 @@ export default function LessonScheduleGrid({
           <div className="mt-3 overflow-x-auto">
             <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-4">
               <label className="block">
-                <span className="mb-1 block text-[11px] font-semibold text-slate-600">Effective Date (M/D)</span>
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">Effective Date (D/M)</span>
                 <input
                   type="date"
                   value={filterEffectiveDate}
@@ -657,7 +657,7 @@ export default function LessonScheduleGrid({
               <table className="w-full min-w-[520px] border-collapse text-sm">
                 <thead>
                   <tr className="divide-x divide-slate-200 border-b border-slate-200 bg-slate-50 text-left text-xs font-bold text-slate-700">
-                    <th className="whitespace-nowrap px-3 py-2">Effective Date (M/D)</th>
+                    <th className="whitespace-nowrap px-3 py-2">Effective Date (D/M)</th>
                     <th className="whitespace-nowrap px-3 py-2">Day</th>
                     <th className="whitespace-nowrap px-3 py-2">Time</th>
                     <th className="whitespace-nowrap px-3 py-2">Room</th>

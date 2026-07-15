@@ -43,9 +43,11 @@ import {
   isRegularLessonAttended,
 } from "@/lib/lessonScheduleVersions";
 import {
+  isPendingMakeupEditable,
   isPendingRescheduleEntry,
   PENDING_MAKEUP_BUTTON_LABEL,
   PENDING_MAKEUP_TYPE_LABEL,
+  pendingMakeupLockedMessage,
 } from "@/lib/pendingMakeup";
 import {
   buildStudentBaseScheduleRows,
@@ -59,10 +61,6 @@ import {
   ROOM_GROUPS,
   resolveScheduleRoomPickerValue,
 } from "@/lib/dayTimetableShared";
-import {
-  loadRoomSlotTutorRulesServer,
-  type RoomSlotTutorRule,
-} from "@/lib/roomSlotTutorRules";
 import { isStudentInactiveOnDate, getInactiveMonthGapsInYear, type InactiveMonthGap } from "@/lib/studentVisibility";
 import {
   isUpcomingExamDate,
@@ -640,12 +638,14 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     timePreset: string;
     timeCustom: string;
     room: string;
+    room2: string;
     doubleEnabled: boolean;
   }>({
     date: "",
     timePreset: WEEKDAY_TIME_SUGGESTIONS[0],
     timeCustom: "",
     room: ROOM_OPTIONS[0],
+    room2: ROOM_OPTIONS[0],
     doubleEnabled: false,
   });
   const [editForm, setEditForm] = useState<{
@@ -702,7 +702,6 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const [filterType, setFilterType] = useState("");
   const [sortConfig, setSortConfig] = useState<ScheduleSortConfig>(null);
   const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
-  const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>([]);
   const yearMin = getLessonSystemStartIso(targetYear);
   const yearMax = `${targetYear}-12-31`;
   const scheduleTableColSpan = canEditTimetableRemarks ? 12 : 11;
@@ -761,17 +760,6 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     void (async () => {
       const names = await loadInactiveTutorNames();
       if (mounted) setInactiveTutorNames(names);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    void (async () => {
-      const rules = await loadRoomSlotTutorRulesServer(supabase);
-      if (mounted) setRoomSlotTutorRules(rules);
     })();
     return () => {
       mounted = false;
@@ -1048,7 +1036,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const scheduleBuildOptions = useMemo((): StudentScheduleBuildOptions | undefined => {
     const from = filterDateFrom.trim();
     const to = filterDateTo.trim();
-    const roomRules = { roomSlotTutorRules };
+    const roomRules = {};
     if (from && to) {
       return { rangeStartIso: from, rangeEndIso: to, ...roomRules };
     }
@@ -1057,7 +1045,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     }
     // Month = All: expand the full year (system start through Dec), not just the current month.
     return roomRules;
-  }, [filterDateFrom, filterDateTo, filterMonth, roomSlotTutorRules]);
+  }, [filterDateFrom, filterDateTo, filterMonth]);
 
   const scheduleMapperState = useMemo(
     () => ({
@@ -1329,6 +1317,13 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         : undefined;
       if (!entry) {
         setSelectionError("Cannot find the corresponding reschedule record.");
+        return;
+      }
+      if (
+        isPendingRescheduleEntry(entry) &&
+        !isPendingMakeupEditable(entry.fromDate, hkTodayYmd)
+      ) {
+        setSelectionError(pendingMakeupLockedMessage(entry.fromDate));
         return;
       }
       setEditingRescheduleId(entry.id);
@@ -1794,7 +1789,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       scheduleMapperState,
       targetYear,
       hkTodayYmd,
-      { month: diagnosticMonth, roomSlotTutorRules },
+      { month: diagnosticMonth },
     );
     return {
       total: monthRows.length,
@@ -1808,7 +1803,6 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     hkTodayYmd,
     diagnosticMonth,
     filteredScheduleRows,
-    roomSlotTutorRules,
   ]);
 
   const activeDiagnosticVersionDate = useMemo(() => {
@@ -2662,6 +2656,19 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                             }
                             const from = fromLessonDate.trim();
                             const to = toLessonDate.trim();
+                            const editingEntry = editingRescheduleId
+                              ? rescheduleEntries.find((e) => e.id === editingRescheduleId)
+                              : undefined;
+                            if (
+                              editingEntry &&
+                              isPendingRescheduleEntry(editingEntry) &&
+                              !isPendingMakeupEditable(from, hkTodayYmd)
+                            ) {
+                              const msg = pendingMakeupLockedMessage(from);
+                              setEditSaveStatus(msg);
+                              setSelectionError(msg);
+                              return;
+                            }
                             if (!validationBaseRowByDate.has(from)) {
                               setEditSaveStatus("Original date is not a regular lesson date.");
                               setSelectionError("Original date must be an existing regular lesson date.");
@@ -2834,6 +2841,12 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                               return;
                             }
                             const from = fromLessonDate.trim();
+                            if (!isPendingMakeupEditable(from, hkTodayYmd)) {
+                              const msg = pendingMakeupLockedMessage(from);
+                              setEditSaveStatus(msg);
+                              setSelectionError(msg);
+                              return;
+                            }
                             if (!validationBaseRowByDate.has(from)) {
                               setEditSaveStatus("Original date is not a regular lesson date.");
                               setSelectionError("Original date must be an existing regular lesson date.");
@@ -3016,7 +3029,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                 id: `${Date.now()}-2`,
                                 date,
                                 time: finalTime,
-                                room: canonicalScheduleRoomLabel(extraForm.room.trim()),
+                                room: canonicalScheduleRoomLabel(extraForm.room2.trim() || extraForm.room.trim()),
                               });
                             }
                             setExtraEntries(nextExtra);
@@ -3054,7 +3067,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                   </div>
 
                   <div className="block">
-                    <span className="mb-1 block text-sm font-semibold text-slate-700">Room</span>
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">
+                      {extraForm.doubleEnabled ? "Room 1" : "Room"}
+                    </span>
                     <div className="flex items-center gap-3">
                       <select
                         value={extraForm.room}
@@ -3072,7 +3087,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                           type="checkbox"
                           checked={extraForm.doubleEnabled}
                           onChange={(e) =>
-                            setExtraForm((p) => ({ ...p, doubleEnabled: e.target.checked }))
+                            setExtraForm((p) => ({
+                              ...p,
+                              doubleEnabled: e.target.checked,
+                              room2: e.target.checked ? p.room2 || p.room : p.room2,
+                            }))
                           }
                           className="h-5 w-5 accent-[#1d76c2]"
                         />
@@ -3081,9 +3100,25 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                     </div>
                   </div>
                   {extraForm.doubleEnabled ? (
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 lg:col-span-5">
-                      Double Lesson enabled: the second lesson uses the same day, time, and room.
-                    </div>
+                    <>
+                      <div className="block">
+                        <span className="mb-1 block text-sm font-semibold text-slate-700">Room 2</span>
+                        <select
+                          value={extraForm.room2}
+                          onChange={(e) => setExtraForm((p) => ({ ...p, room2: e.target.value }))}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                        >
+                          {ROOM_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {ROOM_LABEL[option] ?? option}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 lg:col-span-5">
+                        Double Lesson: same day and time; Room 1 and Room 2 can differ (e.g. different tutors).
+                      </div>
+                    </>
                   ) : null}
                 </div>
 
@@ -3530,6 +3565,10 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       setSelectionError("Select a regular lesson row to mark leave / pending makeup.");
                       return;
                     }
+                    if (!isPendingMakeupEditable(row.date, hkTodayYmd)) {
+                      setSelectionError(pendingMakeupLockedMessage(row.date));
+                      return;
+                    }
                     setFromLessonDate(row.date);
                     setToLessonDate("");
                     setLockFromLessonDate(true);
@@ -3565,11 +3604,13 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                     }
                     const wd = weekdayFromIsoDate(row.date);
                     const opts = wd === "六" ? SATURDAY_TIME_SUGGESTIONS : WEEKDAY_TIME_SUGGESTIONS;
+                    const room = resolveScheduleRoomPickerValue(row.room);
                     setExtraForm({
                       date: row.date,
                       timePreset: opts.includes(row.time) ? row.time : opts[0],
                       timeCustom: opts.includes(row.time) ? "" : row.time,
-                      room: resolveScheduleRoomPickerValue(row.room),
+                      room,
+                      room2: room,
                       doubleEnabled: false,
                     });
                   } else {
@@ -3578,6 +3619,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       timePreset: WEEKDAY_TIME_SUGGESTIONS[0],
                       timeCustom: "",
                       room: ROOM_OPTIONS[0],
+                      room2: ROOM_OPTIONS[0],
                       doubleEnabled: false,
                     });
                   }
@@ -3639,6 +3681,17 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                   }
 
                   if (rescheduleIdsToDelete.size > 0) {
+                    for (const id of rescheduleIdsToDelete) {
+                      const entry = rescheduleEntryById.get(id);
+                      if (
+                        entry &&
+                        isPendingRescheduleEntry(entry) &&
+                        !isPendingMakeupEditable(entry.fromDate, hkTodayYmd)
+                      ) {
+                        setSelectionError(pendingMakeupLockedMessage(entry.fromDate));
+                        return;
+                      }
+                    }
                     const nextEntries = rescheduleEntries.filter(
                       (e) => !rescheduleIdsToDelete.has(e.id),
                     );

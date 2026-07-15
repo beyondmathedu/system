@@ -51,8 +51,8 @@ describe("feeRecordLessonDates", () => {
       month1to12: 6,
     });
 
-    expect(may.includes("5/25")).toBe(false);
-    expect(june.includes("6/3")).toBe(true);
+    expect(may.includes("25/5")).toBe(false);
+    expect(june.includes("3/6")).toBe(true);
   });
 
   it("includes pending makeup on original date", () => {
@@ -83,7 +83,7 @@ describe("feeRecordLessonDates", () => {
       month1to12: 5,
     });
 
-    expect(may.includes("5/25")).toBe(true);
+    expect(may.includes("25/5")).toBe(true);
   });
 
   it("respects hidden_dates by rule id", () => {
@@ -107,7 +107,7 @@ describe("feeRecordLessonDates", () => {
       month1to12: 5,
     });
 
-    expect(may.includes("5/25")).toBe(false);
+    expect(may.includes("25/5")).toBe(false);
   });
 
   it("emits two slots on the same weekday when two rules share it", () => {
@@ -136,14 +136,52 @@ describe("feeRecordLessonDates", () => {
       state,
       year: 2026,
       month1to12: 5,
-    }).filter((d) => d === "5/25").length;
+    }).filter((d) => d === "25/5").length;
 
     expect(may25Count).toBe(2);
   });
 
+  it("includes extra lessons when schedule records are empty", () => {
+    const state = emptyState();
+    state.extraEntries.push(
+      { id: "ex-1", date: "2026-05-10", time: "4:00 PM", room: "B" },
+      { id: "ex-2", date: "2026-05-10", time: "5:30 PM", room: "M前" },
+    );
+
+    const dates = collectBillableLessonDatesForMonth({
+      records: [],
+      state,
+      year: 2026,
+      month1to12: 5,
+      legacyWeekdays: [],
+    });
+
+    expect(dates.filter((d) => d === "10/5").length).toBe(2);
+  });
+
+  it("includes reschedule to-date when schedule records are empty", () => {
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-only",
+      fromDate: "2026-05-25",
+      toDate: "2026-06-03",
+      time: "4:00 PM",
+      room: "M前",
+    });
+
+    const june = collectBillableLessonDatesForMonth({
+      records: [],
+      state,
+      year: 2026,
+      month1to12: 6,
+      legacyWeekdays: [],
+    });
+
+    expect(june).toEqual(["3/6"]);
+  });
+
   it("falls back to weekday estimate when schedule records are empty", () => {
     const state = emptyState();
-    state.extraEntries.push({ id: "ex-1", date: "2026-05-10", time: "4:00 PM", room: "B" });
 
     const dates = collectBillableLessonDatesForMonth({
       records: [],
@@ -153,8 +191,7 @@ describe("feeRecordLessonDates", () => {
       legacyWeekdays: ["一"],
     });
 
-    expect(dates.includes("5/10")).toBe(true);
-    expect(dates.some((d) => d.startsWith("5/"))).toBe(true);
+    expect(dates.some((d) => d.endsWith("/5"))).toBe(true);
   });
 
   it("counts attended regular slots via dateIso or regular:ruleId keys", () => {

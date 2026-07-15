@@ -49,6 +49,7 @@ import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
 import {
   collectBillableLessonDatesForMonth,
   countAttendedBillableLessonsInMonth,
+  isoYmdToMonthDay,
   normalizeFeeLessonRecords,
   toYearLessonStateFromClient,
 } from "@/lib/feeRecordLessonDates";
@@ -80,6 +81,7 @@ type StudentRow = {
 const L_COUNT = 9;
 const OPENING_BALANCE_AS_OF_YEAR = FEE_OPENING_BALANCE_AS_OF_YEAR;
 const OPENING_BALANCE_AS_OF_MONTH = FEE_OPENING_BALANCE_AS_OF_MONTH; // balance as of end of 2026/04
+
 const STICKY_ID_WIDTH = 88;
 /** Narrow sticky column; long names wrap to 2 lines (see StudentFeeRow). */
 const STICKY_NAME_WIDTH = 76;
@@ -199,12 +201,6 @@ function emptyLessonYearState(): StudentLesson2026State {
   };
 }
 
-/** "2026-05-08" → "5/8" */
-function isoYmdToMonthDay(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
-  if (!m) return iso;
-  return `${Number(m[2])}/${Number(m[3])}`;
-}
 
 function formatHkMoneyAmount(n: number): string {
   const v = Math.round(n * 100) / 100;
@@ -622,11 +618,13 @@ export default function StudentsLessonTimeFeeRecordPage() {
   const openingBalanceSaveTimersRef = useState(() => new Map<string, number>())[0];
 
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
-  const [gradeFilter, setGradeFilter] = useState<string>("all");
+  const [gradeFilter, setGradeFilter] = useState<string>("F.1");
   const [weekdayFilter, setWeekdayFilter] = useState<string>("all");
   const [paymentFilter, setPaymentFilter] = useState<"all" | "underpaid" | "ok">("all");
   const [sessionFilter, setSessionFilter] = useState<"all" | "short" | "ok">("all");
   const [sendFeeFilter, setSendFeeFilter] = useState<"all" | "yes" | "no">("all");
+  const [balanceDueFilter, setBalanceDueFilter] = useState<"all" | "yes" | "no">("all");
+  const [makeupFilter, setMakeupFilter] = useState<"all" | "yes" | "no">("all");
   const [searchText, setSearchText] = useState("");
   const [syncingZoho, setSyncingZoho] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
@@ -652,6 +650,17 @@ export default function StudentsLessonTimeFeeRecordPage() {
 
   const onFeeDetailOpen = useCallback((dialog: FeeDetailDialogState) => {
     setFeeDetailDialog(dialog);
+  }, []);
+
+  const resetAllFilters = useCallback(() => {
+    setGradeFilter("all");
+    setWeekdayFilter("all");
+    setPaymentFilter("all");
+    setSessionFilter("all");
+    setSendFeeFilter("all");
+    setBalanceDueFilter("all");
+    setMakeupFilter("all");
+    setSearchText("");
   }, []);
 
   useEffect(() => {
@@ -839,19 +848,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
           const id = st.id;
           let records: LessonRecord[] = [];
           const rawCloudRecords = recordsMap[id];
-          if (Array.isArray(rawCloudRecords) && rawCloudRecords.length > 0) {
+          if (Array.isArray(rawCloudRecords)) {
             records = rawCloudRecords as LessonRecord[];
-          } else {
-            try {
-              const key = `lesson_schedule_records:${id}`;
-              const raw = window.localStorage.getItem(key);
-              if (raw) {
-                const parsed = JSON.parse(raw) as unknown;
-                if (Array.isArray(parsed)) records = parsed as LessonRecord[];
-              }
-            } catch {
-              // ignore
-            }
           }
           nextRecords[id] = records;
 
@@ -1075,81 +1073,6 @@ export default function StudentsLessonTimeFeeRecordPage() {
     isMonthInactiveForFeeByStudentId,
   ]);
 
-  const filteredSortedStudents = useMemo(() => {
-    const normalizedSearch = searchText.trim().toLowerCase();
-    return sortedStudents.filter((st) => {
-      const r = recordsByStudentId[st.id] ?? defaultRecordState();
-      const expectedSessions = r.expected ?? 0;
-      const attended = attendedLessonsInMonthByStudentId[st.id] ?? 0;
-      const matchesGrade = gradeFilter === "all" || formatGradeDisplay(st.grade) === gradeFilter;
-      const matchesWeekday =
-        weekdayFilter === "all" ||
-        (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
-      const matchesPayment =
-        paymentFilter === "all" ||
-        (paymentFilter === "underpaid" ? r.submitted < r.expected : r.submitted >= r.expected);
-      const matchesSession =
-        sessionFilter === "all" ||
-        (sessionFilter === "short"
-          ? expectedSessions > 0 && attended < expectedSessions
-          : expectedSessions === 0 || attended >= expectedSessions);
-      const matchesSendFee =
-        sendFeeFilter === "all" || (sendFeeFilter === "yes" ? Boolean(r.sendFee) : !r.sendFee);
-      const displayName = formatStudentDisplayNameOrEmpty(
-        { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
-        "full",
-      ).toLowerCase();
-      const normalizedId = normalizeStudentId(st.id).toLowerCase();
-      const phoneText = st.student_phone.toLowerCase();
-      const matchesSearch =
-        normalizedSearch.length === 0 ||
-        normalizedId.includes(normalizedSearch) ||
-        st.id.toLowerCase().includes(normalizedSearch) ||
-        displayName.includes(normalizedSearch) ||
-        phoneText.includes(normalizedSearch);
-      return (
-        matchesGrade &&
-        matchesWeekday &&
-        matchesPayment &&
-        matchesSession &&
-        matchesSendFee &&
-        matchesSearch
-      );
-    });
-  }, [
-    sortedStudents,
-    recordsByStudentId,
-    gradeFilter,
-    weekdayFilter,
-    paymentFilter,
-    sessionFilter,
-    sendFeeFilter,
-    searchText,
-    weekdayTokensByStudentId,
-    attendedLessonsInMonthByStudentId,
-  ]);
-
-  const {
-    tableScrollId,
-    bottomTrackRef,
-    sideTrackRef,
-    bottomThumb,
-    sideThumb,
-    bottomScrollWidth,
-    bottomScrollClientWidth,
-    sideScrollHeight,
-    sideScrollClientHeight,
-    bottomTrackA11yProps,
-    sideTrackA11yProps,
-    onBottomTrackMouseDown,
-    onSideTrackMouseDown,
-    startDragBottomThumb,
-    startDragSideThumb,
-  } = useCustomScrollbars({
-    tableScrollRef,
-    contentKey: `${filteredSortedStudents.length}:${sheetYear}:${sheetMonth}`,
-  });
-
   const updateStudentRecord = (studentId: string, patch: Partial<RecordState>) => {
     setRecordsByStudentId((prev) => ({
       ...prev,
@@ -1325,6 +1248,40 @@ export default function StudentsLessonTimeFeeRecordPage() {
     isMonthInactiveForFeeByStudentId,
   ]);
 
+  /** Live Makeup count (prior calendar month unticked); matches Makeup column & filter. */
+  const makeupLiveCountByStudentId = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const st of students) {
+      const sid = st.id;
+      const recs = (lessonRecordsByStudentId[sid] ?? []) as unknown as Lesson2026Record[];
+      const ys = lessonYearStateByStudentId[sid];
+      const hasLessonPayload =
+        recs.length > 0 ||
+        ys != null ||
+        Object.prototype.hasOwnProperty.call(lessonRecordsByStudentId, sid) ||
+        Object.prototype.hasOwnProperty.call(lessonYearStateByStudentId, sid);
+      if (!hasLessonPayload) {
+        out[sid] = remedialCountByStudentId[sid] ?? 0;
+        continue;
+      }
+      const state: Lesson2026State = {
+        attendance: ys?.attendance ?? {},
+        hiddenDates: ys?.hiddenDates ?? {},
+        overrides: (ys?.overrides ?? {}) as Lesson2026State["overrides"],
+        rescheduleEntries: (ys?.rescheduleEntries as Lesson2026State["rescheduleEntries"]) ?? [],
+        extraEntries: (ys?.extraEntries as Lesson2026State["extraEntries"]) ?? [],
+      };
+      out[sid] = getUpcomingUntickedDates(recs, state, Date.now(), sheetYear).length;
+    }
+    return out;
+  }, [
+    students,
+    lessonRecordsByStudentId,
+    lessonYearStateByStudentId,
+    sheetYear,
+    remedialCountByStudentId,
+  ]);
+
   const feeDialogMakeupDetail = useMemo(() => {
     if (!feeDetailDialog || feeDetailDialog.kind !== "makeup") {
       return { dates: [] as string[], dbOnly: false, liveCount: 0 };
@@ -1452,6 +1409,95 @@ export default function StudentsLessonTimeFeeRecordPage() {
     }
     return out;
   }, [students, balanceBeforeByStudentId, currentMonthExpectedTuitionByStudentId]);
+
+  const filteredSortedStudents = useMemo(() => {
+    const normalizedSearch = searchText.trim().toLowerCase();
+    return sortedStudents.filter((st) => {
+      const r = recordsByStudentId[st.id] ?? defaultRecordState();
+      const expectedSessions = r.expected ?? 0;
+      const attended = attendedLessonsInMonthByStudentId[st.id] ?? 0;
+      const matchesGrade = gradeFilter === "all" || formatGradeDisplay(st.grade) === gradeFilter;
+      const matchesWeekday =
+        weekdayFilter === "all" ||
+        (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
+      const matchesPayment =
+        paymentFilter === "all" ||
+        (paymentFilter === "underpaid" ? r.submitted < r.expected : r.submitted >= r.expected);
+      const matchesSession =
+        sessionFilter === "all" ||
+        (sessionFilter === "short"
+          ? expectedSessions > 0 && attended < expectedSessions
+          : expectedSessions === 0 || attended >= expectedSessions);
+      const matchesSendFee =
+        sendFeeFilter === "all" || (sendFeeFilter === "yes" ? Boolean(r.sendFee) : !r.sendFee);
+      const hasMakeup = (makeupLiveCountByStudentId[st.id] ?? 0) > 0;
+      const totalDue = Number(totalDueByStudentId[st.id] ?? 0) || 0;
+      const owesMoney = totalDue - (Number(r.submitted) || 0) > 0.005;
+      const matchesBalanceDue =
+        balanceDueFilter === "all" ||
+        (balanceDueFilter === "yes" ? owesMoney : !owesMoney);
+      const matchesMakeup =
+        makeupFilter === "all" || (makeupFilter === "yes" ? hasMakeup : !hasMakeup);
+      const displayName = formatStudentDisplayNameOrEmpty(
+        { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
+        "full",
+      ).toLowerCase();
+      const normalizedId = normalizeStudentId(st.id).toLowerCase();
+      const phoneText = st.student_phone.toLowerCase();
+      const matchesSearch =
+        normalizedSearch.length === 0 ||
+        normalizedId.includes(normalizedSearch) ||
+        st.id.toLowerCase().includes(normalizedSearch) ||
+        displayName.includes(normalizedSearch) ||
+        phoneText.includes(normalizedSearch);
+      return (
+        matchesGrade &&
+        matchesWeekday &&
+        matchesPayment &&
+        matchesSession &&
+        matchesSendFee &&
+        matchesBalanceDue &&
+        matchesMakeup &&
+        matchesSearch
+      );
+    });
+  }, [
+    sortedStudents,
+    recordsByStudentId,
+    gradeFilter,
+    weekdayFilter,
+    paymentFilter,
+    sessionFilter,
+    sendFeeFilter,
+    balanceDueFilter,
+    makeupFilter,
+    searchText,
+    weekdayTokensByStudentId,
+    attendedLessonsInMonthByStudentId,
+    makeupLiveCountByStudentId,
+    totalDueByStudentId,
+  ]);
+
+  const {
+    tableScrollId,
+    bottomTrackRef,
+    sideTrackRef,
+    bottomThumb,
+    sideThumb,
+    bottomScrollWidth,
+    bottomScrollClientWidth,
+    sideScrollHeight,
+    sideScrollClientHeight,
+    bottomTrackA11yProps,
+    sideTrackA11yProps,
+    onBottomTrackMouseDown,
+    onSideTrackMouseDown,
+    startDragBottomThumb,
+    startDragSideThumb,
+  } = useCustomScrollbars({
+    tableScrollRef,
+    contentKey: `${filteredSortedStudents.length}:${sheetYear}:${sheetMonth}`,
+  });
 
   const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
@@ -1770,16 +1816,39 @@ export default function StudentsLessonTimeFeeRecordPage() {
                     <option value="no">No</option>
                   </select>
                 </label>
+                <label className="min-w-[150px]">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                    未比錢 Balance Due
+                  </span>
+                  <select
+                    value={balanceDueFilter}
+                    onChange={(e) => setBalanceDueFilter(e.target.value as "all" | "yes" | "no")}
+                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                    suppressHydrationWarning
+                  >
+                    <option value="all">All</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                <label className="min-w-[150px]">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                    未補堂 Makeup
+                  </span>
+                  <select
+                    value={makeupFilter}
+                    onChange={(e) => setMakeupFilter(e.target.value as "all" | "yes" | "no")}
+                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                    suppressHydrationWarning
+                  >
+                    <option value="all">All</option>
+                    <option value="yes">Yes（有未補堂）</option>
+                    <option value="no">No（無未補堂）</option>
+                  </select>
+                </label>
                 <button
                   type="button"
-                  onClick={() => {
-                    setGradeFilter("all");
-                    setWeekdayFilter("all");
-                    setPaymentFilter("all");
-                    setSessionFilter("all");
-                    setSendFeeFilter("all");
-                    setSearchText("");
-                  }}
+                  onClick={resetAllFilters}
                   className="inline-flex items-center gap-1.5 rounded bg-[#1d76c2] px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1663a3]"
                 >
                   <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
@@ -1972,7 +2041,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                               balanceCarryForward={balanceCarryForward}
                               lessonDatesSerialized={lessonDatesSerialized}
                               thisMonthDatedSlotCount={thisMonthDatedSlotCount}
-                              makeupLiveCount={remedialCountByStudentId[st.id] ?? 0}
+                              makeupLiveCount={makeupLiveCountByStudentId[st.id] ?? 0}
                               remedialCountDb={remedialCountByStudentId[st.id] ?? 0}
                               showGradeSeparatorTop={showGradeSeparatorTop}
                               showOpeningEditor={sheetYear === OPENING_BALANCE_AS_OF_YEAR}
@@ -2040,7 +2109,8 @@ export default function StudentsLessonTimeFeeRecordPage() {
                 <p className="mt-2 text-[12.1px] leading-snug text-slate-600">
                   <span className="font-semibold">Legacy</span> = everyone not listed below, until global switch (includes referrals on old price).
                   <span className="font-semibold"> Current</span> = listed student ids only before 1 Sep; everyone from 1 Sep onward.
-                  Discount = Normal − $20 from lesson 9+ (Split applies to both tables).
+                  Whole-month rate: ≤(Split−1) lessons → all Normal; ≥Split lessons → all Discount
+                  (default Split 8 → ≤7 Normal, ≥8 all Discount). Applies to both tables.
                 </p>
                 <p className="mt-1 text-[12.1px] leading-snug text-slate-600">
                   <span className="font-semibold">Save</span> stores locally; Supabase syncs when{" "}
@@ -2074,7 +2144,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                     <label className="flex min-w-0 items-center gap-1.5">
                       <span className="shrink-0 whitespace-nowrap text-[12.1px] font-semibold text-slate-500">
-                        Discount Split
+                        Discount from (≥N 堂)
                       </span>
                       <input
                         type="number"
@@ -2345,7 +2415,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
     },
     "full",
   );
-  const makeupDisplayN = makeupLiveCount > 0 ? makeupLiveCount : remedialCountDb;
+  const makeupDisplayN = makeupLiveCount;
 
   const paidLessonHintCount = tuitionPaidLessonHintCount({
     submitted: record.submitted,
