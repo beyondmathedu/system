@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hiddenScheduleRuleStorageKey } from "@/lib/lessonScheduleHidden";
 import {
+  collectAttendedBillableLessonDatesForMonth,
   collectBillableLessonDatesForMonth,
   countAttendedBillableLessonsInMonth,
   normalizeFeeLessonRecords,
@@ -194,6 +195,45 @@ describe("feeRecordLessonDates", () => {
     expect(dates.some((d) => d.endsWith("/5"))).toBe(true);
   });
 
+  it("collectAttendedBillableLessonDatesForMonth returns only ticked slots", () => {
+    const records = normalizeFeeLessonRecords([
+      {
+        id: "rule-mon",
+        effectiveDate: "2026-05-01",
+        weekday: "一",
+        time: "4:00 PM",
+        room: "M前",
+        createdAt: 1,
+      },
+    ]);
+    const state = emptyState();
+    state.attendance["2026-05-25"] = true;
+
+    const billable = collectBillableLessonDatesForMonth({
+      records,
+      state,
+      year: 2026,
+      month1to12: 5,
+    });
+    const attended = collectAttendedBillableLessonDatesForMonth({
+      records,
+      state,
+      year: 2026,
+      month1to12: 5,
+    });
+
+    expect(billable.length).toBeGreaterThan(1);
+    expect(attended).toEqual(["25/5"]);
+
+    state.attendance = { "regular:rule-mon": true };
+    expect(collectAttendedBillableLessonDatesForMonth({
+      records,
+      state,
+      year: 2026,
+      month1to12: 5,
+    })).toEqual(billable);
+  });
+
   it("counts attended regular slots via dateIso or regular:ruleId keys", () => {
     const records = normalizeFeeLessonRecords([
       {
@@ -236,7 +276,7 @@ describe("feeRecordLessonDates", () => {
     ).toBe(billable);
   });
 
-  it("counts reschedule attendance on to-date only", () => {
+  it("counts reschedule attendance in from-date month only", () => {
     const records = normalizeFeeLessonRecords([
       {
         id: "rule-mon",
@@ -264,7 +304,7 @@ describe("feeRecordLessonDates", () => {
         year: 2026,
         month1to12: 5,
       }),
-    ).toBe(0);
+    ).toBe(1);
     expect(
       countAttendedBillableLessonsInMonth({
         records,
@@ -272,7 +312,95 @@ describe("feeRecordLessonDates", () => {
         year: 2026,
         month1to12: 6,
       }),
-    ).toBe(1);
+    ).toBe(0);
+  });
+
+  it("shows reschedule from→to in the cancelled original month", () => {
+    const records = normalizeFeeLessonRecords([
+      {
+        id: "rule-mon",
+        effectiveDate: "2026-05-01",
+        weekday: "一",
+        time: "4:00 PM",
+        room: "M前",
+        createdAt: 1,
+      },
+    ]);
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-1",
+      fromDate: "2026-05-25",
+      toDate: "2026-06-03",
+      time: "4:00 PM",
+      room: "M前",
+    });
+    state.attendance["reschedule:rs-1"] = true;
+
+    expect(
+      collectAttendedBillableLessonDatesForMonth({
+        records,
+        state,
+        year: 2026,
+        month1to12: 5,
+      }),
+    ).toEqual(["25/5→3/6"]);
+    expect(
+      collectAttendedBillableLessonDatesForMonth({
+        records,
+        state,
+        year: 2026,
+        month1to12: 6,
+      }),
+    ).toEqual([]);
+  });
+
+  it("shows regular, extra, and cross-month reschedule in the same month sheet", () => {
+    const records = normalizeFeeLessonRecords([
+      {
+        id: "rule-sun",
+        effectiveDate: "2026-06-01",
+        weekday: "一",
+        time: "10:00 AM",
+        room: "B",
+        createdAt: 1,
+      },
+    ]);
+    const state = emptyState();
+    state.rescheduleEntries.push(
+      {
+        id: "rs-same",
+        fromDate: "2026-06-10",
+        toDate: "2026-06-11",
+        time: "10:00 AM",
+        room: "B",
+      },
+      {
+        id: "rs-cross",
+        fromDate: "2026-06-12",
+        toDate: "2026-07-02",
+        time: "10:00 AM",
+        room: "B",
+      },
+    );
+    state.extraEntries.push({
+      id: "ex-1",
+      date: "2026-06-30",
+      time: "4:00 PM",
+      room: "B",
+    });
+    state.attendance["2026-06-01"] = true;
+    state.attendance["reschedule:rs-same"] = true;
+    state.attendance["reschedule:rs-cross"] = true;
+    state.attendance["extra:ex-1"] = true;
+
+    expect(
+      collectAttendedBillableLessonDatesForMonth({
+        records,
+        state,
+        year: 2026,
+        month1to12: 6,
+      }),
+    ).toEqual(["1/6", "10/6→11/6", "12/6→2/7", "30/6"]);
   });
 
   it("legacy attendance skips inactive dates during pause", () => {

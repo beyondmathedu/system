@@ -237,10 +237,19 @@ export default function DayTimetableTable({
     byTimeRoom,
     examById,
     regularPeriodMaxByRoom,
+    roomDisplayLabels,
     dateIso,
     feePaymentToneByStudentId,
     timetableStyle,
   } = payload;
+  const roomLabel = useCallback(
+    (room: RoomGroup) => roomDisplayLabels?.[room] ?? room,
+    [roomDisplayLabels],
+  );
+  const repeatSlotRoomHint = useMemo(
+    () => ROOM_GROUPS.map((room) => roomDisplayLabels?.[room] ?? room).join(", "),
+    [roomDisplayLabels],
+  );
   const { roomsForTable, omittedRoomsToday } = useMemo(() => {
     const withStudents = ROOM_GROUPS.filter((room) =>
       rowFrames.some((frame) => (byTimeRoom[`${frame.time}::${room}`] ?? []).length > 0),
@@ -438,11 +447,12 @@ export default function DayTimetableTable({
   }
 
   function renderRoomHeader(room: RoomGroup) {
+    const label = roomLabel(room);
     const href = buildRoomPageHref(room, effectiveRoomScheduleQuery());
-    if (!href) return room;
+    if (!href) return label;
     return (
       <Link href={href} className="text-[#1d76c2] hover:underline">
-        {room}
+        {label}
       </Link>
     );
   }
@@ -453,13 +463,16 @@ export default function DayTimetableTable({
         <p className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
           {t.roomsHiddenToday.replace(
             "{rooms}",
-            omittedRoomsToday.join(", "),
+            omittedRoomsToday.map((room) => roomLabel(room)).join(", "),
           )}
         </p>
       ) : null}
       {repeatRoomHeadersPerTimeSlot ? (
         <p className="border-b border-slate-200 bg-sky-50/80 px-3 py-2 text-xs text-slate-700">
-          <span className="font-semibold text-slate-800">{t.repeatSlotHint}</span>
+          <span className="font-semibold text-slate-800">
+            Each time slot repeats room headers: {repeatSlotRoomHint} — Name, Grade, Exam date — so columns
+            stay clear when scrolling.
+          </span>
           {omittedRoomsToday.length > 0 ? (
             <span className="mt-1 block font-normal text-slate-600">
               {t.roomsHiddenToday.replace(

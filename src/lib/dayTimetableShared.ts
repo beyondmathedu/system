@@ -1,47 +1,25 @@
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import type { DayTimetableFeePaymentTone, DayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings";
+import {
+  DEFAULT_ROOM_DISPLAY_REGISTRY,
+  resolveRoomGroupFromRegistry,
+  type RoomDisplayRegistry,
+} from "@/lib/roomDisplayRegistry";
+import { normalizeScheduleRoom, ROOM_GROUPS, type RoomGroup } from "@/lib/roomGroups";
 
-export const ROOM_GROUPS = ["B", "M前", "M後", "Hope", "Hope 2"] as const;
+export { normalizeScheduleRoom, ROOM_GROUPS, type RoomGroup };
 
-export type RoomGroup = (typeof ROOM_GROUPS)[number];
-
-/** Canonical room label for schedule matching (B, M前, M後, Hope, Hope 2). */
-export function normalizeScheduleRoom(roomRaw: string): RoomGroup | "" {
-  const raw = (roomRaw ?? "").trim().toLowerCase();
-  if (!raw) return "";
-  const compact = raw
-    .replace(/\s+/g, "")
-    .replace(/[-_]/g, "")
-    .replace(/room/g, "")
-    .replace(/房間/g, "房");
-
-  if (compact === "b" || compact === "b房") return "B";
-  if (compact === "m前" || compact === "m前房" || compact === "mfront" || compact === "m前room") {
-    return "M前";
-  }
-  if (compact === "m後" || compact === "m後房" || compact === "mback" || compact === "m後room") {
-    return "M後";
-  }
-  if (compact === "hope" || compact === "hope房" || compact === "hope1" || compact === "hope1房") {
-    return "Hope";
-  }
-  if (compact === "hope2" || compact === "hope2房") return "Hope 2";
-
-  if (compact.includes("m前") || compact.includes("mfront")) return "M前";
-  if (compact.includes("m後") || compact.includes("mback")) return "M後";
-  if (compact.includes("hope2")) return "Hope 2";
-  if (compact.includes("hope")) return "Hope";
-  if (compact === "broom") return "B";
-
-  return "";
-}
-
-export function scheduleRoomsMatch(storedRoom: string, expectedRoom: string): boolean {
-  const a = normalizeScheduleRoom(storedRoom);
-  const b = normalizeScheduleRoom(expectedRoom);
+export function scheduleRoomsMatch(
+  storedRoom: string,
+  expectedRoom: string,
+  registry: RoomDisplayRegistry = DEFAULT_ROOM_DISPLAY_REGISTRY,
+): boolean {
+  if (storedRoom.trim() === expectedRoom.trim()) return true;
+  const a = resolveRoomGroupFromRegistry(storedRoom, registry);
+  const b = resolveRoomGroupFromRegistry(expectedRoom, registry);
   if (a && b) return a === b;
-  return storedRoom.trim() === expectedRoom.trim();
+  return false;
 }
 
 /** Canonical label to store in JSON (Hope, not Hope 1). Unknown names are trimmed as-is. */
@@ -74,7 +52,10 @@ export function canonicalScheduleTimeLabel(raw: string): string {
 export function resolveScheduleRoomPickerValue(
   roomRaw: string,
   fallback: RoomGroup = ROOM_GROUPS[0],
+  registry: RoomDisplayRegistry = DEFAULT_ROOM_DISPLAY_REGISTRY,
 ): RoomGroup {
+  const fromRegistry = resolveRoomGroupFromRegistry(roomRaw, registry);
+  if (fromRegistry) return fromRegistry;
   const canonical = normalizeScheduleRoom(roomRaw);
   if (canonical) return canonical;
   const trimmed = (roomRaw ?? "").trim();
@@ -109,6 +90,7 @@ export type DayTimetablePayload = {
   byTimeRoom: Record<string, DayTimetableCell[]>;
   rowFrames: DayTimetableRowFrame[];
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
+  roomDisplayLabels: Record<RoomGroup, string>;
   feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>;
   timetableStyle: DayTimetableStyleSettings;
 };

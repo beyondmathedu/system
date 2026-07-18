@@ -262,4 +262,46 @@ describe("yearScheduleCore", () => {
       expect(hopeRows.some((r) => r.lessonType === "加堂" && r.date === "2026-05-10")).toBe(true);
     });
   });
+
+  it("uses room slot tutor rules when no per-date override", () => {
+    const records = [
+      mondayRule({ weekday: "六", time: "01:00 PM", room: "B", id: "rule-sat" }),
+    ];
+    const rows = buildYearScheduleRowsForMonth(records, emptyState(), YEAR, 5, {
+      roomSlotTutorRules: [
+        {
+          id: "slot-1",
+          room: "B",
+          weekday: "六",
+          time: "01:00 PM",
+          tutor_name: "Samuel",
+          effective_date: "2026-05-01",
+        },
+      ],
+    });
+    const may30 = rows.find((r) => r.date === "2026-05-30");
+    expect(may30?.tutorDisplay).toBe("Samuel");
+  });
+
+  it("per-date override still wins over room slot tutor rule", () => {
+    const records = [
+      mondayRule({ weekday: "六", time: "01:00 PM", room: "B", id: "rule-sat" }),
+    ];
+    const state = emptyState();
+    state.overrides["2026-05-30"] = { tutor: "Pammi" };
+    const rows = buildYearScheduleRowsForMonth(records, state, YEAR, 5, {
+      roomSlotTutorRules: [
+        {
+          id: "slot-1",
+          room: "B",
+          weekday: "六",
+          time: "01:00 PM",
+          tutor_name: "Samuel",
+          effective_date: "2026-05-01",
+        },
+      ],
+    });
+    const may30 = rows.find((r) => r.date === "2026-05-30");
+    expect(may30?.tutorDisplay).toBe("Pammi");
+  });
 });

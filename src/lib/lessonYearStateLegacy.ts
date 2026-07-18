@@ -28,9 +28,26 @@ export function mergeYearStateWithLegacyFallback(
   year: number,
 ): StudentLesson2026State {
   if (year !== LEGACY_LESSON_STATE_YEAR) return yearState;
-  if (!isEmptyLessonYearState(yearState)) return yearState;
-  if (legacyState && !isEmptyLessonYearState(legacyState)) return legacyState;
-  return yearState;
+  if (!legacyState || isEmptyLessonYearState(legacyState)) return yearState;
+  if (isEmptyLessonYearState(yearState)) return legacyState;
+
+  return {
+    attendance: Object.keys(yearState.attendance).length
+      ? yearState.attendance
+      : legacyState.attendance,
+    hiddenDates: Object.keys(yearState.hiddenDates).length
+      ? yearState.hiddenDates
+      : legacyState.hiddenDates,
+    overrides: Object.keys(yearState.overrides).length
+      ? yearState.overrides
+      : legacyState.overrides,
+    rescheduleEntries: yearState.rescheduleEntries.length
+      ? yearState.rescheduleEntries
+      : legacyState.rescheduleEntries,
+    extraEntries: yearState.extraEntries.length
+      ? yearState.extraEntries
+      : legacyState.extraEntries,
+  };
 }
 
 export function studentIdsNeedingLegacyStateFallback(

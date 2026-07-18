@@ -23,6 +23,7 @@ type PendingSave = {
   state: StudentLesson2026State;
   dirty: Set<LessonYearStateField>;
   dirtyAttendanceKeys: Set<string>;
+  dirtyOverrideDateKeys: Set<string>;
 };
 
 const pendingByKey = new Map<string, PendingSave>();
@@ -45,6 +46,28 @@ function mergeDirtyFields(
   }
   for (const field of ALL_LESSON_YEAR_STATE_FIELDS) dirty.add(field);
   return dirty;
+}
+
+function mergeDirtyOverrideDateKeys(
+  existing: Set<string> | undefined,
+  keys: readonly string[] | undefined,
+): Set<string> {
+  const merged = new Set(existing ?? []);
+  if (keys?.length) {
+    for (const key of keys) {
+      if (key) merged.add(key);
+    }
+  }
+  return merged;
+}
+
+function parseQueueKey(key: string): { studentId: string; year: number } | null {
+  const colonIdx = key.lastIndexOf(":");
+  if (colonIdx <= 0) return null;
+  const studentId = key.slice(0, colonIdx);
+  const year = Number(key.slice(colonIdx + 1));
+  if (!studentId || !Number.isFinite(year)) return null;
+  return { studentId, year };
 }
 
 function mergeDirtyAttendanceKeys(
@@ -100,12 +123,18 @@ async function flushKey(key: string, studentId: string, year: number): Promise<v
       attendanceOnly && pending.dirtyAttendanceKeys.size
         ? [...pending.dirtyAttendanceKeys]
         : undefined;
+    const overridesOnly = dirtyFields.length === 1 && dirtyFields[0] === "overrides";
+    const overrideDateKeys =
+      overridesOnly && pending.dirtyOverrideDateKeys.size
+        ? [...pending.dirtyOverrideDateKeys]
+        : undefined;
 
     try {
       await withSaveRetries(() =>
         saveLessonYearStatePatch(studentId, year, patchFromPending(pending), dirtyFields, {
           attendanceKeys,
           lastSavedAttendance: lastSaved?.attendance,
+          overrideDateKeys,
         }),
       );
 
@@ -147,6 +176,7 @@ export function queueSaveLessonYearState(
   state: StudentLesson2026State,
   dirtyFields?: readonly LessonYearStateField[],
   dirtyAttendanceKeys?: readonly string[],
+  dirtyOverrideDateKeys?: readonly string[],
 ): void {
   if (typeof window === "undefined") return;
   const key = queueKey(studentId, year);
@@ -155,6 +185,10 @@ export function queueSaveLessonYearState(
     state,
     dirty: mergeDirtyFields(existing?.dirty, dirtyFields),
     dirtyAttendanceKeys: mergeDirtyAttendanceKeys(existing?.dirtyAttendanceKeys, dirtyAttendanceKeys),
+    dirtyOverrideDateKeys: mergeDirtyOverrideDateKeys(
+      existing?.dirtyOverrideDateKeys,
+      dirtyOverrideDateKeys,
+    ),
   });
 
   const existingTimer = timersByKey.get(key);
@@ -187,10 +221,9 @@ export async function flushSaveLessonYearStateQueue(): Promise<void> {
   const keys = [...pendingByKey.keys()];
   await Promise.all(
     keys.map((key) => {
-      const [studentId, yearRaw] = key.split(":");
-      const year = Number(yearRaw);
-      if (!studentId || !Number.isFinite(year)) return Promise.resolve();
-      return runFlush(key, studentId, year).catch(() => {});
+      const parsed = parseQueueKey(key);
+      if (!parsed) return Promise.resolve();
+      return runFlush(key, parsed.studentId, parsed.year).catch(() => {});
     }),
   );
 

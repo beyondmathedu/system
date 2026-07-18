@@ -24,13 +24,26 @@ import ExamDateField from "./ExamDateField";
 import type { LessonScheduleRecord } from "./LessonScheduleGrid";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
+import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 
 const LessonScheduleGrid = dynamic(() => import("./LessonScheduleGrid"), {
   ssr: false,
   loading: () => <div className="h-48 animate-pulse rounded-xl bg-slate-100" aria-hidden />,
 });
 
-const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
+function dedupeInactivePeriodRows<
+  T extends { id?: number; start_date: string; end_date: string | null; note: string },
+>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const key = `${row.start_date}|${row.end_date ?? ""}|${row.note ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
 
 function toLesson2026State(state: Awaited<ReturnType<typeof loadLessonYearState>>): Lesson2026State {
   return {
@@ -77,7 +90,7 @@ export default function StudentLessonsPage() {
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [inactiveHistoryOpen, setInactiveHistoryOpen] = useState(false);
   const [inactivePeriods, setInactivePeriods] = useState<
-    Array<{ start_date: string; end_date: string | null; note: string }>
+    Array<{ id?: number; start_date: string; end_date: string | null; note: string }>
   >([]);
   const [scheduleRecords, setScheduleRecords] = useState<LessonScheduleRecord[] | null>(null);
   const [isTutorReadOnly, setIsTutorReadOnly] = useState(false);
@@ -168,11 +181,14 @@ export default function StudentLessonsPage() {
       setVisibilityEffectiveDate(visibility.effective_date || new Date().toISOString().slice(0, 10));
       setVisibilityReactivateDate(visibility.reactivate_date ?? "");
       setInactivePeriods(
-        (periods ?? []).map((p) => ({
-          start_date: String(p.start_date ?? ""),
-          end_date: p.end_date ?? null,
-          note: String(p.note ?? ""),
-        })),
+        dedupeInactivePeriodRows(
+          (periods ?? []).map((p) => ({
+            id: p.id,
+            start_date: String(p.start_date ?? ""),
+            end_date: p.end_date ?? null,
+            note: String(p.note ?? ""),
+          })),
+        ),
       );
 
       const metrics = getLessonUntickedMetrics(
@@ -343,6 +359,17 @@ export default function StudentLessonsPage() {
                                   visibilityMode === "inactive" ? visibilityReactivateDate || null : null,
                                 note: visibilityMode === "inactive" ? visibilityNote || null : null,
                               });
+                              const freshPeriods = await loadStudentInactivePeriods(studentId);
+                              setInactivePeriods(
+                                dedupeInactivePeriodRows(
+                                  freshPeriods.map((p) => ({
+                                    id: p.id,
+                                    start_date: String(p.start_date ?? ""),
+                                    end_date: p.end_date ?? null,
+                                    note: String(p.note ?? ""),
+                                  })),
+                                ),
+                              );
                             } finally {
                               setVisibilitySaving(false);
                             }
@@ -397,7 +424,7 @@ export default function StudentLessonsPage() {
                                 .sort((a, b) => b.start_date.localeCompare(a.start_date))
                                 .map((p) => (
                                   <tr
-                                    key={`${p.start_date}-${p.end_date ?? "open"}`}
+                                    key={p.id ?? `${p.start_date}-${p.end_date ?? "open"}-${p.note}`}
                                     className="divide-x divide-slate-100"
                                   >
                                     <td className="px-3 py-2 font-semibold text-slate-800">

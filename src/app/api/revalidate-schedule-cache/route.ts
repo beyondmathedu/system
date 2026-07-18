@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getViewerContext } from "@/lib/authz";
 import {
   SCHEDULE_CACHE_TAG_AGGREGATES,
+  SCHEDULE_CACHE_TAG_CLASSROOMS,
   SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
   SCHEDULE_CACHE_TAG_HOME,
   SCHEDULE_CACHE_TAG_STUDENT_PROGRESS,
@@ -25,6 +26,7 @@ export async function POST() {
   revalidateTag(SCHEDULE_CACHE_TAG_DAY_TIMETABLE, "max");
   revalidateTag(SCHEDULE_CACHE_TAG_HOME, "max");
   revalidateTag(SCHEDULE_CACHE_TAG_STUDENT_PROGRESS, "max");
+  revalidateTag(SCHEDULE_CACHE_TAG_CLASSROOMS, "max");
 
   return NextResponse.json({ ok: true });
 }

@@ -1,6 +1,11 @@
 import { unstable_cache } from "next/cache";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  buildRoomDisplayRegistry,
+  type RoomDisplayRegistry,
+} from "@/lib/roomDisplayRegistry";
 import { FALLBACK_ROOM_PAGE_META, FALLBACK_SLUG_TO_SCHEDULE_LABEL } from "@/lib/roomConstants";
+import { SCHEDULE_CACHE_TAG_CLASSROOMS } from "@/lib/scheduleCacheTags";
 
 export type ClassroomRow = {
   id: string;
@@ -27,8 +32,8 @@ export async function fetchClassroomScheduleLabel(slug: string): Promise<string 
   const slugKey = slug.trim().toLowerCase();
   return unstable_cache(
     async () => fetchClassroomScheduleLabelUncached(slugKey),
-    ["classroom-schedule-label-v1", slugKey],
-    { revalidate: 300 },
+    ["classroom-schedule-label-v2", slugKey],
+    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 }
 
@@ -63,7 +68,29 @@ export async function fetchClassroomMeta(slug: string): Promise<{
   const slugKey = slug.trim().toLowerCase();
   return unstable_cache(
     async () => fetchClassroomMetaUncached(slugKey),
-    ["classroom-meta-v1", slugKey],
-    { revalidate: 300 },
+    ["classroom-meta-v2", slugKey],
+    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
+  )();
+}
+
+async function fetchClassroomRegistryUncached(): Promise<RoomDisplayRegistry> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("classrooms")
+    .select("id, name, slug, description, sort_order, regular_period_max")
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+  if (error || !data?.length) {
+    return buildRoomDisplayRegistry(null);
+  }
+  return buildRoomDisplayRegistry(data);
+}
+
+/** Site-wide room display labels and name matching (from classrooms table). */
+export async function fetchClassroomRegistry(): Promise<RoomDisplayRegistry> {
+  return unstable_cache(
+    async () => fetchClassroomRegistryUncached(),
+    ["classroom-registry-v2"],
+    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 }

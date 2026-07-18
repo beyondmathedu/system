@@ -23,6 +23,10 @@ import {
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
 import { scheduleRoomsMatch, weekdayCnFromIsoDateHk } from "@/lib/dayTimetableShared";
+import {
+  resolveRoomSlotTutorForLessonRow,
+  type RoomSlotTutorRule,
+} from "@/lib/roomSlotTutorRules";
 
 export type YearLessonRecord = {
   id?: string;
@@ -66,11 +70,14 @@ export type BuiltScheduleRow = {
   sortTime: string;
 };
 
-type BuildRangeOptions = {
+export type ScheduleBuildOptions = {
   month?: number;
   rangeStartIso?: string;
   rangeEndIso?: string;
+  roomSlotTutorRules?: RoomSlotTutorRule[];
 };
+
+type BuildRangeOptions = ScheduleBuildOptions;
 
 function numberToWeekday(num: number) {
   switch (num) {
@@ -373,9 +380,18 @@ function buildScheduleRows(
     } else if (r.rowKind === "reschedule") lessonType = "補堂";
     else if (r.fromExtra) lessonType = "加堂";
 
+    const roomSlotTutor = options?.roomSlotTutorRules?.length
+      ? resolveRoomSlotTutorForLessonRow(options.roomSlotTutorRules, {
+          room: r.room,
+          time: r.time,
+          dateIso: r.date,
+        })
+      : undefined;
+
     const tutorDisplay = tutorDisplayForLessonRow({
       overrides: state.overrides,
       dateIso: r.date,
+      roomSlotTutor,
       scheduleRuleTutor: r.baseRule?.tutor,
       pendingLabel: "待定",
     });
@@ -415,9 +431,9 @@ export function buildYearScheduleRowsForMonth(
   state: YearLessonState,
   targetYear: number,
   month: number,
-  _options?: unknown,
+  options?: Omit<ScheduleBuildOptions, "month">,
 ): BuiltScheduleRow[] {
-  return buildScheduleRows(records, state, targetYear, { month });
+  return buildScheduleRows(records, state, targetYear, { month, ...options });
 }
 
 export function buildYearScheduleRowsForDateRange(
@@ -426,9 +442,9 @@ export function buildYearScheduleRowsForDateRange(
   targetYear: number,
   rangeStartIso: string,
   rangeEndIso: string,
-  _options?: unknown,
+  options?: Omit<ScheduleBuildOptions, "rangeStartIso" | "rangeEndIso">,
 ): BuiltScheduleRow[] {
-  return buildScheduleRows(records, state, targetYear, { rangeStartIso, rangeEndIso });
+  return buildScheduleRows(records, state, targetYear, { rangeStartIso, rangeEndIso, ...options });
 }
 
 export function filterRowsByRoomAndMonth(

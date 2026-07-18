@@ -9,6 +9,7 @@ import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import {
   buildYearScheduleRowsForMonth,
   formatDateSlash,
+  type BuiltScheduleRow,
   type YearLessonRecord,
   type YearLessonState,
 } from "@/lib/yearScheduleCore";
@@ -33,6 +34,54 @@ const HK_WEEKDAY_SHORT_TO_CN: Record<string, string> = {
 /** "2026-05-08" → "8/5" (day/month) */
 export function isoYmdToMonthDay(iso: string): string {
   return formatDateSlash(String(iso ?? "").trim());
+}
+
+/** L-column display: reschedule slots show original → makeup date (e.g. 12/6→2/7). */
+export function formatRescheduleLColumnDisplay(fromDate: string, toDate: string): string {
+  const fromDisplay = isoYmdToMonthDay(fromDate);
+  const toDisplay = isoYmdToMonthDay(toDate);
+  if (fromDisplay && toDisplay && fromDisplay !== toDisplay) {
+    return `${fromDisplay}→${toDisplay}`;
+  }
+  return fromDisplay || toDisplay;
+}
+
+/** @deprecated Use formatRescheduleLColumnDisplay for L columns; kept for callers on schedule rows. */
+export function formatFeeRecordAttendedDateDisplay(
+  row: Pick<BuiltScheduleRow, "date" | "lessonType" | "rowKind" | "rowId">,
+  state: YearLessonState,
+): string {
+  const toDisplay = isoYmdToMonthDay(row.date);
+  if (row.lessonType !== "補堂" || row.rowKind !== "reschedule") {
+    return toDisplay;
+  }
+  const entryId = row.rowId.startsWith("reschedule-") ? row.rowId.slice("reschedule-".length) : "";
+  const entry = entryId ? state.rescheduleEntries?.find((e) => e.id === entryId) : undefined;
+  if (entry?.fromDate && entry.toDate) {
+    return formatRescheduleLColumnDisplay(entry.fromDate, entry.toDate);
+  }
+  return toDisplay;
+}
+
+type AttendedDateSlot = { dateIso: string; display: string };
+
+function monthIsoPrefix(year: number, month1to12: number): string {
+  return `${year}-${String(month1to12).padStart(2, "0")}`;
+}
+
+function isRescheduleEntryAttended(
+  entry: { id: string; toDate: string },
+  state: YearLessonState,
+): boolean {
+  return isScheduleAttendanceMarked(state.attendance, {
+    attendanceKey: `reschedule:${entry.id}`,
+    dateIso: entry.toDate,
+    lessonType: "補堂",
+  });
+}
+
+function sortAttendedDateSlots(slots: AttendedDateSlot[]): AttendedDateSlot[] {
+  return [...slots].sort((a, b) => a.dateIso.localeCompare(b.dateIso));
 }
 
 function toHkIsoDateFromMs(ms: number) {
@@ -207,36 +256,128 @@ export function normalizeFeeLessonRecordsWithEffectiveDates(raw: unknown): YearL
   }));
 }
 
-function countLegacyAttendedLessonsInMonth(params: {
+function collectLegacyAttendedLessonDatesForMonth(params: {
   attendance: Record<string, boolean>;
   year: number;
   month1to12: number;
   extraEntries: Array<{ id: string; date: string }>;
-  rescheduleEntries: Array<{ id: string; toDate: string }>;
+  rescheduleEntries: Array<{ id: string; fromDate?: string; toDate: string }>;
   isDateInactive?: (dateIso: string) => boolean;
-}): number {
+}): string[] {
   const { attendance, year, month1to12, extraEntries, rescheduleEntries, isDateInactive } = params;
   const prefix = `${year}-${String(month1to12).padStart(2, "0")}`;
   const extraById = new Map(extraEntries.map((e) => [e.id, e]));
   const rescheduleById = new Map(rescheduleEntries.map((r) => [r.id, r]));
-  let n = 0;
+  const slots: AttendedDateSlot[] = [];
   for (const [key, v] of Object.entries(attendance)) {
     if (!v) continue;
     if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
-      if (key.startsWith(prefix) && !isDateInactive?.(key)) n += 1;
+      if (key.startsWith(prefix) && !isDateInactive?.(key)) {
+        slots.push({ dateIso: key, display: isoYmdToMonthDay(key) });
+      }
       continue;
     }
     if (key.startsWith("extra:")) {
       const ex = extraById.get(key.slice("extra:".length));
-      if (ex?.date?.startsWith(prefix) && !isDateInactive?.(ex.date)) n += 1;
+      if (ex?.date?.startsWith(prefix) && !isDateInactive?.(ex.date)) {
+        slots.push({ dateIso: ex.date, display: isoYmdToMonthDay(ex.date) });
+      }
       continue;
     }
     if (key.startsWith("reschedule:")) {
       const r = rescheduleById.get(key.slice("reschedule:".length));
-      if (r?.toDate?.startsWith(prefix) && !isDateInactive?.(r.toDate)) n += 1;
+      const fromDate = String(r?.fromDate ?? "").trim();
+      const toDate = String(r?.toDate ?? "").trim();
+      if (!fromDate.startsWith(prefix) || !toDate) continue;
+      if (isDateInactive?.(fromDate)) continue;
+      slots.push({
+        dateIso: fromDate,
+        display: formatRescheduleLColumnDisplay(fromDate, toDate),
+      });
     }
   }
-  return n;
+  return sortAttendedDateSlots(slots).map((s) => s.display);
+}
+
+function collectAttendedDatesFromScheduleRows(params: {
+  records: YearLessonRecord[];
+  state: YearLessonState;
+  year: number;
+  month1to12: number;
+  isDateInactive?: (dateIso: string) => boolean;
+}): string[] {
+  const { records, state, year, month1to12, isDateInactive } = params;
+  const prefix = monthIsoPrefix(year, month1to12);
+  const slots: AttendedDateSlot[] = [];
+
+  // Reschedule: show in the month of the cancelled original date (fromDate).
+  for (const entry of state.rescheduleEntries ?? []) {
+    const fromDate = String(entry.fromDate ?? "").trim();
+    const toDate = String(entry.toDate ?? "").trim();
+    if (!fromDate.startsWith(prefix)) continue;
+    if (!toDate || entry.pending) continue;
+    if (isDateInactive?.(fromDate)) continue;
+    if (!isRescheduleEntryAttended(entry, state)) continue;
+    slots.push({
+      dateIso: fromDate,
+      display: formatRescheduleLColumnDisplay(fromDate, toDate),
+    });
+  }
+
+  // Regular + extra: calendar date in this month.
+  const rows = buildYearScheduleRowsForMonth(records, state, year, month1to12);
+  for (const row of rows) {
+    if (row.lessonType !== "恆常" && row.lessonType !== "加堂") continue;
+    if (isDateInactive?.(row.date)) continue;
+    if (
+      !isScheduleAttendanceMarked(state.attendance, {
+        attendanceKey: row.attendanceKey,
+        dateIso: row.date,
+        lessonType: row.lessonType,
+        scheduleRuleId: row.scheduleRuleId,
+      })
+    ) {
+      continue;
+    }
+    slots.push({ dateIso: row.date, display: isoYmdToMonthDay(row.date) });
+  }
+
+  return sortAttendedDateSlots(slots).map((s) => s.display);
+}
+
+/** Billable lesson dates with Room attendance ticked (L columns / FIFO tuition). */
+export function collectAttendedBillableLessonDatesForMonth(params: {
+  records: YearLessonRecord[];
+  state: YearLessonState;
+  year: number;
+  month1to12: number;
+  /** Ignored unless schedule records are empty (legacy attendance keys only). */
+  legacyWeekdays?: string[];
+  isDateInactive?: (dateIso: string) => boolean;
+}): string[] {
+  const { records, state, year, month1to12, isDateInactive } = params;
+  if (records.length === 0 && !hasBillableScheduleOverrides(state)) {
+    return collectLegacyAttendedLessonDatesForMonth({
+      attendance: state.attendance,
+      year,
+      month1to12,
+      extraEntries: state.extraEntries ?? [],
+      rescheduleEntries: (state.rescheduleEntries ?? []).map((e) => ({
+        id: e.id,
+        fromDate: e.fromDate,
+        toDate: e.toDate,
+      })),
+      isDateInactive,
+    });
+  }
+
+  return collectAttendedDatesFromScheduleRows({
+    records,
+    state,
+    year,
+    month1to12,
+    isDateInactive,
+  });
 }
 
 /** Count attended slots using the same billable rows as collectBillableLessonDatesForMonth. */
@@ -247,36 +388,5 @@ export function countAttendedBillableLessonsInMonth(params: {
   month1to12: number;
   isDateInactive?: (dateIso: string) => boolean;
 }): number {
-  const { records, state, year, month1to12, isDateInactive } = params;
-  if (records.length === 0 && !hasBillableScheduleOverrides(state)) {
-    return countLegacyAttendedLessonsInMonth({
-      attendance: state.attendance,
-      year,
-      month1to12,
-      extraEntries: state.extraEntries ?? [],
-      rescheduleEntries: (state.rescheduleEntries ?? []).map((e) => ({
-        id: e.id,
-        toDate: e.toDate,
-      })),
-      isDateInactive,
-    });
-  }
-
-  const rows = buildYearScheduleRowsForMonth(records, state, year, month1to12);
-  let n = 0;
-  for (const row of rows) {
-    if (!BILLABLE_LESSON_TYPES.has(row.lessonType)) continue;
-    if (isDateInactive?.(row.date)) continue;
-    if (
-      isScheduleAttendanceMarked(state.attendance, {
-        attendanceKey: row.attendanceKey,
-        dateIso: row.date,
-        lessonType: row.lessonType,
-        scheduleRuleId: row.scheduleRuleId,
-      })
-    ) {
-      n += 1;
-    }
-  }
-  return n;
+  return collectAttendedBillableLessonDatesForMonth(params).length;
 }

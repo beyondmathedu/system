@@ -46,6 +46,12 @@ import {
   resolveFeeTierSettingsForStudent,
   type StudentFeeTierBundle,
 } from "@/lib/studentFeeTierSettings";
+import {
+  buildRoomDisplayRegistry,
+  resolveRoomGroupFromRegistry,
+  SLUG_TO_ROOM_GROUP,
+  type RoomDisplayRegistry,
+} from "@/lib/roomDisplayRegistry";
 
 export {
   ROOM_GROUPS,
@@ -437,15 +443,19 @@ export const DEFAULT_REGULAR_PERIOD_MAX_BY_ROOM: Record<RoomGroup, number> = {
 };
 
 export function buildRegularPeriodMaxByRoom(
-  classroomRows: Array<{ name?: string | null; regular_period_max?: number | null }> | null | undefined,
+  classroomRows:
+    | Array<{ name?: string | null; slug?: string | null; regular_period_max?: number | null }>
+    | null
+    | undefined,
 ): Record<RoomGroup, number> {
   const out: Record<RoomGroup, number> = { ...DEFAULT_REGULAR_PERIOD_MAX_BY_ROOM };
   for (const row of classroomRows ?? []) {
-    const label = normalizeScheduleRoom(String(row.name ?? ""));
-    if (!label || !ROOM_GROUPS.includes(label as RoomGroup)) continue;
+    const slug = String(row.slug ?? "").trim().toLowerCase();
+    const group = SLUG_TO_ROOM_GROUP[slug] ?? resolveRoomGroupFromRegistry(String(row.name ?? ""));
+    if (!group || !ROOM_GROUPS.includes(group)) continue;
     const m = Number(row.regular_period_max);
     if (Number.isFinite(m) && m > 0) {
-      out[label as RoomGroup] = Math.min(99, Math.max(1, Math.floor(m)));
+      out[group] = Math.min(99, Math.max(1, Math.floor(m)));
     }
   }
   return out;
@@ -466,6 +476,8 @@ type DayTimetableStaticBundle = {
   inactivePeriodsById: Record<string, StudentInactivePeriod[]>;
   tutorColorByName: Record<string, string>;
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
+  roomDisplayLabels: Record<RoomGroup, string>;
+  roomRegistry: RoomDisplayRegistry;
   examById: Record<string, string>;
   roomSlotTutorRules: RoomSlotTutorRule[];
   feeTierBundle: StudentFeeTierBundle;
@@ -492,7 +504,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
       supabase.from("student_exam_dates").select("student_id, exam_date"),
       supabase.from("student_visibility_periods").select("student_id, start_date, end_date, note"),
       supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
-      supabase.from("classrooms").select("name, regular_period_max"),
+      supabase.from("classrooms").select("name, slug, regular_period_max"),
       loadRoomSlotTutorRulesServer(supabase),
       loadStudentFeeTierSettingsAdmin(supabase),
     ]);
@@ -505,19 +517,27 @@ const loadDayTimetableStaticBundle = unstable_cache(
       if (sid) examById[sid] = String((row as { exam_date?: string | null }).exam_date ?? "");
     }
 
+    const roomRegistry = buildRoomDisplayRegistry(classroomRows);
+
     return {
       studentList: (students ?? []) as StudentRow[],
       inactivePeriodsById,
       tutorColorByName: Object.fromEntries(buildTutorColorByDisplayName(tutorRows ?? [])),
       regularPeriodMaxByRoom: buildRegularPeriodMaxByRoom(
-        classroomRows as Array<{ name?: string | null; regular_period_max?: number | null }> | null,
+        classroomRows as Array<{
+          name?: string | null;
+          slug?: string | null;
+          regular_period_max?: number | null;
+        }> | null,
       ),
+      roomDisplayLabels: roomRegistry.displayLabelByGroup,
+      roomRegistry,
       examById,
       roomSlotTutorRules,
       feeTierBundle,
     };
   },
-  ["day-timetable-static-v5"],
+  ["day-timetable-static-v6"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
@@ -597,7 +617,7 @@ async function fetchDayTimetablePayloadUncached(
     loadDayTimetableStyleSettings(),
     supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
   ]);
-  const { regularPeriodMaxByRoom, tutorColorByName, examById, roomSlotTutorRules, feeTierBundle } =
+  const { regularPeriodMaxByRoom, roomDisplayLabels, roomRegistry, tutorColorByName, examById, roomSlotTutorRules, feeTierBundle } =
     staticBundle;
   const inactivePeriodsById = new Map(Object.entries(staticBundle.inactivePeriodsById));
 
@@ -648,7 +668,7 @@ async function fetchDayTimetablePayloadUncached(
     const dayRows = buildDayTimetableRowsForDate(records, state, dateIso, todayIso, {
       roomSlotTutorRules,
     })
-      .map((r) => ({ ...r, normalizedRoom: normalizeScheduleRoom(r.room) }))
+      .map((r) => ({ ...r, normalizedRoom: resolveRoomGroupFromRegistry(r.room, roomRegistry) }))
       .filter((r) => {
         if (r.lessonType === "取消") return false;
         if (onlyRegular && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL) {
@@ -791,6 +811,7 @@ async function fetchDayTimetablePayloadUncached(
     byTimeRoom,
     rowFrames,
     regularPeriodMaxByRoom,
+    roomDisplayLabels,
     feePaymentToneByStudentId,
     timetableStyle,
   };
@@ -811,7 +832,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean, includeInactiveSlots: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly, includeInactiveSlots }),
-  ["day-timetable-payload-v14"],
+  ["day-timetable-payload-v15"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

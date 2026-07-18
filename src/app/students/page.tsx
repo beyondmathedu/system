@@ -700,6 +700,7 @@ export default function StudentsPage() {
             rows={5}
             placeholder={`One student per line:\nLau tsun kit	Bosco	2007年3月25日	54071413	boscolau02@gmail.com	華德福會瑪利亞書院	中六	中文\nChan Tai Man	Tom		91234567		聖保羅	中三	英文`}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+            suppressHydrationWarning
           />
           {pasteNotice ? (
             <p className="mt-2 text-sm font-medium text-emerald-700">{pasteNotice}</p>

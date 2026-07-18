@@ -47,6 +47,7 @@ import {
 } from "@/lib/lesson2026Summary";
 import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
 import {
+  collectAttendedBillableLessonDatesForMonth,
   collectBillableLessonDatesForMonth,
   countAttendedBillableLessonsInMonth,
   isoYmdToMonthDay,
@@ -91,7 +92,7 @@ const WEEKDAY_COL_WIDTH = 86;
 const TUITION_COL_WIDTH = 96;
 const AMOUNT_OWING_COL_WIDTH = 92;
 const OPENING_COL_WIDTH = 112;
-const L_COL_WIDTH = 56;
+const L_COL_WIDTH = 72;
 const MAKEUP_COL_WIDTH = 104;
 const SEND_FEE_COL_WIDTH = 88;
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1222,19 +1223,20 @@ export default function StudentsLessonTimeFeeRecordPage() {
     const currentMonth = Number(sheetMonth);
     for (const st of students) {
       const legacyWeekdays = weekdayTokensByStudentId[st.id] ?? [];
-      const dates =
-        isMonthInactiveForFeeByStudentId[st.id]?.(currentMonth)
-          ? []
-          : collectBillableLessonDatesForMonth({
-              records: normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []),
-              state: toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]),
-              year: sheetYear,
-              month1to12: currentMonth,
-              legacyWeekdays,
-              isDateInactive: inactiveDateCheckerByStudentId[st.id],
-            });
-      full[st.id] = dates;
-      capped[st.id] = dates.slice(0, L_COUNT);
+      const records = normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []);
+      const state = toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]);
+      const monthInactive = isMonthInactiveForFeeByStudentId[st.id]?.(currentMonth);
+      const common = {
+        records,
+        state,
+        year: sheetYear,
+        month1to12: currentMonth,
+        legacyWeekdays,
+        isDateInactive: inactiveDateCheckerByStudentId[st.id],
+      };
+      full[st.id] = monthInactive ? [] : collectBillableLessonDatesForMonth(common);
+      const attended = monthInactive ? [] : collectAttendedBillableLessonDatesForMonth(common);
+      capped[st.id] = attended.slice(0, L_COUNT);
     }
     return { lessonDatesByStudentId: capped, fullLessonDatesByStudentId: full };
   }, [
@@ -1972,6 +1974,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                               key={i}
                               className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-2 py-3 text-center text-[11px]"
                               style={{ minWidth: L_COL_WIDTH }}
+                              title="已出席堂數：恆常／加堂＝當月日期；補堂＝原本取消日→補堂日"
                             >
                               L{i + 1}
                             </th>
@@ -2098,7 +2101,9 @@ export default function StudentsLessonTimeFeeRecordPage() {
               </div>
 
               <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                <div className="text-sm font-bold text-amber-800">* Please confirm what L1-L9 each represent (for example: date / session / required sessions).</div>
+                <div className="text-sm font-bold text-amber-800">
+                  * L1–L9：本月已出席堂數（恆常／加堂按當月日期；補堂按原本取消日，例：1/6、10/6→11/6、30/6、12/6→2/7）。
+                </div>
                 <div className="mt-2 text-sm text-amber-900">* After confirmation, I can connect these cells to the auto-calculation logic for lesson time and tuition.</div>
               </div>
 
@@ -2563,8 +2568,9 @@ const StudentFeeRow = memo(function StudentFeeRow({
       {Array.from({ length: L_COUNT }, (_, i) => (
         <td key={i} className="px-2 py-3 text-center">
           <div
-            className="h-7 rounded bg-slate-50 px-1 text-center text-[11px] leading-6 text-slate-800"
+            className="min-h-7 rounded bg-slate-50 px-0.5 text-center text-[10px] leading-snug text-slate-800"
             style={{ width: L_COL_WIDTH - 8 }}
+            title={lessonDates[i]?.includes("→") ? `補堂：${lessonDates[i]}` : lessonDates[i]}
           >
             {lessonDates[i] ?? ""}
           </div>

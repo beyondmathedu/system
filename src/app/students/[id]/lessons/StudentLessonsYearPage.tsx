@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
@@ -55,12 +55,17 @@ import {
   type StudentScheduleBuildOptions,
   type StudentLessonScheduleRow,
 } from "@/lib/studentScheduleRowMapper";
+import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
+import { useStudentLessonYearStateRealtime } from "@/lib/useStudentLessonYearStateRealtime";
+import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
 import {
-  canonicalScheduleRoomLabel,
   ROOM_GROUPS,
   resolveScheduleRoomPickerValue,
+  type RoomGroup,
 } from "@/lib/dayTimetableShared";
+import type { RoomDisplayRegistry } from "@/lib/roomDisplayRegistry";
+import { useRoomDisplayLabels } from "@/lib/useRoomDisplayRegistry";
 import { isStudentInactiveOnDate, getInactiveMonthGapsInYear, type InactiveMonthGap } from "@/lib/studentVisibility";
 import {
   isUpcomingExamDate,
@@ -70,13 +75,6 @@ import {
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const ROOM_OPTIONS = [...ROOM_GROUPS];
-const ROOM_LABEL: Record<string, string> = {
-  B: "B",
-  M前: "M Front",
-  M後: "M Back",
-  Hope: "Hope",
-  "Hope 2": "Hope 2",
-};
 const WEEKDAY_LABEL: Record<string, string> = {
   一: "Mon",
   二: "Tue",
@@ -347,7 +345,10 @@ const bulkEditInputClass =
 const bulkEditInputDisabledClass =
   "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600";
 
-function scheduleRowToBulkEditDraft(row: ScheduleRow): BulkEditLessonDraft | null {
+function scheduleRowToBulkEditDraft(
+  row: ScheduleRow,
+  registry: RoomDisplayRegistry,
+): BulkEditLessonDraft | null {
   const parsed = parseRegularLessonRowId(row.rowId);
   if (!parsed) return null;
   const { timePreset, timeCustom } = pickTimePreset(row.time, row.weekday);
@@ -356,7 +357,7 @@ function scheduleRowToBulkEditDraft(row: ScheduleRow): BulkEditLessonDraft | nul
     date: row.date,
     timePreset,
     timeCustom,
-    room: resolveScheduleRoomPickerValue(row.room),
+    room: resolveScheduleRoomPickerValue(row.room, ROOM_GROUPS[0], registry),
     original: {
       date: row.date,
       weekday: row.weekday,
@@ -373,11 +374,15 @@ function BulkEditLessonFields({
   yearMin,
   yearMax,
   onChange,
+  formatRoom,
+  pickerLabel,
 }: {
   draft: BulkEditLessonDraft;
   yearMin: string;
   yearMax: string;
   onChange: (next: BulkEditLessonDraft) => void;
+  formatRoom: (raw: string) => string;
+  pickerLabel: (group: RoomGroup) => string;
 }) {
   const newWeekday = draft.date ? weekdayFromIsoDate(draft.date) : "";
   const newWeekdayDisplay = newWeekday ? WEEKDAY_LABEL[newWeekday] ?? newWeekday : "—";
@@ -461,12 +466,10 @@ function BulkEditLessonFields({
 
       <BulkEditCompareRow
         label="Room"
-        before={ROOM_LABEL[draft.original.displayRoom] ?? draft.original.displayRoom}
+        before={formatRoom(draft.original.displayRoom)}
         beforeHint={
           draft.original.displayRoom !== draft.original.baseRoom
-            ? `From schedule: ${
-                ROOM_LABEL[draft.original.baseRoom] ?? draft.original.baseRoom
-              }`
+            ? `From schedule: ${formatRoom(draft.original.baseRoom)}`
             : undefined
         }
         changed={changed.room}
@@ -478,7 +481,7 @@ function BulkEditLessonFields({
         >
           {ROOM_OPTIONS.map((option) => (
             <option key={option} value={option}>
-              {ROOM_LABEL[option] ?? option}
+              {pickerLabel(option)}
             </option>
           ))}
         </select>
@@ -506,6 +509,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const searchParams = useSearchParams();
   const rawId = String(params?.id || "");
   const studentId = normalizeStudentId(rawId);
+  const { formatRoom, pickerLabel, pickerToStorage, registry } = useRoomDisplayLabels();
   const [studentSummary, setStudentSummary] = useState<StudentSummary>({
     id: studentId,
     nameZh: "",
@@ -531,6 +535,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const readOnly = isReadOnlyViewer;
 
   const [records, setRecords] = useState<ScheduleRecord[]>([]);
+  const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>([]);
   const [attendance, setAttendance] = useState<Record<string, boolean>>({});
   const ATTENDANCE_STORAGE_KEY = `attendance:${studentId}:${targetYear}`;
 
@@ -746,6 +751,49 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     lessonSummaryDraftByDateIsoRef.current = lessonSummaryDraftByDateIso;
   }, [attendance, hiddenDates, overrides, rescheduleEntries, extraEntries, lessonSummaryDraftByDateIso]);
 
+  const applyYearStateToUi = useCallback(
+    (state: {
+      attendance: Record<string, boolean>;
+      hiddenDates: Record<string, boolean>;
+      overrides: Record<string, DayOverride>;
+      rescheduleEntries: RescheduleEntry[];
+      extraEntries: ExtraEntry[];
+    }) => {
+      setAttendance(state.attendance);
+      setHiddenDates(state.hiddenDates);
+      setOverrides(state.overrides);
+      setRescheduleEntries(state.rescheduleEntries);
+      setExtraEntries(state.extraEntries);
+      window.localStorage.setItem(ATTENDANCE_STORAGE_KEY, JSON.stringify(state.attendance));
+      window.localStorage.setItem(HIDDEN_DATES_STORAGE_KEY, JSON.stringify(state.hiddenDates));
+      window.localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(state.overrides));
+      window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(state.rescheduleEntries));
+      window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(state.extraEntries));
+    },
+    [
+      ATTENDANCE_STORAGE_KEY,
+      HIDDEN_DATES_STORAGE_KEY,
+      OVERRIDES_STORAGE_KEY,
+      RESCHEDULE_STORAGE_KEY,
+      EXTRA_STORAGE_KEY,
+    ],
+  );
+
+  const onRemoteYearState = useCallback(
+    (remote: StudentLesson2026State) => {
+      applyYearStateToUi({
+        attendance: remote.attendance,
+        hiddenDates: remote.hiddenDates,
+        overrides: (remote.overrides ?? {}) as Record<string, DayOverride>,
+        rescheduleEntries: (remote.rescheduleEntries ?? []) as RescheduleEntry[],
+        extraEntries: (remote.extraEntries ?? []) as ExtraEntry[],
+      });
+    },
+    [applyYearStateToUi],
+  );
+
+  useStudentLessonYearStateRealtime(accessReady ? studentId : "", targetYear, onRemoteYearState);
+
   useEffect(() => {
     const timersMap = lessonSummarySaveTimersRef.current;
     return () => {
@@ -842,7 +890,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       try {
         const res = await fetch(
           `/api/students/${encodeURIComponent(studentId)}/lessons-bootstrap?year=${targetYear}`,
-          { credentials: "same-origin" },
+          { credentials: "same-origin", cache: "no-store" },
         );
         if (!res.ok) throw new Error("bootstrap failed");
         const body = (await res.json()) as {
@@ -870,6 +918,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             effective_date?: string;
             reactivate_date?: string | null;
           };
+          roomSlotTutorRules?: RoomSlotTutorRule[];
         };
         if (!mounted) return;
 
@@ -914,6 +963,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         );
         setStudentNotFound(false);
         setStudentLoaded(true);
+        setRoomSlotTutorRules(Array.isArray(body.roomSlotTutorRules) ? body.roomSlotTutorRules : []);
 
         const cloudRecords = body.scheduleRecords;
         if (Array.isArray(cloudRecords) && cloudRecords.length > 0) {
@@ -958,6 +1008,76 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       mounted = false;
     };
   }, [studentId, targetYear, accessReady, ATTENDANCE_STORAGE_KEY, HIDDEN_DATES_STORAGE_KEY, OVERRIDES_STORAGE_KEY, RESCHEDULE_STORAGE_KEY, EXTRA_STORAGE_KEY]);
+
+  useEffect(() => {
+    if (!studentId || !accessReady) return;
+
+    let cancelled = false;
+
+    async function reloadYearStateFromCloud() {
+      try {
+        const res = await fetch(
+          `/api/students/${encodeURIComponent(studentId)}/lessons-bootstrap?year=${targetYear}`,
+          { credentials: "same-origin", cache: "no-store" },
+        );
+        if (!res.ok || cancelled) return;
+        const body = (await res.json()) as {
+          yearState?: {
+            attendance?: Record<string, boolean>;
+            hiddenDates?: Record<string, boolean>;
+            overrides?: Record<string, DayOverride>;
+            rescheduleEntries?: RescheduleEntry[];
+            extraEntries?: ExtraEntry[];
+          };
+        };
+        const cloud = body.yearState;
+        if (!cloud || cancelled) return;
+
+        const nextAttendance = (cloud.attendance ?? {}) as Record<string, boolean>;
+        const nextHiddenDates = (cloud.hiddenDates ?? {}) as Record<string, boolean>;
+        const nextOverrides = (cloud.overrides ?? {}) as Record<string, DayOverride>;
+        const nextReschedule = (cloud.rescheduleEntries ?? []) as RescheduleEntry[];
+        const nextExtra = (cloud.extraEntries ?? []) as ExtraEntry[];
+
+        applyYearStateToUi({
+          attendance: nextAttendance,
+          hiddenDates: nextHiddenDates,
+          overrides: nextOverrides,
+          rescheduleEntries: nextReschedule,
+          extraEntries: nextExtra,
+        });
+      } catch {
+        // ignore background refresh errors
+      }
+    }
+
+    const unsub = subscribeLessonSaveStatus((evt) => {
+      if (evt.studentId !== studentId) return;
+      if (evt.kind !== "year" || evt.year !== targetYear) return;
+      if (evt.status === "saved") void reloadYearStateFromCloud();
+    });
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") void reloadYearStateFromCloud();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      unsub();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [
+    studentId,
+    targetYear,
+    accessReady,
+    ATTENDANCE_STORAGE_KEY,
+    HIDDEN_DATES_STORAGE_KEY,
+    OVERRIDES_STORAGE_KEY,
+    RESCHEDULE_STORAGE_KEY,
+    EXTRA_STORAGE_KEY,
+    applyYearStateToUi,
+  ]);
 
   useEffect(() => {
     if (!studentId) return;
@@ -1036,16 +1156,16 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const scheduleBuildOptions = useMemo((): StudentScheduleBuildOptions | undefined => {
     const from = filterDateFrom.trim();
     const to = filterDateTo.trim();
-    const roomRules = {};
+    const slotRules =
+      roomSlotTutorRules.length > 0 ? { roomSlotTutorRules } : {};
     if (from && to) {
-      return { rangeStartIso: from, rangeEndIso: to, ...roomRules };
+      return { rangeStartIso: from, rangeEndIso: to, ...slotRules };
     }
     if (filterMonth) {
-      return { month: Number(filterMonth), ...roomRules };
+      return { month: Number(filterMonth), ...slotRules };
     }
-    // Month = All: expand the full year (system start through Dec), not just the current month.
-    return roomRules;
-  }, [filterDateFrom, filterDateTo, filterMonth]);
+    return Object.keys(slotRules).length ? slotRules : undefined;
+  }, [filterDateFrom, filterDateTo, filterMonth, roomSlotTutorRules]);
 
   const scheduleMapperState = useMemo(
     () => ({
@@ -1337,7 +1457,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       setEditForm({
         timePreset: timeOpts.includes(entry.time) ? entry.time : timeOpts[0],
         timeCustom: timeOpts.includes(entry.time) ? "" : entry.time,
-        room: resolveScheduleRoomPickerValue(entry.room),
+        room: resolveScheduleRoomPickerValue(entry.room, ROOM_GROUPS[0], registry),
         doubleEnabled: false,
       });
       setShowEditPanel(true);
@@ -1354,7 +1474,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       setEditForm({
         timePreset: timeOpts.includes(opts.row.time) ? opts.row.time : timeOpts[0],
         timeCustom: timeOpts.includes(opts.row.time) ? "" : opts.row.time,
-        room: resolveScheduleRoomPickerValue(opts.row.room),
+        room: resolveScheduleRoomPickerValue(opts.row.room, ROOM_GROUPS[0], registry),
         doubleEnabled: false,
       });
     } else {
@@ -1405,11 +1525,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         newWeekday: row.weekday,
         timePreset,
         timeCustom,
-        room: resolveScheduleRoomPickerValue(row.room),
+        room: resolveScheduleRoomPickerValue(row.room, ROOM_GROUPS[0], registry),
         effectiveDate: row.date,
         sourceRuleId: parsed.ruleId,
         selectedDateIsos: [row.date],
-        sourceSlotLabel: `${WEEKDAY_LABEL[row.weekday] ?? row.weekday} ${row.baseTime} · ${ROOM_LABEL[row.baseRoom] ?? row.baseRoom}`,
+        sourceSlotLabel: `${WEEKDAY_LABEL[row.weekday] ?? row.weekday} ${row.baseTime} · ${formatRoom(row.baseRoom)}`,
         original: {
           date: row.date,
           weekday: row.weekday,
@@ -1426,7 +1546,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     const sortedRows = [...regularRows].sort((a, b) => a.date.localeCompare(b.date));
     const drafts: BulkEditLessonDraft[] = [];
     for (const row of sortedRows) {
-      const draft = scheduleRowToBulkEditDraft(row);
+      const draft = scheduleRowToBulkEditDraft(row, registry);
       if (!draft) {
         setSelectionError("Cannot edit this selection (missing schedule rule link).");
         return false;
@@ -1495,7 +1615,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         }
 
         const finalTime = resolveBulkEditTime(draft);
-        const finalRoom = canonicalScheduleRoomLabel(draft.room.trim());
+        const finalRoom = pickerToStorage(draft.room.trim());
         if (!finalTime) {
           setBulkEditSaveStatus(`Please set a time for ${lessonLabel}.`);
           setSelectionError(`Please set a time for ${lessonLabel}.`);
@@ -1575,7 +1695,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     }
 
     const finalTime = resolveBulkEditTime(bulkEditForm);
-    const finalRoom = canonicalScheduleRoomLabel(bulkEditForm.room.trim());
+    const finalRoom = pickerToStorage(bulkEditForm.room.trim());
     if (!finalTime) {
       setBulkEditSaveStatus("Please select or enter a lesson time.");
       setSelectionError("Please select or enter a lesson time.");
@@ -1849,8 +1969,8 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             ? prev.timePreset
             : opts[0];
       const room = row
-        ? resolveScheduleRoomPickerValue(row.room)
-        : resolveScheduleRoomPickerValue(prev.room);
+        ? resolveScheduleRoomPickerValue(row.room, ROOM_GROUPS[0], registry)
+        : resolveScheduleRoomPickerValue(prev.room, ROOM_GROUPS[0], registry);
       return {
         ...prev,
         timePreset,
@@ -2259,7 +2379,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                             <span className="mx-2 font-normal text-slate-300">·</span>
                             {draft.original.displayTime}
                             <span className="mx-2 font-normal text-slate-300">·</span>
-                            {ROOM_LABEL[draft.original.displayRoom] ?? draft.original.displayRoom}
+                            {formatRoom(draft.original.displayRoom)}
                           </p>
                         </div>
                         <div className="hidden border-b border-slate-100 bg-slate-50/80 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:grid sm:grid-cols-[6.75rem_minmax(0,1fr)_auto_minmax(0,1.35fr)] sm:gap-3">
@@ -2272,6 +2392,8 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                           draft={draft}
                           yearMin={yearMin}
                           yearMax={yearMax}
+                          formatRoom={formatRoom}
+                          pickerLabel={pickerLabel}
                           onChange={(next) =>
                             setBulkEditLessonDrafts((prev) =>
                               prev.map((d, i) => (i === index ? next : d)),
@@ -2311,8 +2433,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                         <span className="mx-2 font-normal text-slate-300">·</span>
                         {bulkEditForm.original.displayTime}
                         <span className="mx-2 font-normal text-slate-300">·</span>
-                        {ROOM_LABEL[bulkEditForm.original.displayRoom] ??
-                          bulkEditForm.original.displayRoom}
+                        {formatRoom(bulkEditForm.original.displayRoom)}
                       </p>
                     </div>
                   ) : null}
@@ -2413,15 +2534,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                     <BulkEditCompareRow
                       label="Room"
                       before={
-                        ROOM_LABEL[bulkEditForm.original.displayRoom] ??
-                        bulkEditForm.original.displayRoom
+                        formatRoom(bulkEditForm.original.displayRoom)
                       }
                       beforeHint={
                         bulkEditForm.original.displayRoom !== bulkEditForm.original.baseRoom
-                          ? `From schedule: ${
-                              ROOM_LABEL[bulkEditForm.original.baseRoom] ??
-                              bulkEditForm.original.baseRoom
-                            }`
+                          ? `From schedule: ${formatRoom(bulkEditForm.original.baseRoom)}`
                           : undefined
                       }
                       changed={bulkEditFieldChanged.room}
@@ -2433,7 +2550,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       >
                         {ROOM_OPTIONS.map((option) => (
                           <option key={option} value={option}>
-                            {ROOM_LABEL[option] ?? option}
+                            {pickerLabel(option)}
                           </option>
                         ))}
                       </select>
@@ -2496,7 +2613,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       <div>
                         <dt className="text-xs font-semibold text-slate-500">Scheduled Room</dt>
                         <dd className="mt-0.5 font-medium text-slate-900">
-                          {ROOM_LABEL[editOriginalLesson.baseRoom] ?? editOriginalLesson.baseRoom}
+                          {formatRoom(editOriginalLesson.baseRoom)}
                         </dd>
                       </div>
                     </dl>
@@ -2509,7 +2626,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       </span>
                       ／
                       <span className="font-semibold text-slate-800">
-                        {ROOM_LABEL[editOriginalLesson.displayRoom] ?? editOriginalLesson.displayRoom}
+                        {formatRoom(editOriginalLesson.displayRoom)}
                       </span>
                       . You can edit it again below.
                     </p>
@@ -2696,7 +2813,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                         fromDate: from,
                                         toDate: to,
                                         time: finalTime,
-                                        room: canonicalScheduleRoomLabel(editForm.room.trim()),
+                                        room: pickerToStorage(editForm.room.trim()),
                                         pending: false,
                                       }
                                     : e,
@@ -2708,7 +2825,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                     fromDate: from,
                                     toDate: to,
                                     time: finalTime,
-                                    room: canonicalScheduleRoomLabel(editForm.room.trim()),
+                                    room: pickerToStorage(editForm.room.trim()),
                                   },
                                 ];
                             setRescheduleEntries(nextList);
@@ -2725,7 +2842,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                   id: `${Date.now()}-double-reschedule`,
                                   date: to,
                                   time: finalTime,
-                                  room: canonicalScheduleRoomLabel(editForm.room.trim()),
+                                  room: pickerToStorage(editForm.room.trim()),
                                 },
                               ];
                               setExtraEntries(nextExtraEntries);
@@ -2789,7 +2906,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       >
                         {ROOM_OPTIONS.map((option) => (
                           <option key={option} value={option}>
-                            {ROOM_LABEL[option] ?? option}
+                            {pickerLabel(option)}
                           </option>
                         ))}
                       </select>
@@ -3021,7 +3138,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                 id: `${Date.now()}`,
                                 date,
                                 time: finalTime,
-                                room: canonicalScheduleRoomLabel(extraForm.room.trim()),
+                                room: pickerToStorage(extraForm.room.trim()),
                               },
                             ];
                             if (extraForm.doubleEnabled) {
@@ -3029,7 +3146,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                 id: `${Date.now()}-2`,
                                 date,
                                 time: finalTime,
-                                room: canonicalScheduleRoomLabel(extraForm.room2.trim() || extraForm.room.trim()),
+                                room: pickerToStorage(extraForm.room2.trim() || extraForm.room.trim()),
                               });
                             }
                             setExtraEntries(nextExtra);
@@ -3078,7 +3195,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       >
                         {ROOM_OPTIONS.map((option) => (
                           <option key={option} value={option}>
-                            {ROOM_LABEL[option] ?? option}
+                            {pickerLabel(option)}
                           </option>
                         ))}
                       </select>
@@ -3110,7 +3227,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                         >
                           {ROOM_OPTIONS.map((option) => (
                             <option key={option} value={option}>
-                              {ROOM_LABEL[option] ?? option}
+                              {pickerLabel(option)}
                             </option>
                           ))}
                         </select>
@@ -3184,7 +3301,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                     <option value="">All</option>
                     {roomFilterOptions.map((room) => (
                       <option key={room} value={room}>
-                        {ROOM_LABEL[room] ?? room}
+                        {formatRoom(room)}
                       </option>
                     ))}
                   </select>
@@ -3461,10 +3578,10 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                               <RescheduleChangeCell
                                 before={r.baseRoom}
                                 after={r.room}
-                                format={(v) => ROOM_LABEL[v] ?? v}
+                                format={(v) => formatRoom(v)}
                               />
                             ) : (
-                              ROOM_LABEL[r.room] ?? r.room
+                              formatRoom(r.room)
                             )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">

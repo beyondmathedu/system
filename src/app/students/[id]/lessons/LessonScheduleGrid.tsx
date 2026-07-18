@@ -10,9 +10,10 @@ import {
 } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import {
-  canonicalScheduleRoomLabel,
   ROOM_GROUPS,
+  resolveScheduleRoomPickerValue,
 } from "@/lib/dayTimetableShared";
+import { useRoomDisplayLabels } from "@/lib/useRoomDisplayRegistry";
 
 function LessonScheduleGridFallback() {
   return (
@@ -41,13 +42,6 @@ const WEEKDAY_LABEL: Record<string, string> = {
   五: "Fri",
   六: "Sat",
   日: "Sun",
-};
-const ROOM_LABEL: Record<string, string> = {
-  B: "B",
-  M前: "M Front",
-  M後: "M Back",
-  Hope: "Hope",
-  "Hope 2": "Hope 2",
 };
 
 const WEEKDAY_TIME_SUGGESTIONS = ["03:00 PM", "04:30 PM", "06:00 PM"];
@@ -100,7 +94,7 @@ type ScheduleRecord = LessonScheduleRecord;
 function normalizeLessonRecord(raw: ScheduleRecord): ScheduleRecord & { effectiveDate: string } {
   return {
     ...raw,
-    room: canonicalScheduleRoomLabel(raw.room ?? ""),
+    room: (raw.room ?? "").trim(),
     effectiveDate: raw.effectiveDate ?? toHkIsoDateFromMs(raw.createdAt),
   };
 }
@@ -112,6 +106,7 @@ export default function LessonScheduleGrid({
   studentId: string;
   initialRecords?: LessonScheduleRecord[] | null;
 }) {
+  const { formatRoom, pickerLabel, pickerToStorage, registry } = useRoomDisplayLabels();
   const [weeklyLessons, setWeeklyLessons] = useState<1 | 2>(1);
   const [weekday, setWeekday] = useState("一");
   const [time, setTime] = useState("03:00 PM");
@@ -244,7 +239,7 @@ export default function LessonScheduleGrid({
       setTime(r.time);
       setCustomTime("");
     }
-    setRoom(canonicalScheduleRoomLabel(r.room));
+    setRoom(resolveScheduleRoomPickerValue(r.room, ROOM_GROUPS[0], registry));
   }
 
   function clearEditMode() {
@@ -275,7 +270,7 @@ export default function LessonScheduleGrid({
         effectiveDate: effectiveDate.trim(),
         weekday,
         time: nextTime,
-        room,
+        room: pickerToStorage(room),
       };
       if (
         hasDuplicateScheduleSlotInVersion(
@@ -298,7 +293,9 @@ export default function LessonScheduleGrid({
 
     const ed = effectiveDate.trim();
     const normalized = records.map(normalizeLessonRecord);
-    if (hasDuplicateScheduleSlotInVersion(normalized, { effectiveDate: ed, weekday, time: nextTime, room })) {
+    const storedRoom = pickerToStorage(room);
+    const storedRoom2 = pickerToStorage(room2);
+    if (hasDuplicateScheduleSlotInVersion(normalized, { effectiveDate: ed, weekday, time: nextTime, room: storedRoom })) {
       setSaveSlotError("此生效日已有相同星期、時間、房間的課表。請勿重複新增，或先合併下方重複項。");
       return;
     }
@@ -308,7 +305,7 @@ export default function LessonScheduleGrid({
         effectiveDate: ed,
         weekday: weekday2,
         time: nextTime2,
-        room: room2,
+        room: storedRoom2,
       })
     ) {
       setSaveSlotError("第二堂與現有課表時段重複。");
@@ -322,7 +319,7 @@ export default function LessonScheduleGrid({
         effectiveDate: ed,
         weekday,
         time: nextTime,
-        room,
+        room: storedRoom,
         createdAt: now,
       },
     ];
@@ -332,7 +329,7 @@ export default function LessonScheduleGrid({
         effectiveDate: ed,
         weekday: weekday2,
         time: nextTime2,
-        room: room2,
+        room: storedRoom2,
         createdAt: now + 1,
       });
     }
@@ -447,7 +444,7 @@ export default function LessonScheduleGrid({
           >
             {ROOM_OPTIONS.map((option) => (
               <option key={option} value={option}>
-                {ROOM_LABEL[option] ?? option}
+                {pickerLabel(option)}
               </option>
             ))}
           </select>
@@ -518,7 +515,7 @@ export default function LessonScheduleGrid({
             >
               {ROOM_OPTIONS.map((option) => (
                 <option key={option} value={option}>
-                  {ROOM_LABEL[option] ?? option}
+                  {pickerLabel(option)}
                 </option>
               ))}
             </select>

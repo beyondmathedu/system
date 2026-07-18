@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import { normalizeStudentId } from "@/lib/studentId";
 import {
@@ -16,7 +16,12 @@ import {
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
 import { DEFAULT_LESSON_YEAR_STATE } from "@/lib/lessonYearStateShared";
-import { queueSaveLessonYearState, retrySaveLessonYearState } from "@/lib/queueSaveLessonYearState";
+import {
+  flushSaveLessonYearStateQueue,
+  queueSaveLessonYearState,
+  retrySaveLessonYearState,
+} from "@/lib/queueSaveLessonYearState";
+import { revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
 import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import { loadTutorVisibility } from "@/lib/tutorVisibility";
 import { isSharedIpadTutorDisplayName } from "@/lib/tutorConstants";
@@ -80,6 +85,7 @@ export default function RoomScheduleTable({
   studentLessonsHrefMode = "yearFromRoom",
 }: Props) {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const summaryLocked = tutorFieldLocked && !allowSummaryEdit;
   const returnTo = useMemo(() => {
@@ -129,6 +135,8 @@ export default function RoomScheduleTable({
   const [lessonTypeFilter, setLessonTypeFilter] = useState("all");
   const [attendanceFilter, setAttendanceFilter] = useState<"all" | "attended" | "not_attended">("all");
   const stateCache = useRef(new Map<string, StudentLesson2026State>());
+  /** Students whose full year state has been loaded from Supabase (not just attendance from rows). */
+  const cloudStateLoadedRef = useRef(new Set<string>());
   const initialNoteByRowKey = useRef(new Map<string, string>());
   const latestNoteByRowKeyRef = useRef(new Map<string, string>());
   const lessonSummarySaveTimersRef = useRef(new Map<string, number>());
@@ -316,7 +324,7 @@ export default function RoomScheduleTable({
     contentKey: sortedLocalRows.length,
   });
 
-  function seedStateCacheFromRows(nextRows: RoomScheduleRow[]) {
+  function seedAttendanceFromRows(nextRows: RoomScheduleRow[]) {
     const attendanceByStudent = new Map<string, Record<string, boolean>>();
     for (const r of nextRows) {
       const prev = attendanceByStudent.get(r.studentId) ?? {};
@@ -324,7 +332,8 @@ export default function RoomScheduleTable({
       attendanceByStudent.set(r.studentId, prev);
     }
     for (const [studentId, attendance] of attendanceByStudent) {
-      const existing = stateCache.current.get(studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
+      const existing = stateCache.current.get(studentId);
+      if (!existing) continue;
       stateCache.current.set(studentId, {
         ...existing,
         attendance: { ...existing.attendance, ...attendance },
@@ -334,7 +343,9 @@ export default function RoomScheduleTable({
 
   useEffect(() => {
     setLocalRows(rows);
-    seedStateCacheFromRows(rows);
+    stateCache.current.clear();
+    cloudStateLoadedRef.current.clear();
+    seedAttendanceFromRows(rows);
     for (const t of lessonSummarySaveTimersRef.current.values()) window.clearTimeout(t);
     lessonSummarySaveTimersRef.current.clear();
     lessonSummaryPendingRef.current.clear();
@@ -425,14 +436,17 @@ export default function RoomScheduleTable({
     let mounted = true;
     void (async () => {
       const studentIds = Array.from(new Set(rows.map((r) => r.studentId)));
-      const missing = studentIds.filter((id) => !stateCache.current.has(id));
+      const missing = studentIds.filter((id) => !cloudStateLoadedRef.current.has(id));
       if (missing.length === 0) return;
       const batch = await loadLessonYearStatesBatch(missing, year);
       if (!mounted) return;
       for (const id of missing) {
         const st = batch[id];
-        if (st) stateCache.current.set(id, st);
+        if (!st) continue;
+        stateCache.current.set(id, st);
+        cloudStateLoadedRef.current.add(id);
       }
+      seedAttendanceFromRows(rows);
     })();
     return () => {
       mounted = false;
@@ -466,11 +480,25 @@ export default function RoomScheduleTable({
     queueSaveLessonYearState(row.studentId, year, nextState, ["attendance"], [row.attendanceKey]);
   }
 
-  function onChangeTutor(row: RoomScheduleRow, displayTutor: string) {
+  async function onChangeTutor(row: RoomScheduleRow, displayTutor: string) {
     setSaveError("");
     const slot = slotKey(row);
     const nextTutor = displayTutor.trim() || "TBD";
     const affected = localRows.filter((r) => slotKey(r) === slot);
+
+    const needCloudLoad = [
+      ...new Set(affected.map((r) => r.studentId).filter((id) => !cloudStateLoadedRef.current.has(id))),
+    ];
+    if (needCloudLoad.length) {
+      const batch = await loadLessonYearStatesBatch(needCloudLoad, year);
+      for (const id of needCloudLoad) {
+        const st = batch[id];
+        if (st) stateCache.current.set(id, st);
+        cloudStateLoadedRef.current.add(id);
+      }
+      seedAttendanceFromRows(localRows);
+    }
+
     setLocalRows((prev) => prev.map((r) => (slotKey(r) === slot ? { ...r, tutor: nextTutor } : r)));
 
     for (const r of affected) {
@@ -496,7 +524,15 @@ export default function RoomScheduleTable({
         },
       };
       stateCache.current.set(r.studentId, nextState);
-      queueSaveLessonYearState(r.studentId, year, nextState, ["overrides"]);
+      queueSaveLessonYearState(r.studentId, year, nextState, ["overrides"], undefined, [r.dateIso]);
+    }
+
+    try {
+      await flushSaveLessonYearStateQueue();
+      await revalidateScheduleCachesNow();
+      router.refresh();
+    } catch {
+      // saveError is set via subscribeLessonSaveStatus
     }
   }
 

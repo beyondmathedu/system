@@ -32,7 +32,9 @@ import {
   attendanceRecordDelta,
   buildAttendancePatchFromKeys,
   buildLessonYearStateUpsertRow,
+  buildOverridesPatchFromKeys,
   isMissingAttendancePatchRpcError,
+  isMissingOverridesPatchRpcError,
 } from "@/lib/lessonYearStatePatchCore";
 
 export type { StudentLesson2026State } from "@/lib/lessonYearStateShared";
@@ -351,7 +353,33 @@ export type SaveLessonYearStatePatchOptions = {
   attendanceKeys?: readonly string[];
   /** Baseline attendance for delta fallback when RPC is unavailable. */
   lastSavedAttendance?: Record<string, boolean>;
+  /** When set, overrides are merged via RPC using only these date keys. */
+  overrideDateKeys?: readonly string[];
 };
+
+export async function patchLessonYearOverrides(
+  studentId: string,
+  year: number,
+  patch: Record<string, unknown>,
+  options?: Pick<SaveLessonYearStatePatchOptions, "skipScheduleCacheRevalidate">,
+) {
+  if (!Object.keys(patch).length) return;
+
+  const { error } = await supabase.rpc("patch_lesson_year_overrides", {
+    p_student_id: studentId,
+    p_year: year,
+    p_patch: patch,
+  });
+
+  if (error && isMissingOverridesPatchRpcError(error.message)) {
+    throw new Error(`OVERRIDES_RPC_MISSING:${error.message}`);
+  }
+  if (error) throw new Error(error.message);
+
+  if (!options?.skipScheduleCacheRevalidate) {
+    notifyScheduleCachesStale();
+  }
+}
 
 export async function patchLessonYearAttendance(
   studentId: string,
@@ -385,6 +413,7 @@ export async function saveLessonYearStatePatch(
   options?: SaveLessonYearStatePatchOptions,
 ) {
   const attendanceOnly = fields.length === 1 && fields[0] === "attendance";
+  const overridesOnly = fields.length === 1 && fields[0] === "overrides";
 
   if (attendanceOnly && patch.attendance) {
     const attendancePatch = options?.attendanceKeys?.length
@@ -401,6 +430,37 @@ export async function saveLessonYearStatePatch(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!message.startsWith("ATTENDANCE_RPC_MISSING:")) throw error;
+    }
+  }
+
+  if (overridesOnly && patch.overrides) {
+    const overridesRecord = patch.overrides as Record<string, unknown>;
+    const overridesPatch = options?.overrideDateKeys?.length
+      ? buildOverridesPatchFromKeys(overridesRecord, options.overrideDateKeys)
+      : overridesRecord;
+
+    if (!Object.keys(overridesPatch).length) return;
+
+    try {
+      await patchLessonYearOverrides(studentId, year, overridesPatch, {
+        skipScheduleCacheRevalidate: options?.skipScheduleCacheRevalidate,
+      });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.startsWith("OVERRIDES_RPC_MISSING:")) throw error;
+
+      const current = await loadLessonYearState(studentId, year);
+      const merged: Record<string, unknown> = { ...(current.overrides ?? {}) };
+      for (const [dateIso, entry] of Object.entries(overridesPatch)) {
+        const prev = merged[dateIso];
+        if (prev && typeof prev === "object" && !Array.isArray(prev) && entry && typeof entry === "object" && !Array.isArray(entry)) {
+          merged[dateIso] = { ...(prev as Record<string, unknown>), ...(entry as Record<string, unknown>) };
+        } else {
+          merged[dateIso] = entry;
+        }
+      }
+      patch = { ...patch, overrides: merged };
     }
   }
 
@@ -496,6 +556,7 @@ export type StudentVisibilityMode = {
 };
 
 export type StudentInactivePeriod = {
+  id?: number;
   student_id: string;
   start_date: string;
   /** First day the student becomes Active again (exclusive end), or null for indefinite pause. */
@@ -634,6 +695,7 @@ function normalizePeriodRow(row: VisibilityPeriodDbRow): StudentInactivePeriod |
   const start = normalizeOptionalIsoDate(row.start_date);
   if (!sid || !start) return null;
   return {
+    id: Number(row.id) > 0 ? Number(row.id) : undefined,
     student_id: sid,
     start_date: start,
     end_date: normalizeOptionalIsoDate(row.end_date),
@@ -706,11 +768,30 @@ export async function appendStudentInactivePeriod(input: {
   endDate?: string | null;
   note?: string;
 }) {
+  const startDate = normalizeOptionalIsoDate(input.startDate) ?? String(input.startDate ?? "").trim();
+  const endDate = normalizeOptionalIsoDate(input.endDate ?? "");
+  const note = String(input.note ?? "");
+
+  let duplicateQuery = supabase
+    .from("student_visibility_periods")
+    .select("id")
+    .eq("student_id", input.studentId)
+    .eq("start_date", startDate)
+    .eq("note", note)
+    .limit(1);
+  duplicateQuery = endDate
+    ? duplicateQuery.eq("end_date", endDate)
+    : duplicateQuery.is("end_date", null);
+
+  const { data: existing, error: dupErr } = await duplicateQuery;
+  if (dupErr) throw dupErr;
+  if (existing?.length) return;
+
   const payload = {
     student_id: input.studentId,
-    start_date: input.startDate,
-    end_date: normalizeOptionalIsoDate(input.endDate ?? ""),
-    note: String(input.note ?? ""),
+    start_date: startDate,
+    end_date: endDate,
+    note,
     updated_at: new Date().toISOString(),
   };
   const { error } = await supabase.from("student_visibility_periods").insert(payload);

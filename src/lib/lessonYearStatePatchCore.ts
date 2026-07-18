@@ -140,3 +140,27 @@ export function isMissingAttendancePatchRpcError(message: string): boolean {
       m.includes("schema cache"))
   );
 }
+
+export function isMissingOverridesPatchRpcError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("patch_lesson_year_overrides") &&
+    (m.includes("does not exist") ||
+      m.includes("not find") ||
+      m.includes("could not find") ||
+      m.includes("schema cache"))
+  );
+}
+
+/** Smallest overrides JSON for RPC merge (per-date keys only). */
+export function buildOverridesPatchFromKeys(
+  overrides: Record<string, unknown>,
+  keys: Iterable<string>,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (!key) continue;
+    if (overrides[key] !== undefined) patch[key] = overrides[key];
+  }
+  return patch;
+}

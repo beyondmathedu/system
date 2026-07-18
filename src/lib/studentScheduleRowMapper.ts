@@ -12,6 +12,7 @@ import {
 import {
   buildYearScheduleRows,
   type BuiltScheduleRow,
+  type ScheduleBuildOptions,
   type YearLessonRecord,
   type YearLessonState,
 } from "@/lib/yearScheduleCore";
@@ -155,13 +156,10 @@ function mapCoreRowToStudentRow(
     extraEntryId = core.rowId.slice("extra-".length);
   }
 
-  let tutor = core.tutorDisplay;
-  let lessonSummary = core.noteDisplay;
-  if (core.rowKind === "reschedule") {
-    tutor = readLessonDayOverrideField(state.overrides, core.date, "tutor") || tutor;
-    lessonSummary =
-      readLessonDayOverrideField(state.overrides, core.date, "lessonSummary") || lessonSummary;
-  }
+  const overrideTutor = readLessonDayOverrideField(state.overrides, core.date, "tutor");
+  const overrideSummary = readLessonDayOverrideField(state.overrides, core.date, "lessonSummary");
+  let tutor = overrideTutor || core.tutorDisplay;
+  let lessonSummary = overrideSummary || core.noteDisplay;
 
   return {
     date: core.date,
@@ -241,11 +239,7 @@ function coreRowsToStudentRows(
   return assignLLabelsAndDisplayOrder(rows);
 }
 
-export type StudentScheduleBuildOptions = {
-  month?: number;
-  rangeStartIso?: string;
-  rangeEndIso?: string;
-};
+export type StudentScheduleBuildOptions = ScheduleBuildOptions;
 
 export function buildStudentBaseScheduleRows(
   records: YearLessonRecord[],

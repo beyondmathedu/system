@@ -11,6 +11,7 @@ import {
   suggestSlugFromDisplayName,
 } from "@/lib/roomNamePropagation";
 import { FALLBACK_ROOM_NAV_LINKS } from "@/lib/roomConstants";
+import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
 import { supabase } from "@/lib/supabase";
 
 type Classroom = {
@@ -228,6 +229,7 @@ export default function RoomsAdminClient() {
       if (fresh) resetFormAfterSave(fresh);
       else resetForm();
       dispatchClassroomsUpdated();
+      notifyScheduleCachesStale();
       return;
     }
 
@@ -253,6 +255,7 @@ export default function RoomsAdminClient() {
     if (fresh) resetFormAfterSave(fresh);
     else resetForm();
     dispatchClassroomsUpdated();
+    notifyScheduleCachesStale();
   }
 
   function onRoomNameBlur() {
