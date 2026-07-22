@@ -6,7 +6,7 @@ import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
 import {
   buildStudentInactivePeriodsById,
-  isStudentInactiveOnDateFromPeriods,
+  shouldHideScheduledLessonForInactivePeriod,
   withAutoF6InactivePeriod,
   type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
@@ -676,7 +676,14 @@ async function fetchRoomScheduleAggregateUncached(
       });
     const periods = inactivePeriodsById.get(st.id) ?? [];
     const visibilityFiltered = periods.length
-      ? filtered.filter((r) => !isStudentInactiveOnDateFromPeriods({ periods, dateIso: r.date }))
+      ? filtered.filter(
+          (r) =>
+            !shouldHideScheduledLessonForInactivePeriod({
+              periods,
+              dateIso: r.date,
+              lessonType: r.lessonType,
+            }),
+        )
       : filtered;
     const name = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
@@ -809,7 +816,14 @@ async function fetchTutorMonthLessonRowsUncached(
     );
     const periods = inactivePeriodsById.get(st.id) ?? [];
     if (periods.length) {
-      filtered = filtered.filter((r) => !isStudentInactiveOnDateFromPeriods({ periods, dateIso: r.date }));
+      filtered = filtered.filter(
+        (r) =>
+          !shouldHideScheduledLessonForInactivePeriod({
+            periods,
+            dateIso: r.date,
+            lessonType: r.lessonType,
+          }),
+      );
     }
     const studentName = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },

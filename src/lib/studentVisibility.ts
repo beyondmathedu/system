@@ -131,6 +131,20 @@ export function isStudentInactiveOnDateFromPeriods(input: {
   return false;
 }
 
+/** Extra / makeup rows stay on Room & Daily Timetable even during inactive periods. */
+export function shouldHideScheduledLessonForInactivePeriod(input: {
+  periods: readonly StudentInactivePeriod[];
+  dateIso: string;
+  lessonType: string;
+}): boolean {
+  const lessonType = String(input.lessonType ?? "").trim();
+  if (lessonType === "加堂" || lessonType === "補堂") return false;
+  return isStudentInactiveOnDateFromPeriods({
+    periods: input.periods,
+    dateIso: input.dateIso,
+  });
+}
+
 export function autoF6InactivePeriod(input: {
   studentId: string;
   grade?: string | null;
@@ -267,6 +281,76 @@ export type InactiveMonthGap = {
   reactivateDate: string | null;
 };
 
+function inactiveGapMetaForMonth(
+  periods: readonly StudentInactivePeriod[],
+  year: number,
+  month: number,
+): { effectiveDate: string; reactivateDate: string | null } {
+  const monthStart = monthStartIsoDate(year, month);
+  const monthEndExclusive = firstDayOfNextMonthIso(year, month);
+  for (const p of periods) {
+    if (isIsoRangeFullyInactive({ periods: [p], startIso: monthStart, endExclusiveIso: monthEndExclusive })) {
+      return { effectiveDate: p.startDate, reactivateDate: p.endDate };
+    }
+  }
+  return { effectiveDate: periods[0]?.startDate ?? "", reactivateDate: periods[0]?.endDate ?? null };
+}
+
+/** Whole calendar months with no lessons because the student is inactive (for lesson table gaps). */
+export function getInactiveMonthGapsInYearFromPeriods(input: {
+  periods: readonly StudentInactivePeriod[];
+  studentId: string;
+  grade?: string | null;
+  year: number;
+  firstMonth?: number;
+}): InactiveMonthGap[] {
+  const periods = withAutoF6InactivePeriod({
+    periods: input.periods,
+    studentId: input.studentId,
+    grade: input.grade,
+    year: input.year,
+  });
+  if (!periods.length) return [];
+
+  const startMonth = input.firstMonth ?? 1;
+  const fullyInactive: number[] = [];
+  for (let m = startMonth; m <= 12; m++) {
+    const monthStart = monthStartIsoDate(input.year, m);
+    const monthEndExclusive = firstDayOfNextMonthIso(input.year, m);
+    if (isIsoRangeFullyInactive({ periods, startIso: monthStart, endExclusiveIso: monthEndExclusive })) {
+      fullyInactive.push(m);
+    }
+  }
+
+  if (fullyInactive.length === 0) return [];
+
+  const gaps: InactiveMonthGap[] = [];
+  let group: number[] = [fullyInactive[0]!];
+
+  const pushGroup = () => {
+    const meta = inactiveGapMetaForMonth(periods, input.year, group[0]!);
+    gaps.push({
+      afterMonth: group[0]! - 1,
+      months: group,
+      effectiveDate: meta.effectiveDate,
+      reactivateDate: meta.reactivateDate,
+    });
+  };
+
+  for (let i = 1; i < fullyInactive.length; i++) {
+    const month = fullyInactive[i]!;
+    if (month === group[group.length - 1]! + 1) {
+      group.push(month);
+      continue;
+    }
+    pushGroup();
+    group = [month];
+  }
+
+  pushGroup();
+  return gaps;
+}
+
 /** Whole calendar months with no lessons because the student is inactive (for lesson table gaps). */
 export function getInactiveMonthGapsInYear(input: {
   grade?: string | null;
@@ -289,52 +373,13 @@ export function getInactiveMonthGapsInYear(input: {
         },
       ]
     : [];
-  const periods = withAutoF6InactivePeriod({
+  return getInactiveMonthGapsInYearFromPeriods({
     periods: manualPeriod,
     studentId: "",
     grade: input.grade,
     year: input.year,
+    firstMonth: input.firstMonth,
   });
-  if (!periods.length) return [];
-
-  const startMonth = input.firstMonth ?? 1;
-  const fullyInactive: number[] = [];
-  for (let m = startMonth; m <= 12; m++) {
-    const monthStart = monthStartIsoDate(input.year, m);
-    const monthEndExclusive = firstDayOfNextMonthIso(input.year, m);
-    if (isIsoRangeFullyInactive({ periods, startIso: monthStart, endExclusiveIso: monthEndExclusive })) {
-      fullyInactive.push(m);
-    }
-  }
-
-  if (fullyInactive.length === 0) return [];
-
-  const gaps: InactiveMonthGap[] = [];
-  let group: number[] = [fullyInactive[0]!];
-
-  for (let i = 1; i < fullyInactive.length; i++) {
-    const month = fullyInactive[i]!;
-    if (month === group[group.length - 1]! + 1) {
-      group.push(month);
-      continue;
-    }
-    gaps.push({
-      afterMonth: group[0]! - 1,
-      months: group,
-      effectiveDate: periods[0]!.startDate,
-      reactivateDate: periods[0]!.endDate,
-    });
-    group = [month];
-  }
-
-  gaps.push({
-    afterMonth: group[0]! - 1,
-    months: group,
-    effectiveDate: periods[0]!.startDate,
-    reactivateDate: periods[0]!.endDate,
-  });
-
-  return gaps;
 }
 
 function isIsoRangeFullyInactive(input: {

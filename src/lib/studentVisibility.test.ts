@@ -7,6 +7,7 @@ import {
   makeStudentInactiveDateChecker,
   makeStudentInactiveDateCheckerFromPeriods,
   normalizeReactivateAsFirstActiveDay,
+  shouldHideScheduledLessonForInactivePeriod,
   type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import { collectBillableLessonDatesForMonth } from "@/lib/feeRecordLessonDates";
@@ -25,6 +26,30 @@ describe("period-based inactivity", () => {
     expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-11-14" })).toBe(false);
     expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-11-15" })).toBe(true);
     expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2027-01-01" })).toBe(true);
+  });
+
+  it("keeps extra and makeup visible during inactive periods on timetables", () => {
+    expect(
+      shouldHideScheduledLessonForInactivePeriod({
+        periods,
+        dateIso: "2026-07-15",
+        lessonType: "恆常",
+      }),
+    ).toBe(true);
+    expect(
+      shouldHideScheduledLessonForInactivePeriod({
+        periods,
+        dateIso: "2026-07-15",
+        lessonType: "加堂",
+      }),
+    ).toBe(false);
+    expect(
+      shouldHideScheduledLessonForInactivePeriod({
+        periods,
+        dateIso: "2026-07-15",
+        lessonType: "補堂",
+      }),
+    ).toBe(false);
   });
 
   it("creates a date checker from periods", () => {

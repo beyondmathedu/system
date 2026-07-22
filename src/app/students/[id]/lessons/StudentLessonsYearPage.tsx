@@ -20,6 +20,7 @@ import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
+import { makeStudentInactiveDateCheckerFromPeriods, getInactiveMonthGapsInYearFromPeriods, type InactiveMonthGap } from "@/lib/studentVisibility";
 import {
   defaultLessonYear,
   hkYmdNow,
@@ -66,7 +67,6 @@ import {
 } from "@/lib/dayTimetableShared";
 import type { RoomDisplayRegistry } from "@/lib/roomDisplayRegistry";
 import { useRoomDisplayLabels } from "@/lib/useRoomDisplayRegistry";
-import { isStudentInactiveOnDate, getInactiveMonthGapsInYear, type InactiveMonthGap } from "@/lib/studentVisibility";
 import {
   isUpcomingExamDate,
   visibleExamContent,
@@ -91,6 +91,16 @@ const TYPE_CANCELLED = "Cancelled";
 const TYPE_RESCHEDULE = "Reschedule";
 const TYPE_PENDING = PENDING_MAKEUP_TYPE_LABEL;
 const TYPE_EXTRA = "Extra";
+
+/** Extra / reschedule rows stay visible even during inactive periods (intentional admin actions). */
+function keepScheduleRowVisibleDuringInactive(row: ScheduleRow): boolean {
+  return (
+    row.lessonType === TYPE_EXTRA ||
+    row.lessonType === TYPE_RESCHEDULE ||
+    row.rowKind === "reschedule" ||
+    row.rowKind === "cancelled_original"
+  );
+}
 const MONTH_LABEL: Record<number, string> = {
   1: "Jan",
   2: "Feb",
@@ -148,6 +158,13 @@ type ScheduleRow = StudentLessonScheduleRow;
 type LessonTableEntry =
   | { kind: "row"; row: ScheduleRow }
   | { kind: "inactive-gap"; gap: InactiveMonthGap; key: string };
+
+type StudentInactivePeriodRow = {
+  student_id: string;
+  start_date: string;
+  end_date: string | null;
+  note: string;
+};
 
 type RescheduleEntry = {
   id: string;
@@ -528,6 +545,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">("active");
   const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
   const [visibilityReactivateDate, setVisibilityReactivateDate] = useState<string | null>(null);
+  const [inactivePeriods, setInactivePeriods] = useState<StudentInactivePeriodRow[]>([]);
   const [accessReady, setAccessReady] = useState(false);
   const [isReadOnlyViewer, setIsReadOnlyViewer] = useState(false);
   const [canEditTimetableRemarks, setCanEditTimetableRemarks] = useState(false);
@@ -918,6 +936,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             effective_date?: string;
             reactivate_date?: string | null;
           };
+          inactivePeriods?: StudentInactivePeriodRow[];
           roomSlotTutorRules?: RoomSlotTutorRule[];
         };
         if (!mounted) return;
@@ -960,6 +979,19 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
           typeof vis?.reactivate_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(vis.reactivate_date)
             ? vis.reactivate_date
             : null,
+        );
+        setInactivePeriods(
+          Array.isArray(body.inactivePeriods)
+            ? body.inactivePeriods.map((row) => ({
+                student_id: String(row.student_id ?? studentId),
+                start_date: String(row.start_date ?? ""),
+                end_date:
+                  typeof row.end_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(row.end_date)
+                    ? row.end_date
+                    : null,
+                note: String(row.note ?? ""),
+              }))
+            : [],
         );
         setStudentNotFound(false);
         setStudentLoaded(true);
@@ -1022,6 +1054,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         );
         if (!res.ok || cancelled) return;
         const body = (await res.json()) as {
+          inactivePeriods?: StudentInactivePeriodRow[];
           yearState?: {
             attendance?: Record<string, boolean>;
             hiddenDates?: Record<string, boolean>;
@@ -1030,6 +1063,19 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             extraEntries?: ExtraEntry[];
           };
         };
+        if (Array.isArray(body.inactivePeriods)) {
+          setInactivePeriods(
+            body.inactivePeriods.map((row) => ({
+              student_id: String(row.student_id ?? studentId),
+              start_date: String(row.start_date ?? ""),
+              end_date:
+                typeof row.end_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(row.end_date)
+                  ? row.end_date
+                  : null,
+              note: String(row.note ?? ""),
+            })),
+          );
+        }
         const cloud = body.yearState;
         if (!cloud || cancelled) return;
 
@@ -1177,38 +1223,28 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     [hiddenDates, overrides, rescheduleEntries, extraEntries],
   );
 
-  const isLessonDateHiddenByInactive = useMemo(() => {
-    if (visibilityMode !== "inactive" || !visibilityEffectiveDate) {
-      return (_dateIso: string) => false;
-    }
-    const grade = studentSummary.grade;
-    const effective = visibilityEffectiveDate;
-    const reactivate = visibilityReactivateDate;
-    return (dateIso: string) =>
-      isStudentInactiveOnDate({
-        grade,
-        manualInactiveEffective: effective,
-        reactivateDate: reactivate,
+  const isLessonDateHiddenByInactivePeriod = useMemo(
+    () =>
+      makeStudentInactiveDateCheckerFromPeriods({
+        periods: inactivePeriods.map((period) => ({
+          studentId: period.student_id,
+          startDate: period.start_date,
+          endDate: period.end_date,
+          note: period.note,
+        })),
+        studentId,
+        grade: studentSummary.grade,
         year: targetYear,
-        dateIso,
-      });
-  }, [
-    visibilityMode,
-    visibilityEffectiveDate,
-    visibilityReactivateDate,
-    studentSummary.grade,
-    targetYear,
-  ]);
+      }),
+    [inactivePeriods, studentId, studentSummary.grade, targetYear],
+  );
 
   /** Full-year regular lesson dates for reschedule validation (not month/range filtered). */
   const validationBaseRowByDate = useMemo(() => {
     if (!studentId) return new Map<string, ScheduleRow>();
-    const rows = buildStudentBaseScheduleRows(
-      records,
-      scheduleMapperState,
-      targetYear,
-      hkTodayYmd,
-    ).filter((r) => !isLessonDateHiddenByInactive(r.date));
+    const rows = buildStudentBaseScheduleRows(records, scheduleMapperState, targetYear, hkTodayYmd).filter(
+      (r) => !isLessonDateHiddenByInactivePeriod(r.date),
+    );
     const map = new Map<string, ScheduleRow>();
     for (const r of rows) {
       if (!map.has(r.date)) map.set(r.date, r);
@@ -1220,7 +1256,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     scheduleMapperState,
     targetYear,
     hkTodayYmd,
-    isLessonDateHiddenByInactive,
+    isLessonDateHiddenByInactivePeriod,
   ]);
 
   const rescheduleEntryById = useMemo(() => {
@@ -1241,14 +1277,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
 
   const scheduleRows = useMemo(() => {
     if (!studentId) return [];
-    const rows = buildStudentScheduleRows(
-      records,
-      scheduleMapperState,
-      targetYear,
-      hkTodayYmd,
-      scheduleBuildOptions,
+    return buildStudentScheduleRows(records, scheduleMapperState, targetYear, hkTodayYmd, scheduleBuildOptions).filter(
+      (r) => keepScheduleRowVisibleDuringInactive(r) || !isLessonDateHiddenByInactivePeriod(r.date),
     );
-    return rows.filter((r) => !isLessonDateHiddenByInactive(r.date));
   }, [
     records,
     studentId,
@@ -1256,7 +1287,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     targetYear,
     hkTodayYmd,
     scheduleBuildOptions,
-    isLessonDateHiddenByInactive,
+    isLessonDateHiddenByInactivePeriod,
   ]);
 
   const scheduleRowById = useMemo(() => {
@@ -1810,28 +1841,27 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   ]);
 
   const inactiveGapMarkers = useMemo(() => {
-    if (visibilityMode !== "inactive" || !visibilityEffectiveDate) return [];
+    if (!inactivePeriods.length) return [];
     const firstMonth = targetYear === LESSON_SYSTEM_START_YEAR ? LESSON_SYSTEM_START_MONTH : 1;
-    return getInactiveMonthGapsInYear({
+    return getInactiveMonthGapsInYearFromPeriods({
+      periods: inactivePeriods.map((period) => ({
+        studentId: period.student_id,
+        startDate: period.start_date,
+        endDate: period.end_date,
+        note: period.note,
+      })),
+      studentId,
       grade: studentSummary.grade,
-      manualInactiveEffective: visibilityEffectiveDate,
-      reactivateDate: visibilityReactivateDate,
       year: targetYear,
       firstMonth,
     });
-  }, [
-    visibilityMode,
-    visibilityEffectiveDate,
-    visibilityReactivateDate,
-    studentSummary.grade,
-    targetYear,
-  ]);
+  }, [inactivePeriods, studentId, studentSummary.grade, targetYear]);
 
   const viewingInactiveMonthOnly = useMemo(() => {
-    if (!filterMonth || visibilityMode !== "inactive") return false;
+    if (!filterMonth) return false;
     const m = Number(filterMonth);
     return inactiveGapMarkers.some((g) => g.months.includes(m));
-  }, [filterMonth, visibilityMode, inactiveGapMarkers]);
+  }, [filterMonth, inactiveGapMarkers]);
 
   const selectedInactiveMonthGap = useMemo(() => {
     if (!viewingInactiveMonthOnly || !filterMonth) return null;
@@ -1854,7 +1884,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     }
 
     const showGaps = !filterMonth && !sortConfig && inactiveGapMarkers.length > 0;
-    if (!showGaps) return rows.map((row) => ({ kind: "row" as const, row }));
+    if (!showGaps) return rows.map((row) => ({ kind: "row", row }));
 
     const entries: LessonTableEntry[] = [];
     const insertedGapKeys = new Set<string>();
@@ -2232,7 +2262,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                 <p className="mb-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
                   此學生自 {visibilityEffectiveDate} 起為 Inactive
                   {visibilityReactivateDate ? `，預計 ${visibilityReactivateDate} 復課` : ""}
-                  。Inactive 期間的課堂不會顯示於此表（Room、Daily Timetable、學費表同樣隱藏）。
+                  。Regular 課堂會隱藏；Extra / Reschedule 仍會顯示於此頁、Room 及 Daily Timetable。學費表繼續隱藏 inactive 月份。
                 </p>
               ) : null}
               <ScheduleDuplicateRulesBanner
@@ -2254,7 +2284,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
               {hiddenScheduleKeys.length > 0 ||
               records.length === 0 ||
               (records.length > 0 && monthDiagnostic.total === 0) ||
-              (monthDiagnostic.total > 0 && monthDiagnostic.visible === 0 && !viewingInactiveMonthOnly) ? (
+              (monthDiagnostic.visible === 0 && !viewingInactiveMonthOnly) ? (
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
                   {hiddenScheduleKeys.length > 0 ? (
                     <>
@@ -3469,7 +3499,18 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                     ) : lessonTableEntries.length === 0 ? (
                       <tr>
                         <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
-                          No records match current filters.
+                          {viewingInactiveMonthOnly && selectedInactiveMonthGap ? (
+                            <>
+                              {formatInactiveGapMonthRange(selectedInactiveMonthGap.months)} — 此段因 Inactive
+                              不顯示課堂（{selectedInactiveMonthGap.effectiveDate} 起
+                              {selectedInactiveMonthGap.reactivateDate
+                                ? `，${selectedInactiveMonthGap.reactivateDate} 復課`
+                                : ""}
+                              ）
+                            </>
+                          ) : (
+                            "No records match current filters."
+                          )}
                         </td>
                       </tr>
                     ) : (

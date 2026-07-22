@@ -421,14 +421,14 @@ function studentMayAppearOnTimetableDate(
   if (getActiveWeekdaysForDate(records, dateIso).includes(targetWeekday)) return true;
   for (const ex of state.extraEntries ?? []) {
     if (String((ex as { date?: string | null }).date ?? "").trim() === dateIso) {
-      return !regularOnly;
+      return true;
     }
   }
   for (const e of state.rescheduleEntries ?? []) {
     const from = String(e.fromDate ?? "").trim();
     const to = String(e.toDate ?? "").trim();
     if (from === dateIso) return true;
-    if (!regularOnly && to === dateIso && !isPendingRescheduleEntry(e)) return true;
+    if (to === dateIso && !isPendingRescheduleEntry(e)) return true;
   }
   return false;
 }
@@ -674,8 +674,10 @@ async function fetchDayTimetablePayloadUncached(
         if (onlyRegular && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL) {
           return false;
         }
-        // Inactive: keep their regular slot only (holiday / pause still holds the time).
-        if (isInactive && r.lessonType !== "恆常") return false;
+        // Inactive: keep regular slot; also show intentional extra / makeup on this date.
+        if (isInactive && r.lessonType !== "恆常" && r.lessonType !== "加堂" && r.lessonType !== "補堂") {
+          return false;
+        }
         return ROOM_GROUPS.includes(r.normalizedRoom as RoomGroup);
       });
 
@@ -699,7 +701,7 @@ async function fetchDayTimetablePayloadUncached(
         tutorDisplay,
         tutorColorHex,
         pendingMakeupLabel: row.pendingMakeupLabel,
-        ...(isInactive ? { isInactive: true as const } : {}),
+        ...(isInactive && row.lessonType === "恆常" ? { isInactive: true as const } : {}),
       });
       byTimeRoom[key] = list;
       timeSet.add(time);

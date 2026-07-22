@@ -6,6 +6,7 @@ import {
   loadExamInfoServer,
   loadLessonScheduleRecordsServer,
   loadLessonYearStateServer,
+  loadStudentInactivePeriodsBatchServer,
   loadStudentVisibilityModeServer,
 } from "@/lib/lessonDataServer";
 import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const [studentRes, examInfo, scheduleRecords, yearState, visibilityMode, roomSlotTutorRules] =
+  const [studentRes, examInfo, scheduleRecords, yearState, visibilityMode, inactivePeriods, roomSlotTutorRules] =
     await Promise.all([
     supabase
       .from("students")
@@ -59,6 +60,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     loadLessonScheduleRecordsServer(supabase, studentId),
     loadLessonYearStateServer(supabase, studentId, year),
     loadStudentVisibilityModeServer(supabase, studentId),
+    loadStudentInactivePeriodsBatchServer(supabase, [studentId]),
     loadRoomSlotTutorRulesServer(supabase),
   ]);
 
@@ -79,6 +81,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     scheduleRecords,
     yearState,
     visibilityMode,
+    inactivePeriods,
     roomSlotTutorRules,
   });
 }
