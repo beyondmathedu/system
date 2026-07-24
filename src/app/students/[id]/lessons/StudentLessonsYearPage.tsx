@@ -62,7 +62,9 @@ import { useStudentLessonYearStateRealtime } from "@/lib/useStudentLessonYearSta
 import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
 import {
   ROOM_GROUPS,
+  canonicalScheduleRoomLabel,
   resolveScheduleRoomPickerValue,
+  scheduleRoomsMatch,
   type RoomGroup,
 } from "@/lib/dayTimetableShared";
 import type { RoomDisplayRegistry } from "@/lib/roomDisplayRegistry";
@@ -435,7 +437,7 @@ function BulkEditLessonFields({
     date: Boolean(draft.original.date) && draft.date.trim() !== draft.original.date?.trim(),
     weekday: newWeekdayDisplay !== origWdLabel,
     time: finalTime !== draft.original.displayTime,
-    room: draft.room.trim() !== (draft.original.displayRoom || "").trim(),
+    room: !scheduleRoomsMatch(draft.room, draft.original.displayRoom || ""),
   };
 
   return (
@@ -1501,9 +1503,10 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         bulkEditNewWeekdayDisplay !==
         (WEEKDAY_LABEL[bulkEditForm.original.weekday] ?? bulkEditForm.original.weekday),
       time: bulkEditFinalTime !== bulkEditForm.original.displayTime,
-      room:
-        bulkEditForm.room.trim() !==
-        (bulkEditForm.original.displayRoom || "").trim(),
+      room: !scheduleRoomsMatch(
+        bulkEditForm.room,
+        bulkEditForm.original.displayRoom || "",
+      ),
     }),
     [bulkEditMode, bulkEditForm, bulkEditNewWeekdayDisplay, bulkEditFinalTime],
   );
@@ -1900,7 +1903,12 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         persistOverrides(nextOverrides);
       } else {
         const nextOverrides = { ...overridesRef.current };
-        if (payload.finalRoom === (payload.baseRoom || payload.before.room)) {
+        if (
+          scheduleRoomsMatch(
+            payload.finalRoom,
+            payload.baseRoom || payload.before.room,
+          )
+        ) {
           delete nextOverrides[originalDate];
         } else {
           nextOverrides[originalDate] = {
@@ -2051,7 +2059,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
           ];
           rescheduleFromDates.set(originalDate, [newId]);
           delete nextOverrides[originalDate];
-        } else if (finalRoom === scheduleRow.baseRoom) {
+        } else if (scheduleRoomsMatch(finalRoom, scheduleRow.baseRoom)) {
           delete nextOverrides[originalDate];
         } else {
           // Same day + same time, room-only tweak stays as regular override.
@@ -2150,7 +2158,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         persistOverrides(nextOverrides);
       } else {
         const nextOverrides = { ...overridesRef.current };
-        if (finalRoom === scheduleRow.baseRoom) {
+        if (scheduleRoomsMatch(finalRoom, scheduleRow.baseRoom)) {
           delete nextOverrides[originalDate];
         } else {
           // Same day + same time, room-only tweak stays as regular override.
@@ -4058,6 +4066,13 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                           </td>
                           <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
                             {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
+                              <RescheduleChangeCell
+                                before={r.baseRoom}
+                                after={r.room}
+                                format={(v) => formatRoom(v)}
+                              />
+                            ) : r.baseRoom &&
+                              !scheduleRoomsMatch(r.baseRoom, r.room) ? (
                               <RescheduleChangeCell
                                 before={r.baseRoom}
                                 after={r.room}
