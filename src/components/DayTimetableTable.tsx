@@ -115,6 +115,14 @@ function cellSurface(
       isDarkBg: false,
     };
   }
+  if (item.lessonType === "取消") {
+    const stripe = includeFeeStripe ? feeStripeStyle(feeTone, timetableStyle, feeStripeSide) : undefined;
+    return {
+      className: `${td} text-slate-500 line-through decoration-slate-400`,
+      style: mergeCellStyle({ backgroundColor: "#f8fafc" }, stripe),
+      isDarkBg: false,
+    };
+  }
   const stripe = includeFeeStripe ? feeStripeStyle(feeTone, timetableStyle, feeStripeSide) : undefined;
   if (item.lessonType === PENDING_MAKEUP_TYPE_LABEL) {
     return {
@@ -412,13 +420,18 @@ export default function DayTimetableTable({
       ) : null;
     const isClickableName = !readOnly || allowStudentNameLinks;
     const blockTight = dailyNameCells || fluidNameCell;
-    const className = isClickableName
-      ? nameSurf.isDarkBg
-        ? `text-sky-200 underline hover:text-white ${blockTight ? "block leading-tight" : ""}`
-        : `text-[#1d76c2] underline hover:opacity-90 ${blockTight ? "block leading-tight" : ""}`
-      : `${
-          nameSurf.isDarkBg ? "text-white" : "text-slate-800"
-        } ${blockTight ? "block leading-tight" : ""}`;
+    const isCancelled = item.lessonType === "取消";
+    const className = isCancelled
+      ? `text-slate-500 line-through decoration-slate-400 ${
+          isClickableName ? "hover:opacity-80" : ""
+        } ${blockTight ? "block leading-tight" : ""}`
+      : isClickableName
+        ? nameSurf.isDarkBg
+          ? `text-sky-200 underline hover:text-white ${blockTight ? "block leading-tight" : ""}`
+          : `text-[#1d76c2] underline hover:opacity-90 ${blockTight ? "block leading-tight" : ""}`
+        : `${
+            nameSurf.isDarkBg ? "text-white" : "text-slate-800"
+          } ${blockTight ? "block leading-tight" : ""}`;
 
     if (readOnly && !allowStudentNameLinks) {
       return (
@@ -644,6 +657,11 @@ export default function DayTimetableTable({
                                         {item.pendingMakeupLabel}
                                       </p>
                                     ) : null}
+                                    {item.lessonType === "取消" ? (
+                                      <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500 no-underline">
+                                        Cancelled
+                                      </p>
+                                    ) : null}
                                     {item.isInactive ? (
                                       <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500">
                                         Inactive
@@ -691,6 +709,11 @@ export default function DayTimetableTable({
                                   {item.pendingMakeupLabel ? (
                                     <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-900">
                                       {item.pendingMakeupLabel}
+                                    </p>
+                                  ) : null}
+                                  {item.lessonType === "取消" ? (
+                                    <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500 no-underline">
+                                      Cancelled
                                     </p>
                                   ) : null}
                                   {item.isInactive ? (

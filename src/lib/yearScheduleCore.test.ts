@@ -56,6 +56,36 @@ describe("yearScheduleCore", () => {
     expect(june.some((r) => r.date === "2026-05-25")).toBe(false);
   });
 
+  it("treats same-day reschedule as Cancelled original + Reschedule at new slot", () => {
+    const records = [mondayRule()];
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-same-day",
+      fromDate: "2026-05-25",
+      toDate: "2026-05-25",
+      time: "5:30 PM",
+      room: "B",
+    });
+
+    const rows = buildYearScheduleRowsForDateRange(records, state, YEAR, "2026-05-25", "2026-05-25");
+
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.rowKind === "cancelled_original")).toMatchObject({
+      date: "2026-05-25",
+      time: "4:00 PM",
+      room: "M前",
+      lessonType: "取消",
+      rowKind: "cancelled_original",
+    });
+    expect(rows.find((r) => r.rowKind === "reschedule")).toMatchObject({
+      date: "2026-05-25",
+      time: "5:30 PM",
+      room: "B",
+      lessonType: "補堂",
+      rowKind: "reschedule",
+    });
+  });
+
   it("shows pending makeup on original date without reschedule row", () => {
     const records = [mondayRule()];
     const state = emptyState();

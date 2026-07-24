@@ -95,7 +95,32 @@ export type DayTimetablePayload = {
   timetableStyle: DayTimetableStyleSettings;
 };
 
-/** Regular timetable page: filter rows shown below the heading. */
+/** Regular timetable page: independent Show ticks (any combination). */
+export type RegularTimetableLessonFilterFlags = {
+  regular: boolean;
+  extra: boolean;
+  reschedule: boolean;
+  inactive: boolean;
+  cancelled: boolean;
+};
+
+export const DEFAULT_REGULAR_TIMETABLE_FILTER: RegularTimetableLessonFilterFlags = {
+  regular: true,
+  extra: false,
+  reschedule: false,
+  inactive: false,
+  cancelled: false,
+};
+
+export const ALL_REGULAR_TIMETABLE_FILTER: RegularTimetableLessonFilterFlags = {
+  regular: true,
+  extra: true,
+  reschedule: true,
+  inactive: true,
+  cancelled: true,
+};
+
+/** @deprecated Prefer RegularTimetableLessonFilterFlags; kept for call-site migration. */
 export type RegularTimetableLessonView =
   | "regular"
   | "all"
@@ -105,47 +130,52 @@ export type RegularTimetableLessonView =
 
 const REGULAR_TIMETABLE_REGULAR_TYPES = new Set<string>(["恆常", PENDING_MAKEUP_TYPE_LABEL]);
 
-function regularTimetableCellMatchesView(
-  cell: DayTimetableCell,
+export function regularTimetableFilterFromView(
   view: RegularTimetableLessonView,
-): boolean {
-  if (cell.lessonType === "取消") return false;
-  const isPaused = Boolean(cell.isInactive);
-  const isRegular = !isPaused && REGULAR_TIMETABLE_REGULAR_TYPES.has(cell.lessonType);
+): RegularTimetableLessonFilterFlags {
   switch (view) {
-    case "regular":
-      // Regular only (active)
-      return isRegular;
     case "all":
-      // Regular + Extra + Reschedule + Inactive
-      return (
-        isRegular ||
-        isPaused ||
-        cell.lessonType === "加堂" ||
-        cell.lessonType === "補堂"
-      );
+      return { ...ALL_REGULAR_TIMETABLE_FILTER };
     case "extra":
-      // Regular + Extra
-      return isRegular || cell.lessonType === "加堂";
+      return { ...DEFAULT_REGULAR_TIMETABLE_FILTER, extra: true };
     case "reschedule":
-      // Regular + Reschedule
-      return isRegular || cell.lessonType === "補堂";
+      return { ...DEFAULT_REGULAR_TIMETABLE_FILTER, reschedule: true };
     case "inactive":
-      // Regular + Inactive (paused keep-slot)
-      return isRegular || isPaused;
+      return { ...DEFAULT_REGULAR_TIMETABLE_FILTER, inactive: true };
+    case "regular":
     default:
-      return false;
+      return { ...DEFAULT_REGULAR_TIMETABLE_FILTER };
   }
+}
+
+function regularTimetableCellMatchesFilter(
+  cell: DayTimetableCell,
+  flags: RegularTimetableLessonFilterFlags,
+): boolean {
+  const isCancelled = cell.lessonType === "取消";
+  const isPaused = Boolean(cell.isInactive);
+  const isRegular = !isPaused && !isCancelled && REGULAR_TIMETABLE_REGULAR_TYPES.has(cell.lessonType);
+  if (flags.regular && isRegular) return true;
+  if (flags.extra && cell.lessonType === "加堂") return true;
+  if (flags.reschedule && cell.lessonType === "補堂") return true;
+  if (flags.inactive && isPaused) return true;
+  if (flags.cancelled && isCancelled) return true;
+  return false;
 }
 
 /** Keep time slots / maxRows in sync after filtering lesson types client-side. */
 export function filterDayTimetablePayloadByLessonView(
   payload: DayTimetablePayload,
-  view: RegularTimetableLessonView,
+  viewOrFlags: RegularTimetableLessonView | RegularTimetableLessonFilterFlags,
 ): DayTimetablePayload {
+  const flags: RegularTimetableLessonFilterFlags =
+    typeof viewOrFlags === "string"
+      ? regularTimetableFilterFromView(viewOrFlags)
+      : viewOrFlags;
+
   const byTimeRoom: Record<string, DayTimetableCell[]> = {};
   for (const [key, cells] of Object.entries(payload.byTimeRoom)) {
-    const filtered = cells.filter((c) => regularTimetableCellMatchesView(c, view));
+    const filtered = cells.filter((c) => regularTimetableCellMatchesFilter(c, flags));
     if (filtered.length > 0) byTimeRoom[key] = filtered;
   }
 
@@ -164,6 +194,20 @@ export function filterDayTimetablePayloadByLessonView(
     byTimeRoom,
     rowFrames,
   };
+}
+
+export function regularTimetableEmptyMessage(flags: RegularTimetableLessonFilterFlags): string {
+  const parts: string[] = [];
+  if (flags.regular) parts.push("regular");
+  if (flags.extra) parts.push("extra");
+  if (flags.reschedule) parts.push("reschedule");
+  if (flags.inactive) parts.push("inactive");
+  if (flags.cancelled) parts.push("cancelled");
+  if (parts.length === 0) return "Select at least one lesson type to show.";
+  if (parts.length === 5) return "No lessons on this day.";
+  if (parts.length === 1) return `No ${parts[0]} lessons on this day.`;
+  const last = parts[parts.length - 1];
+  return `No ${parts.slice(0, -1).join(", ")} or ${last} lessons on this day.`;
 }
 
 export function redactDayTimetableRemarks(payload: DayTimetablePayload): DayTimetablePayload {

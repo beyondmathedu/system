@@ -670,7 +670,9 @@ async function fetchDayTimetablePayloadUncached(
     })
       .map((r) => ({ ...r, normalizedRoom: resolveRoomGroupFromRegistry(r.room, roomRegistry) }))
       .filter((r) => {
-        if (r.lessonType === "取消") return false;
+        // Regular-only views hide vacated (cancelled-original) slots; All / Daily keep them
+        // so staff can still see the seat after a reschedule.
+        if (onlyRegular && r.lessonType === "取消") return false;
         if (onlyRegular && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL) {
           return false;
         }
@@ -834,7 +836,7 @@ async function fetchDayTimetablePayloadUncached(
 const fetchDayTimetablePayloadCached = unstable_cache(
   async (year: number, month: number, day: number, regularOnly: boolean, includeInactiveSlots: boolean) =>
     fetchDayTimetablePayloadUncached(year, month, day, { regularOnly, includeInactiveSlots }),
-  ["day-timetable-payload-v15"],
+  ["day-timetable-payload-v16"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );

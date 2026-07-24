@@ -745,18 +745,19 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   }) {
     if (isReadOnlyViewer) return;
     if (!studentId) return;
-    const dirtyFields = lessonYearStateFieldsFromPatch(next);
+    const mergedState: StudentLesson2026State = {
+      attendance: next.attendance ?? attendanceRef.current,
+      hiddenDates: next.hiddenDates ?? hiddenDatesRef.current,
+      overrides: next.overrides ?? overridesRef.current,
+      rescheduleEntries: next.rescheduleEntries ?? rescheduleEntriesRef.current,
+      extraEntries: next.extraEntries ?? extraEntriesRef.current,
+    };
+    const dirtyFieldSet = new Set(lessonYearStateFieldsFromPatch(next));
     queueSaveLessonYearState(
       studentId,
       targetYear,
-      {
-        attendance: next.attendance ?? attendanceRef.current,
-        hiddenDates: next.hiddenDates ?? hiddenDatesRef.current,
-        overrides: next.overrides ?? overridesRef.current,
-        rescheduleEntries: next.rescheduleEntries ?? rescheduleEntriesRef.current,
-        extraEntries: next.extraEntries ?? extraEntriesRef.current,
-      },
-      dirtyFields,
+      mergedState,
+      [...dirtyFieldSet],
     );
   }
 
@@ -1470,13 +1471,6 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         setSelectionError("Cannot find the corresponding reschedule record.");
         return;
       }
-      if (
-        isPendingRescheduleEntry(entry) &&
-        !isPendingMakeupEditable(entry.fromDate, hkTodayYmd)
-      ) {
-        setSelectionError(pendingMakeupLockedMessage(entry.fromDate));
-        return;
-      }
       setEditingRescheduleId(entry.id);
       setFromLessonDate(entry.fromDate);
       setToLessonDate(isPendingRescheduleEntry(entry) ? "" : entry.toDate);
@@ -1671,7 +1665,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
           return;
         }
 
-        if (newDate !== originalDate) {
+        const timeOrDateChanged =
+          newDate !== originalDate || finalTime !== scheduleRow.baseTime;
+        if (timeOrDateChanged) {
           if (!validationBaseRowByDate.has(originalDate)) {
             setBulkEditSaveStatus(`${lessonLabel}: original date is not a regular lesson.`);
             setSelectionError(`${lessonLabel}: original date must be an existing regular lesson date.`);
@@ -1696,12 +1692,12 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
           ];
           rescheduleFromDates.set(originalDate, [newId]);
           delete nextOverrides[originalDate];
-        } else if (finalTime === scheduleRow.baseTime && finalRoom === scheduleRow.baseRoom) {
+        } else if (finalRoom === scheduleRow.baseRoom) {
           delete nextOverrides[originalDate];
         } else {
+          // Same day + same time, room-only tweak stays as regular override.
           nextOverrides[originalDate] = {
             ...(nextOverrides[originalDate] ?? {}),
-            time: finalTime,
             room: finalRoom,
           };
         }
@@ -1761,7 +1757,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         return;
       }
 
-      if (newDate !== originalDate) {
+      const timeOrDateChanged =
+        newDate !== originalDate || finalTime !== scheduleRow.baseTime;
+      if (timeOrDateChanged) {
         if (!validationBaseRowByDate.has(originalDate)) {
           setBulkEditSaveStatus("Original date is not a regular lesson date.");
           setSelectionError("Original date must be an existing regular lesson date.");
@@ -1793,12 +1791,12 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         persistOverrides(nextOverrides);
       } else {
         const nextOverrides = { ...overridesRef.current };
-        if (finalTime === scheduleRow.baseTime && finalRoom === scheduleRow.baseRoom) {
+        if (finalRoom === scheduleRow.baseRoom) {
           delete nextOverrides[originalDate];
         } else {
+          // Same day + same time, room-only tweak stays as regular override.
           nextOverrides[originalDate] = {
             ...(nextOverrides[originalDate] ?? {}),
-            time: finalTime,
             room: finalRoom,
           };
         }
@@ -2806,10 +2804,13 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                             const editingEntry = editingRescheduleId
                               ? rescheduleEntries.find((e) => e.id === editingRescheduleId)
                               : undefined;
+                            // Locked pending makeup cannot stay pending, but admins can still
+                            // convert it into a concrete reschedule (including same-day) to fix mistakes.
                             if (
                               editingEntry &&
                               isPendingRescheduleEntry(editingEntry) &&
-                              !isPendingMakeupEditable(from, hkTodayYmd)
+                              !isPendingMakeupEditable(from, hkTodayYmd) &&
+                              !to
                             ) {
                               const msg = pendingMakeupLockedMessage(from);
                               setEditSaveStatus(msg);
@@ -2835,6 +2836,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                               setSelectionError("Please select or enter a new lesson time.");
                               return;
                             }
+                            const finalRoom = pickerToStorage(editForm.room.trim());
+                            // Same-day time/room changes are still reschedule (Cancelled + Reschedule),
+                            // not a regular override.
                             const nextList = editingRescheduleId
                               ? rescheduleEntries.map((e) =>
                                   e.id === editingRescheduleId
@@ -2843,7 +2847,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                         fromDate: from,
                                         toDate: to,
                                         time: finalTime,
-                                        room: pickerToStorage(editForm.room.trim()),
+                                        room: finalRoom,
                                         pending: false,
                                       }
                                     : e,
@@ -2855,7 +2859,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                     fromDate: from,
                                     toDate: to,
                                     time: finalTime,
-                                    room: pickerToStorage(editForm.room.trim()),
+                                    room: finalRoom,
                                   },
                                 ];
                             setRescheduleEntries(nextList);

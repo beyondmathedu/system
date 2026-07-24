@@ -44,7 +44,35 @@ describe("dayTimetableScheduleRows", () => {
     expect(rows.some((r) => r.lessonType === "取消")).toBe(false);
   });
 
-  it("shows pending makeup on original date", () => {
+  it("shows same-day reschedule as Cancelled + Reschedule on daily timetable", () => {
+    const records = [mondayRule()];
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-same-day",
+      fromDate: "2026-05-25",
+      toDate: "2026-05-25",
+      time: "5:30 PM",
+      room: "B",
+    });
+
+    const rows = buildDayTimetableRowsForDate(records, state, "2026-05-25", "2026-05-20");
+
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.lessonType === "取消")).toMatchObject({
+      date: "2026-05-25",
+      time: "4:00 PM",
+      room: "M前",
+      lessonType: "取消",
+    });
+    expect(rows.find((r) => r.lessonType === "補堂")).toMatchObject({
+      date: "2026-05-25",
+      time: "5:30 PM",
+      room: "B",
+      lessonType: "補堂",
+    });
+  });
+
+  it("does not show pending makeup on daily timetable", () => {
     const records = [mondayRule()];
     const state = emptyState();
     state.rescheduleEntries.push({
@@ -58,7 +86,7 @@ describe("dayTimetableScheduleRows", () => {
 
     const rows = buildDayTimetableRowsForDate(records, state, "2026-05-25", "2026-06-01");
 
-    expect(rows.some((r) => r.lessonType === PENDING_MAKEUP_TYPE_LABEL)).toBe(true);
+    expect(rows.some((r) => r.lessonType === PENDING_MAKEUP_TYPE_LABEL)).toBe(false);
     expect(rows.some((r) => r.lessonType === "補堂")).toBe(false);
   });
 

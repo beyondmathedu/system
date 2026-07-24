@@ -38,6 +38,7 @@ export default function DayTimetableLegend({
           title={t.swatchTitleExtra}
         />
         {t.coloursExtra}
+        {t.coloursCancelled}
         {t.feeUnpaidMonth}
         <span
           className="mx-0.5 inline-block h-3 w-1.5 rounded-sm align-middle"

@@ -2,11 +2,7 @@
  * Maps yearScheduleCore rows to the daily / regular timetable cell shape.
  */
 
-import {
-  formatPendingMakeupReminder,
-  isPendingMakeupVisible,
-  PENDING_MAKEUP_TYPE_LABEL,
-} from "@/lib/pendingMakeup";
+import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import {
   buildYearScheduleRowsForDateRange,
   type BuiltScheduleRow,
@@ -30,12 +26,7 @@ function yearFromIso(dateIso: string): number {
   return m ? Number(m[1]) : 2026;
 }
 
-function mapCoreRowToDayRow(row: BuiltScheduleRow, todayYmd: string): DayTimetableBuiltRow {
-  let pendingMakeupLabel: string | undefined;
-  if (row.lessonType === PENDING_MAKEUP_TYPE_LABEL) {
-    pendingMakeupLabel = formatPendingMakeupReminder(row.date, todayYmd);
-  }
-
+function mapCoreRowToDayRow(row: BuiltScheduleRow): DayTimetableBuiltRow {
   return {
     date: row.date,
     time: row.time || "待定",
@@ -43,7 +34,6 @@ function mapCoreRowToDayRow(row: BuiltScheduleRow, todayYmd: string): DayTimetab
     lessonType: row.lessonType,
     tutorDisplay: row.tutorDisplay,
     noteDisplay: row.noteDisplay,
-    pendingMakeupLabel,
   };
 }
 
@@ -51,7 +41,7 @@ export function buildDayTimetableRowsForDate(
   records: YearLessonRecord[],
   state: YearLessonState,
   targetDateIso: string,
-  todayYmd: string,
+  _todayYmd: string,
   options?: { roomSlotTutorRules?: RoomSlotTutorRule[] },
 ): DayTimetableBuiltRow[] {
   const year = yearFromIso(targetDateIso);
@@ -64,9 +54,6 @@ export function buildDayTimetableRowsForDate(
     { roomSlotTutorRules: options?.roomSlotTutorRules },
   );
   return coreRows
-    .map((row) => mapCoreRowToDayRow(row, todayYmd))
-    .filter((row) => {
-      if (row.lessonType !== PENDING_MAKEUP_TYPE_LABEL) return true;
-      return isPendingMakeupVisible(row.date, todayYmd);
-    });
+    .map((row) => mapCoreRowToDayRow(row))
+    .filter((row) => row.lessonType !== PENDING_MAKEUP_TYPE_LABEL);
 }

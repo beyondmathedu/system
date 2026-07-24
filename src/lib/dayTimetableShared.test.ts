@@ -75,7 +75,7 @@ describe("filterDayTimetablePayloadByLessonView", () => {
     expect(inactive.byTimeRoom["5:30 PM::M前"]).toBeUndefined();
   });
 
-  it("includes regular, extra, reschedule, and inactive in all view", () => {
+  it("includes regular, extra, reschedule, inactive, and cancelled when all flags on", () => {
     const base = samplePayload();
     base.byTimeRoom["4:00 PM::B"]!.push({
       studentId: "00099",
@@ -86,10 +86,64 @@ describe("filterDayTimetablePayloadByLessonView", () => {
       tutorDisplay: "T9",
       isInactive: true,
     });
+    base.byTimeRoom["2:30 PM::Hope"] = [
+      {
+        studentId: "00116",
+        name: "Vacated",
+        grade: "F.1",
+        scheduleRemarks: "",
+        lessonType: "取消",
+        tutorDisplay: "T1",
+      },
+    ];
+    base.rowFrames = [
+      { time: "2:30 PM", maxRows: 1 },
+      { time: "4:00 PM", maxRows: 3 },
+      { time: "5:30 PM", maxRows: 1 },
+    ];
     const all = filterDayTimetablePayloadByLessonView(base, "all");
     expect(all.byTimeRoom["4:00 PM::B"]?.map((c) => c.studentId)).toEqual(["00001", "00002", "00099"]);
     expect(all.byTimeRoom["5:30 PM::M前"]?.[0]?.lessonType).toBe("補堂");
-    expect(all.rowFrames).toHaveLength(2);
+    expect(all.byTimeRoom["2:30 PM::Hope"]?.[0]?.lessonType).toBe("取消");
+    expect(all.rowFrames).toHaveLength(3);
+  });
+
+  it("hides cancelled vacated slots unless cancelled flag is on", () => {
+    const base = samplePayload();
+    base.byTimeRoom["2:30 PM::Hope"] = [
+      {
+        studentId: "00116",
+        name: "Vacated",
+        grade: "F.1",
+        scheduleRemarks: "",
+        lessonType: "取消",
+        tutorDisplay: "T1",
+      },
+    ];
+    base.rowFrames.push({ time: "2:30 PM", maxRows: 1 });
+    expect(filterDayTimetablePayloadByLessonView(base, "regular").byTimeRoom["2:30 PM::Hope"]).toBeUndefined();
+    expect(filterDayTimetablePayloadByLessonView(base, "reschedule").byTimeRoom["2:30 PM::Hope"]).toBeUndefined();
+    expect(
+      filterDayTimetablePayloadByLessonView(base, {
+        regular: false,
+        extra: false,
+        reschedule: false,
+        inactive: false,
+        cancelled: true,
+      }).byTimeRoom["2:30 PM::Hope"]?.[0]?.lessonType,
+    ).toBe("取消");
+  });
+
+  it("allows mixing flags without forcing regular", () => {
+    const filtered = filterDayTimetablePayloadByLessonView(samplePayload(), {
+      regular: false,
+      extra: true,
+      reschedule: true,
+      inactive: false,
+      cancelled: false,
+    });
+    expect(filtered.byTimeRoom["4:00 PM::B"]?.map((c) => c.lessonType)).toEqual(["加堂"]);
+    expect(filtered.byTimeRoom["5:30 PM::M前"]?.[0]?.lessonType).toBe("補堂");
   });
 });
 

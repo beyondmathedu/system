@@ -467,6 +467,7 @@ export const LESSON_TYPE_DISPLAY_PRIORITY: Record<string, number> = {
   [PENDING_MAKEUP_TYPE_LABEL]: 2,
   補堂: 3,
   加堂: 4,
+  取消: 5,
 };
 const TYPE_PRIORITY = LESSON_TYPE_DISPLAY_PRIORITY;
 export function sortAggregatedRoomRows<

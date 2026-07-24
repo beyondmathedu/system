@@ -5,63 +5,92 @@ import DayTimetableLegend from "@/components/DayTimetableLegend";
 import DayTimetableStyleEditorLazy from "@/components/DayTimetableStyleEditorLazy";
 import DayTimetableTable from "@/components/DayTimetableTable";
 import {
+  ALL_REGULAR_TIMETABLE_FILTER,
+  DEFAULT_REGULAR_TIMETABLE_FILTER,
   filterDayTimetablePayloadByLessonView,
+  regularTimetableEmptyMessage,
   type DayTimetablePayload,
-  type RegularTimetableLessonView,
+  type RegularTimetableLessonFilterFlags,
 } from "@/lib/dayTimetableShared";
 
-const VIEW_OPTIONS: Array<{ value: RegularTimetableLessonView; label: string }> = [
-  { value: "regular", label: "Regular only" },
-  { value: "all", label: "All lessons (Regular + Extra + Reschedule + Inactive)" },
-  { value: "extra", label: "Extra (Regular + Extra)" },
-  { value: "reschedule", label: "Reschedule (Regular + Reschedule)" },
-  { value: "inactive", label: "Inactive (Regular + Inactive)" },
+const FILTER_TICKS: Array<{ key: keyof RegularTimetableLessonFilterFlags; label: string }> = [
+  { key: "regular", label: "Regular" },
+  { key: "extra", label: "Extra" },
+  { key: "reschedule", label: "Reschedule" },
+  { key: "inactive", label: "Inactive" },
+  { key: "cancelled", label: "Cancelled" },
 ];
-
-const EMPTY_BY_VIEW: Record<RegularTimetableLessonView, string> = {
-  regular: "No regular lessons on this day.",
-  all: "No lessons on this day.",
-  extra: "No regular or extra lessons on this day.",
-  reschedule: "No regular or reschedule lessons on this day.",
-  inactive: "No regular or inactive (paused) lessons on this day.",
-};
 
 type Props = {
   payload: DayTimetablePayload;
 };
 
 export default function RegularClassTimetablePanel({ payload }: Props) {
-  const [view, setView] = useState<RegularTimetableLessonView>("regular");
+  const [flags, setFlags] = useState<RegularTimetableLessonFilterFlags>(DEFAULT_REGULAR_TIMETABLE_FILTER);
 
   const tablePayload = useMemo(
-    () => filterDayTimetablePayloadByLessonView(payload, view),
-    [payload, view],
+    () => filterDayTimetablePayloadByLessonView(payload, flags),
+    [payload, flags],
   );
+
+  const filterKey = FILTER_TICKS.map(({ key }) => (flags[key] ? "1" : "0")).join("");
+  const allSelected = FILTER_TICKS.every(({ key }) => flags[key]);
+
+  function toggle(key: keyof RegularTimetableLessonFilterFlags) {
+    setFlags((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function selectAll() {
+    setFlags({ ...ALL_REGULAR_TIMETABLE_FILTER });
+  }
+
+  function selectRegularOnly() {
+    setFlags({ ...DEFAULT_REGULAR_TIMETABLE_FILTER });
+  }
 
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm font-bold text-slate-700">Regular lessons (selected day)</div>
-        <label className="flex min-w-[200px] flex-1 items-center justify-end gap-2 sm:max-w-xs">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1.5">
           <span className="shrink-0 text-[11px] font-semibold text-slate-600">Show</span>
-          <select
-            value={view}
-            onChange={(e) => setView(e.target.value as RegularTimetableLessonView)}
-            className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700"
-            aria-label="Lesson type to show"
-          >
-            {VIEW_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          {FILTER_TICKS.map(({ key, label }) => (
+            <label
+              key={key}
+              className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-slate-700"
+            >
+              <input
+                type="checkbox"
+                checked={flags[key]}
+                onChange={() => toggle(key)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-[#1d76c2] focus:ring-[#1d76c2]/40"
+              />
+              {label}
+            </label>
+          ))}
+          <span className="flex items-center gap-2 border-l border-slate-200 pl-3 text-[11px]">
+            <button
+              type="button"
+              onClick={selectAll}
+              disabled={allSelected}
+              className="font-semibold text-[#1d76c2] underline disabled:cursor-default disabled:text-slate-400 disabled:no-underline"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={selectRegularOnly}
+              className="font-semibold text-slate-600 underline hover:text-slate-800"
+            >
+              Regular only
+            </button>
+          </span>
+        </div>
       </div>
       <DayTimetableTable
-        key={`${payload.dateIso}:${view}`}
+        key={`${payload.dateIso}:${filterKey}`}
         payload={tablePayload}
-        emptyMessage={EMPTY_BY_VIEW[view]}
+        emptyMessage={regularTimetableEmptyMessage(flags)}
         showRegularCapacitySummary
         compactStudentNames
       />
