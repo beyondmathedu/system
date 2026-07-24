@@ -131,6 +131,22 @@ export function isStudentInactiveOnDateFromPeriods(input: {
   return false;
 }
 
+/**
+ * Temporary pause only: covering period today must have an Expected return (`endDate`).
+ * Open-ended / graduated / F.6 auto-inactive (null end) are excluded.
+ */
+export function isTemporarilyInactiveOnDateFromPeriods(input: {
+  periods: readonly StudentInactivePeriod[];
+  dateIso: string;
+}): boolean {
+  const dateIso = String(input.dateIso ?? "").trim();
+  for (const p of input.periods ?? []) {
+    if (!p.endDate) continue;
+    if (isIsoDateInHalfOpenRange(dateIso, p.startDate, p.endDate)) return true;
+  }
+  return false;
+}
+
 /** Extra / makeup rows stay on Room & Daily Timetable even during inactive periods. */
 export function shouldHideScheduledLessonForInactivePeriod(input: {
   periods: readonly StudentInactivePeriod[];

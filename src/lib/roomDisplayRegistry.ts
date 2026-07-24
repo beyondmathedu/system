@@ -6,6 +6,8 @@ export const SLUG_TO_ROOM_GROUP: Record<string, RoomGroup> = {
   b: "B",
   "m-qian": "M前",
   "m-hou": "M後",
+  "m-front": "M前",
+  "m-back": "M後",
   hope: "Hope",
   "hope-2": "Hope 2",
 };
@@ -23,6 +25,9 @@ function defaultLabelByGroup(): Record<RoomGroup, string> {
 
 export const DEFAULT_ROOM_DISPLAY_REGISTRY: RoomDisplayRegistry = (() => {
   const displayLabelByGroup = defaultLabelByGroup();
+  // Current site display names for Hope rooms (overridden when classrooms load).
+  displayLabelByGroup.Hope = "Hope - Door";
+  displayLabelByGroup["Hope 2"] = "Hope - Shelf";
   const storageLabelByGroup = defaultLabelByGroup();
   const nameToGroup = new Map<string, RoomGroup>();
   for (const g of ROOM_GROUPS) {
@@ -32,6 +37,10 @@ export const DEFAULT_ROOM_DISPLAY_REGISTRY: RoomDisplayRegistry = (() => {
     const group = SLUG_TO_ROOM_GROUP[slug];
     if (group) nameToGroup.set(label.toLowerCase(), group);
   }
+  nameToGroup.set("hope - door", "Hope");
+  nameToGroup.set("hope door", "Hope");
+  nameToGroup.set("hope - shelf", "Hope 2");
+  nameToGroup.set("hope shelf", "Hope 2");
   return { displayLabelByGroup, storageLabelByGroup, nameToGroup };
 })();
 
@@ -56,8 +65,11 @@ export function buildRoomDisplayRegistry(
     const group = SLUG_TO_ROOM_GROUP[slug];
     if (!group || !name) continue;
     displayLabelByGroup[group] = name;
-    storageLabelByGroup[group] = name;
+    // Keep schedule JSON on canonical group keys (Hope / Hope 2), not display
+    // names like "Hope - Door" — otherwise edits/normalization fight each other.
+    storageLabelByGroup[group] = group;
     nameToGroup.set(name.toLowerCase(), group);
+    nameToGroup.set(group.toLowerCase(), group);
   }
 
   return { displayLabelByGroup, storageLabelByGroup, nameToGroup };

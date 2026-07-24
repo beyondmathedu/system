@@ -14,6 +14,7 @@ import {
   loadStudentVisibilityMode,
   saveStudentVisibilityMode,
   saveLessonYearMetrics,
+  updateStudentInactivePeriodEndDate,
 } from "@/lib/studentLessonStorage";
 import { getLessonUntickedMetrics, type Lesson2026State } from "@/lib/lesson2026Summary";
 import { availableLessonYears, defaultLessonYear } from "@/lib/lessonCalendar";
@@ -30,6 +31,16 @@ const LessonScheduleGrid = dynamic(() => import("./LessonScheduleGrid"), {
   ssr: false,
   loading: () => <div className="h-48 animate-pulse rounded-xl bg-slate-100" aria-hidden />,
 });
+
+function dayAfterIso(iso: string): string | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return undefined;
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1));
+  const y = dt.getUTCFullYear();
+  const mo = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(dt.getUTCDate()).padStart(2, "0");
+  return `${y}-${mo}-${d}`;
+}
 
 function dedupeInactivePeriodRows<
   T extends { id?: number; start_date: string; end_date: string | null; note: string },
@@ -92,6 +103,10 @@ export default function StudentLessonsPage() {
   const [inactivePeriods, setInactivePeriods] = useState<
     Array<{ id?: number; start_date: string; end_date: string | null; note: string }>
   >([]);
+  /** Draft Expected return dates keyed by period id (stringified). */
+  const [returnDraftByPeriodId, setReturnDraftByPeriodId] = useState<Record<string, string>>({});
+  const [returnSavingPeriodId, setReturnSavingPeriodId] = useState<number | null>(null);
+  const [returnEditError, setReturnEditError] = useState("");
   const [scheduleRecords, setScheduleRecords] = useState<LessonScheduleRecord[] | null>(null);
   const [isTutorReadOnly, setIsTutorReadOnly] = useState(false);
   const availableYears = useMemo(() => availableLessonYears(), []);
@@ -190,6 +205,14 @@ export default function StudentLessonsPage() {
           })),
         ),
       );
+      setReturnDraftByPeriodId(
+        Object.fromEntries(
+          (periods ?? [])
+            .filter((p) => Number(p.id) > 0)
+            .map((p) => [String(p.id), p.end_date ?? ""]),
+        ),
+      );
+      setReturnEditError("");
 
       const metrics = getLessonUntickedMetrics(
         records as Parameters<typeof getLessonUntickedMetrics>[0],
@@ -211,6 +234,62 @@ export default function StudentLessonsPage() {
       cancelled = true;
     };
   }, [studentId, hubYear]);
+
+  async function refreshInactivePeriodsAndMode() {
+    if (!studentId) return;
+    const [visibility, periods] = await Promise.all([
+      loadStudentVisibilityMode(studentId),
+      loadStudentInactivePeriods(studentId),
+    ]);
+    setVisibilityMode(visibility.mode);
+    setVisibilityEffectiveDate(visibility.effective_date || new Date().toISOString().slice(0, 10));
+    setVisibilityReactivateDate(visibility.reactivate_date ?? "");
+    const mapped = dedupeInactivePeriodRows(
+      (periods ?? []).map((p) => ({
+        id: p.id,
+        start_date: String(p.start_date ?? ""),
+        end_date: p.end_date ?? null,
+        note: String(p.note ?? ""),
+      })),
+    );
+    setInactivePeriods(mapped);
+    setReturnDraftByPeriodId(
+      Object.fromEntries(
+        mapped.filter((p) => Number(p.id) > 0).map((p) => [String(p.id), p.end_date ?? ""]),
+      ),
+    );
+    setReturnEditError("");
+  }
+
+  async function saveHistoryReturnDate(period: {
+    id?: number;
+    start_date: string;
+    end_date: string | null;
+  }) {
+    const id = Number(period.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      setReturnEditError("This history row has no id and cannot be edited.");
+      return;
+    }
+    const draft = (returnDraftByPeriodId[String(id)] ?? "").trim();
+    if (draft && draft <= period.start_date) {
+      setReturnEditError("Return must be after From (first day back at lessons).");
+      return;
+    }
+    setReturnSavingPeriodId(id);
+    setReturnEditError("");
+    try {
+      await updateStudentInactivePeriodEndDate({
+        id,
+        endDate: draft || null,
+      });
+      await refreshInactivePeriodsAndMode();
+    } catch (err) {
+      setReturnEditError(err instanceof Error ? err.message : "Failed to save return date.");
+    } finally {
+      setReturnSavingPeriodId(null);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">
@@ -359,17 +438,7 @@ export default function StudentLessonsPage() {
                                   visibilityMode === "inactive" ? visibilityReactivateDate || null : null,
                                 note: visibilityMode === "inactive" ? visibilityNote || null : null,
                               });
-                              const freshPeriods = await loadStudentInactivePeriods(studentId);
-                              setInactivePeriods(
-                                dedupeInactivePeriodRows(
-                                  freshPeriods.map((p) => ({
-                                    id: p.id,
-                                    start_date: String(p.start_date ?? ""),
-                                    end_date: p.end_date ?? null,
-                                    note: String(p.note ?? ""),
-                                  })),
-                                ),
-                              );
+                              await refreshInactivePeriodsAndMode();
                             } finally {
                               setVisibilitySaving(false);
                             }
@@ -422,20 +491,74 @@ export default function StudentLessonsPage() {
                             <tbody className="divide-y divide-slate-100">
                               {[...inactivePeriods]
                                 .sort((a, b) => b.start_date.localeCompare(a.start_date))
-                                .map((p) => (
-                                  <tr
-                                    key={p.id ?? `${p.start_date}-${p.end_date ?? "open"}-${p.note}`}
-                                    className="divide-x divide-slate-100"
-                                  >
-                                    <td className="px-3 py-2 font-semibold text-slate-800">
-                                      {p.start_date || "—"}
-                                    </td>
-                                    <td className="px-3 py-2 text-slate-700">{p.end_date || "—"}</td>
-                                    <td className="px-3 py-2 text-slate-600">{p.note || ""}</td>
-                                  </tr>
-                                ))}
+                                .map((p) => {
+                                  const periodId = Number(p.id);
+                                  const canEdit = Number.isFinite(periodId) && periodId > 0;
+                                  const draftKey = String(periodId);
+                                  const draft = canEdit
+                                    ? (returnDraftByPeriodId[draftKey] ?? p.end_date ?? "")
+                                    : p.end_date ?? "";
+                                  const hasReturn = Boolean(p.end_date);
+                                  const dirty = canEdit && draft !== (p.end_date ?? "");
+                                  const saving = returnSavingPeriodId === periodId;
+                                  return (
+                                    <tr
+                                      key={p.id ?? `${p.start_date}-${p.end_date ?? "open"}-${p.note}`}
+                                      className="divide-x divide-slate-100"
+                                    >
+                                      <td className="px-3 py-2 font-semibold text-slate-800">
+                                        {p.start_date || "—"}
+                                      </td>
+                                      <td className="px-3 py-2 text-slate-700">
+                                        {canEdit ? (
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <input
+                                              type="date"
+                                              value={draft}
+                                              min={dayAfterIso(p.start_date) ?? undefined}
+                                              onChange={(e) => {
+                                                const next = e.target.value;
+                                                setReturnDraftByPeriodId((prev) => ({
+                                                  ...prev,
+                                                  [draftKey]: next,
+                                                }));
+                                                setReturnEditError("");
+                                              }}
+                                              className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800"
+                                              aria-label={
+                                                hasReturn
+                                                  ? `Edit return date for inactive from ${p.start_date}`
+                                                  : `Add return date for inactive from ${p.start_date}`
+                                              }
+                                            />
+                                            <button
+                                              type="button"
+                                              disabled={saving || !dirty}
+                                              onClick={() => void saveHistoryReturnDate(p)}
+                                              className="rounded-md bg-[#1d76c2] px-2.5 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                              {saving ? "Saving…" : hasReturn ? "Save" : "Add"}
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          p.end_date || "—"
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-slate-600">{p.note || ""}</td>
+                                    </tr>
+                                  );
+                                })}
                             </tbody>
                           </table>
+                          {returnEditError ? (
+                            <p className="border-t border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                              {returnEditError}
+                            </p>
+                          ) : null}
+                          <p className="border-t border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                            Return = first day back at lessons. Clear the date and Save to mark as open-ended
+                            (graduated).
+                          </p>
                         </div>
                       ) : null}
                     </div>

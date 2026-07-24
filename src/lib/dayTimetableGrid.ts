@@ -469,6 +469,11 @@ export type FetchDayTimetableOptions = {
    * Used by Regular Class Timetable filters (Inactive / All).
    */
   includeInactiveSlots?: boolean;
+  /**
+   * Include vacated cancelled-original slots (`取消`).
+   * Regular Class Timetable Cancelled tick needs these; Daily Timetable does not.
+   */
+  includeCancelledSlots?: boolean;
 };
 
 type DayTimetableStaticBundle = {
@@ -607,7 +612,7 @@ async function fetchDayTimetablePayloadUncached(
   const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const dateIso = toDayIso(year, month, day);
   const titleDate = `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
-  const { regularOnly, includeInactiveSlots = false } = options;
+  const { regularOnly, includeInactiveSlots = false, includeCancelledSlots = false } = options;
 
   const supabase = getSupabaseAdmin();
   const targetWeekday = weekdayCnFromIsoDateHk(dateIso);
@@ -670,8 +675,8 @@ async function fetchDayTimetablePayloadUncached(
     })
       .map((r) => ({ ...r, normalizedRoom: resolveRoomGroupFromRegistry(r.room, roomRegistry) }))
       .filter((r) => {
-        // Regular-only views hide vacated (cancelled-original) slots; All / Daily keep them
-        // so staff can still see the seat after a reschedule.
+        // Daily: hide vacated cancelled-original. Regular Class Timetable may keep them.
+        if (r.lessonType === "取消" && !includeCancelledSlots) return false;
         if (onlyRegular && r.lessonType === "取消") return false;
         if (onlyRegular && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL) {
           return false;
@@ -834,9 +839,20 @@ async function fetchDayTimetablePayloadUncached(
 }
 
 const fetchDayTimetablePayloadCached = unstable_cache(
-  async (year: number, month: number, day: number, regularOnly: boolean, includeInactiveSlots: boolean) =>
-    fetchDayTimetablePayloadUncached(year, month, day, { regularOnly, includeInactiveSlots }),
-  ["day-timetable-payload-v16"],
+  async (
+    year: number,
+    month: number,
+    day: number,
+    regularOnly: boolean,
+    includeInactiveSlots: boolean,
+    includeCancelledSlots: boolean,
+  ) =>
+    fetchDayTimetablePayloadUncached(year, month, day, {
+      regularOnly,
+      includeInactiveSlots,
+      includeCancelledSlots,
+    }),
+  ["day-timetable-payload-v20"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
@@ -853,5 +869,6 @@ export async function fetchDayTimetablePayload(
     day,
     options.regularOnly,
     Boolean(options.includeInactiveSlots),
+    Boolean(options.includeCancelledSlots),
   );
 }

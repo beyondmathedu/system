@@ -22,7 +22,7 @@ export const dayTimetableLegendStrings = {
 
 export const dayTimetablePageIntroStrings = {
   daily:
-    "All lesson types for the selected day. Same room & time: regular → rescheduled → extra (by student ID). Summaries sync with scheduling.",
+    "Students attending this day (regular, reschedule, extra). Cancelled/vacated slots are hidden — use Regular Class Timetable → Cancelled to see them.",
   regular:
     "Regular lessons only (no reschedule or extra). Green row per slot: regular / max / left — limits on Rooms.",
 } as const;

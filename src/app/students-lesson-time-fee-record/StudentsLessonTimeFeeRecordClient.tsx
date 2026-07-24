@@ -1418,7 +1418,10 @@ export default function StudentsLessonTimeFeeRecordPage() {
       const r = recordsByStudentId[st.id] ?? defaultRecordState();
       const expectedSessions = r.expected ?? 0;
       const attended = attendedLessonsInMonthByStudentId[st.id] ?? 0;
-      const matchesGrade = gradeFilter === "all" || formatGradeDisplay(st.grade) === gradeFilter;
+      const matchesGrade =
+        normalizedSearch.length > 0 ||
+        gradeFilter === "all" ||
+        formatGradeDisplay(st.grade) === gradeFilter;
       const matchesWeekday =
         weekdayFilter === "all" ||
         (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
@@ -1739,7 +1742,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                     type="text"
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
-                    placeholder="e.g. 9123 / Chan / 00123"
+                    placeholder="e.g. 9123 / Chan / 00123 — all grades"
                     className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
                     suppressHydrationWarning
                   />

@@ -148,20 +148,31 @@ describe("filterDayTimetablePayloadByLessonView", () => {
 });
 
 describe("schedule room labels", () => {
-  it("maps Hope 1 variants to Hope", () => {
-    for (const raw of ["Hope", "Hope 1", "hope1", "HOPE 1", "Hope Room"]) {
+  it("maps Hope and Hope 1 variants to Hope", () => {
+    for (const raw of ["Hope", "Hope 1", "hope1", "HOPE 1", "Hope Room", "Hope - Door"]) {
       expect(normalizeScheduleRoom(raw)).toBe("Hope");
       expect(canonicalScheduleRoomLabel(raw)).toBe("Hope");
     }
   });
 
+  it("maps Hope 2 / Hope - Shelf to Hope 2", () => {
+    for (const raw of ["Hope 2", "hope2", "Hope - Shelf", "Hope Shelf"]) {
+      expect(normalizeScheduleRoom(raw)).toBe("Hope 2");
+      expect(canonicalScheduleRoomLabel(raw)).toBe("Hope 2");
+    }
+  });
+
   it("matches Hope and Hope 1", () => {
     expect(scheduleRoomsMatch("Hope 1", "Hope")).toBe(true);
+    expect(scheduleRoomsMatch("Hope - Door", "Hope")).toBe(true);
     expect(scheduleRoomsMatch("Hope", "Hope 2")).toBe(false);
+    expect(scheduleRoomsMatch("Hope - Shelf", "Hope 2")).toBe(true);
   });
 
   it("resolves picker value from legacy Hope 1", () => {
     expect(resolveScheduleRoomPickerValue("Hope 1")).toBe("Hope");
+    expect(resolveScheduleRoomPickerValue("Hope - Door")).toBe("Hope");
+    expect(resolveScheduleRoomPickerValue("Hope - Shelf")).toBe("Hope 2");
     expect(resolveScheduleRoomPickerValue("unknown")).toBe("B");
   });
 });

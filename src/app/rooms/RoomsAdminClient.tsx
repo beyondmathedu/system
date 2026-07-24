@@ -11,6 +11,7 @@ import {
   suggestSlugFromDisplayName,
 } from "@/lib/roomNamePropagation";
 import { FALLBACK_ROOM_NAV_LINKS } from "@/lib/roomConstants";
+import { SLUG_TO_ROOM_GROUP } from "@/lib/roomDisplayRegistry";
 import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
 import { supabase } from "@/lib/supabase";
 
@@ -157,9 +158,7 @@ export default function RoomsAdminClient() {
     const sortN = Math.floor(Number(sortOrder));
 
     if (!name) {
-      setFormError(
-        "Please enter a room name (must exactly match the classroom value in student schedules for filtering to work).",
-      );
+      setFormError("Please enter a room name (display label shown in pickers and timetables).");
       return;
     }
     if (!slugNorm) {
@@ -190,20 +189,50 @@ export default function RoomsAdminClient() {
 
     if (editingId) {
       const nameChanged = editSnapshot && editSnapshot.name !== name;
+      const canonicalGroup = SLUG_TO_ROOM_GROUP[slugNorm];
 
       if (nameChanged) {
-        const prop = await propagateClassroomNameChange(editSnapshot!.name, name);
-        if (!prop.ok) {
-          setIsSaving(false);
-          setFormError(
-            `Failed to sync classroom name in schedules: ${prop.error ?? "Unknown error"} (room data not updated).`,
-          );
-          return;
-        }
-        if (prop.stats.lessonRecordRows + prop.stats.lessonsYearRows > 0) {
-          setFormNotice(
-            `Updated classroom name in schedules from "${editSnapshot!.name}" to "${name}": lesson_records ${prop.stats.lessonRecordRows} rows, yearly state ${prop.stats.lessonsYearRows} rows.`,
-          );
+        if (canonicalGroup) {
+          // Display-only rename for known rooms (e.g. Hope → Hope - Door).
+          // Keep schedule JSON on canonical keys; optionally rewrite a previous
+          // display name back to the canonical key if it was propagated earlier.
+          if (editSnapshot!.name !== canonicalGroup) {
+            const prop = await propagateClassroomNameChange(editSnapshot!.name, canonicalGroup);
+            if (!prop.ok) {
+              setIsSaving(false);
+              setFormError(
+                `Failed to normalize classroom name in schedules: ${prop.error ?? "Unknown error"} (room data not updated).`,
+              );
+              return;
+            }
+            if (prop.stats.lessonRecordRows + prop.stats.lessonsYearRows > 0) {
+              setFormNotice(
+                `Normalized schedule room labels to "${canonicalGroup}" (display name is "${name}"). Updated lesson_records ${prop.stats.lessonRecordRows} rows, yearly state ${prop.stats.lessonsYearRows} rows.`,
+              );
+            } else {
+              setFormNotice(
+                `Display name updated to "${name}". Schedule JSON keeps canonical room key "${canonicalGroup}".`,
+              );
+            }
+          } else {
+            setFormNotice(
+              `Display name updated to "${name}". Schedule JSON keeps canonical room key "${canonicalGroup}".`,
+            );
+          }
+        } else {
+          const prop = await propagateClassroomNameChange(editSnapshot!.name, name);
+          if (!prop.ok) {
+            setIsSaving(false);
+            setFormError(
+              `Failed to sync classroom name in schedules: ${prop.error ?? "Unknown error"} (room data not updated).`,
+            );
+            return;
+          }
+          if (prop.stats.lessonRecordRows + prop.stats.lessonsYearRows > 0) {
+            setFormNotice(
+              `Updated classroom name in schedules from "${editSnapshot!.name}" to "${name}": lesson_records ${prop.stats.lessonRecordRows} rows, yearly state ${prop.stats.lessonsYearRows} rows.`,
+            );
+          }
         }
       }
 
@@ -275,16 +304,19 @@ export default function RoomsAdminClient() {
             <h1 className="text-2xl font-bold tracking-tight">Rooms</h1>
             <p className="mt-1 text-sm text-blue-100">
               Add or edit rooms here. Each slug maps to a page like{" "}
-              <span className="font-mono">/rooms/your-slug</span>. Renaming a room will also update matching
-              classroom strings in all student schedules and makeup/extra lessons.
+              <span className="font-mono">/rooms/your-slug</span>. For built-in rooms (B, M前, M後, Hope,
+              Hope 2), the room name is the <span className="font-semibold">display label</span> only —
+              student schedules keep canonical keys such as <span className="font-mono">Hope</span> /{" "}
+              <span className="font-mono">Hope 2</span>.
             </p>
           </div>
 
           <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
             <h2 className="text-sm font-bold text-slate-800">Room Details</h2>
             <p className="mt-1 text-xs text-slate-600">
-              Room name must exactly match the <span className="font-mono">room</span> field in schedule JSON.
-              Changing only the URL slug does not modify schedule content. Regular period max is used in the
+              For built-in rooms, <span className="font-mono">Room Name</span> is shown in pickers and
+              timetables (e.g. Hope - Door). Schedule JSON stores the canonical key (Hope / Hope 2). Changing
+              only the URL slug does not modify schedule content. Regular period max is used in the
               remaining-slots row on Regular Timetable; blank uses room-based defaults (B, M front: 5; M back,
               Hope: 6; Hope 2: 5).
             </p>
@@ -304,7 +336,7 @@ export default function RoomsAdminClient() {
                   onChange={(e) => setRoomName(e.target.value)}
                   onBlur={onRoomNameBlur}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
-                  placeholder="e.g. Hope 2 (must match schedule room)"
+                  placeholder="e.g. Hope - Door"
                 />
               </label>
               <label className="block min-w-0">

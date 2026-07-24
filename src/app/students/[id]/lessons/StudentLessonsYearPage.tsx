@@ -6,7 +6,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import ScheduleDuplicateRulesBanner from "@/components/ScheduleDuplicateRulesBanner";
 import { supabase } from "@/lib/supabase";
-import { queueSaveLessonYearState, retrySaveLessonYearState } from "@/lib/queueSaveLessonYearState";
+import { queueSaveLessonYearState, retrySaveLessonYearState, flushSaveLessonYearStateQueue, hasPendingLessonYearStateSaves } from "@/lib/queueSaveLessonYearState";
 import { queueSaveLessonScheduleRecords, retrySaveLessonScheduleRecords } from "@/lib/queueSaveLessonScheduleRecords";
 import {
   deleteTimetableDayRemark,
@@ -228,6 +228,30 @@ type BulkEditFormState = {
   selectedDateIsos: string[];
   sourceSlotLabel: string;
   original: BulkEditOriginalSnapshot;
+};
+
+type RowEditKind = "regular" | "extra" | "reschedule";
+
+type RowEditSession = {
+  kind: RowEditKind;
+  rowId: string;
+  entryId?: string;
+  /** Regular: original schedule date used as reschedule fromDate. */
+  originalFromDate?: string;
+  draft: BulkEditLessonDraft;
+};
+
+type RowEditConfirmPayload = {
+  kind: RowEditKind;
+  entryId?: string;
+  originalFromDate?: string;
+  baseTime?: string;
+  baseRoom?: string;
+  newDate: string;
+  finalTime: string;
+  finalRoom: string;
+  before: { date: string; weekday: string; time: string; room: string };
+  after: { date: string; weekday: string; time: string; room: string };
 };
 
 function toHkIsoDateFromMs(ms: number) {
@@ -707,6 +731,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     },
   });
   const [bulkEditSaveStatus, setBulkEditSaveStatus] = useState("");
+  const [showRowEditPanel, setShowRowEditPanel] = useState(false);
+  const [rowEditSession, setRowEditSession] = useState<RowEditSession | null>(null);
+  const [rowEditSaveStatus, setRowEditSaveStatus] = useState("");
+  const [rowEditConfirm, setRowEditConfirm] = useState<RowEditConfirmPayload | null>(null);
+  const rowEditPanelRef = useRef<HTMLDivElement>(null);
   const [cloudSaveNotice, setCloudSaveNotice] = useState("");
   const [cloudSaveFailed, setCloudSaveFailed] = useState(false);
   const cloudSaveKindRef = useRef<"year" | "records">("year");
@@ -778,16 +807,31 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       rescheduleEntries: RescheduleEntry[];
       extraEntries: ExtraEntry[];
     }) => {
+      const nextReschedule = (state.rescheduleEntries ?? []).map((e) => ({
+        ...e,
+        id: String(e.id),
+        fromDate: String(e.fromDate ?? ""),
+        toDate: String(e.toDate ?? ""),
+        time: String(e.time ?? ""),
+        room: String(e.room ?? ""),
+      }));
+      const nextExtra = (state.extraEntries ?? []).map((e) => ({
+        ...e,
+        id: String(e.id),
+        date: String(e.date ?? ""),
+        time: String(e.time ?? ""),
+        room: String(e.room ?? ""),
+      }));
       setAttendance(state.attendance);
       setHiddenDates(state.hiddenDates);
       setOverrides(state.overrides);
-      setRescheduleEntries(state.rescheduleEntries);
-      setExtraEntries(state.extraEntries);
+      setRescheduleEntries(nextReschedule);
+      setExtraEntries(nextExtra);
       window.localStorage.setItem(ATTENDANCE_STORAGE_KEY, JSON.stringify(state.attendance));
       window.localStorage.setItem(HIDDEN_DATES_STORAGE_KEY, JSON.stringify(state.hiddenDates));
       window.localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(state.overrides));
-      window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(state.rescheduleEntries));
-      window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(state.extraEntries));
+      window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(nextReschedule));
+      window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(nextExtra));
     },
     [
       ATTENDANCE_STORAGE_KEY,
@@ -1101,7 +1145,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     const unsub = subscribeLessonSaveStatus((evt) => {
       if (evt.studentId !== studentId) return;
       if (evt.kind !== "year" || evt.year !== targetYear) return;
-      if (evt.status === "saved") void reloadYearStateFromCloud();
+      // Avoid clobbering a just-saved local edit with a raced bootstrap read.
+      if (evt.status === "saved") {
+        if (hasPendingLessonYearStateSaves()) return;
+        void reloadYearStateFromCloud();
+      }
     });
 
     function onVisibilityChange() {
@@ -1178,7 +1226,15 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       reschedulePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [showBulkEditPanel, showEditPanel]);
+  }, [showBulkEditPanel, showEditPanel, showRowEditPanel]);
+
+  useEffect(() => {
+    if (!showRowEditPanel) return;
+    const frame = window.requestAnimationFrame(() => {
+      rowEditPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [showRowEditPanel]);
 
   function retryCloudSave() {
     if (!studentId) return;
@@ -1462,6 +1518,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     setShowBulkEditPanel(false);
     setReschedulePanelMode("reschedule");
     setShowExtraPanel(false);
+    setShowRowEditPanel(false);
+    setRowEditSession(null);
+    setRowEditConfirm(null);
 
     if (opts?.row && opts.row.rowKind !== "normal") {
       const entry = opts.row.rescheduleEntryId
@@ -1518,6 +1577,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     setBulkEditSaveStatus("");
     setShowEditPanel(false);
     setShowExtraPanel(false);
+    setShowRowEditPanel(false);
+    setRowEditSession(null);
+    setRowEditConfirm(null);
 
     const selectedRows = selectedRowIds
       .map((id) => scheduleRowById.get(id))
@@ -1609,6 +1671,303 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     }
 
     if (tryOpenBulkReschedulePanel()) return;
+  }
+
+  function closeRowEditPanel() {
+    setShowRowEditPanel(false);
+    setRowEditSession(null);
+    setRowEditSaveStatus("");
+    setRowEditConfirm(null);
+  }
+
+  function openRowEditFromSelection() {
+    if (readOnly) return;
+    setSelectionError("");
+    setRowEditSaveStatus("");
+    setRowEditConfirm(null);
+
+    if (selectedRowIds.length === 0) {
+      setSelectionError("Select 1 lesson row to edit.");
+      return;
+    }
+    if (selectedRowIds.length > 1) {
+      setSelectionError("Edit one lesson at a time — select only 1 row.");
+      return;
+    }
+
+    const row = scheduleRowById.get(selectedRowIds[0]);
+    if (!row) {
+      setSelectionError("Cannot find the selected lesson row.");
+      return;
+    }
+
+    if (row.rowKind === "cancelled_original") {
+      setSelectionError("Cancelled rows cannot be edited here. Select the Reschedule row instead.");
+      return;
+    }
+
+    const { timePreset, timeCustom } = pickTimePreset(row.time, row.weekday);
+    const draft: BulkEditLessonDraft = {
+      rowId: row.rowId,
+      date: row.date,
+      timePreset,
+      timeCustom,
+      room: resolveScheduleRoomPickerValue(row.room, ROOM_GROUPS[0], registry),
+      original: {
+        date: row.date,
+        weekday: row.weekday,
+        displayTime: row.time,
+        displayRoom: row.room,
+        baseTime: row.baseTime,
+        baseRoom: row.baseRoom,
+      },
+    };
+
+    let session: RowEditSession | null = null;
+    if (row.extraEntryId) {
+      session = { kind: "extra", rowId: row.rowId, entryId: row.extraEntryId, draft };
+    } else if (row.rowKind === "reschedule" && row.rescheduleEntryId) {
+      session = {
+        kind: "reschedule",
+        rowId: row.rowId,
+        entryId: row.rescheduleEntryId,
+        originalFromDate: row.rescheduleFromDate,
+        draft,
+      };
+    } else if (row.rowKind === "normal") {
+      session = {
+        kind: "regular",
+        rowId: row.rowId,
+        originalFromDate: row.date,
+        draft,
+      };
+    } else {
+      setSelectionError("This row type cannot be edited here.");
+      return;
+    }
+
+    setShowBulkEditPanel(false);
+    setShowEditPanel(false);
+    setShowExtraPanel(false);
+    setRowEditSession(session);
+    setShowRowEditPanel(true);
+  }
+
+  function requestRowEditConfirm() {
+    if (readOnly || !rowEditSession) return;
+    setRowEditSaveStatus("");
+    setSelectionError("");
+
+    const draft = rowEditSession.draft;
+    const finalTime = resolveBulkEditTime(draft);
+    const finalRoom = pickerToStorage(draft.room.trim());
+    const newDate = draft.date.trim();
+
+    if (!newDate) {
+      setRowEditSaveStatus("Please choose a lesson date.");
+      setSelectionError("Please choose a lesson date.");
+      return;
+    }
+    if (newDate < yearMin || newDate > yearMax) {
+      setRowEditSaveStatus(`Date must be within ${targetYear}.`);
+      setSelectionError(`Date must be within ${targetYear}.`);
+      return;
+    }
+    if (!finalTime) {
+      setRowEditSaveStatus("Please select or enter a lesson time.");
+      setSelectionError("Please select or enter a lesson time.");
+      return;
+    }
+    if (!finalRoom) {
+      setRowEditSaveStatus("Please select a room.");
+      setSelectionError("Please select a room.");
+      return;
+    }
+
+    const newWeekday = weekdayFromIsoDate(newDate);
+    const before = {
+      date: draft.original.date ?? "",
+      weekday: draft.original.weekday,
+      time: draft.original.displayTime,
+      room: draft.original.displayRoom,
+    };
+    const after = {
+      date: newDate,
+      weekday: newWeekday,
+      time: finalTime,
+      room: finalRoom,
+    };
+
+    if (
+      before.date === after.date &&
+      before.time === after.time &&
+      before.room === after.room
+    ) {
+      setRowEditSaveStatus("No changes to save.");
+      return;
+    }
+
+    if (rowEditSession.kind === "regular") {
+      const originalDate = rowEditSession.originalFromDate ?? draft.original.date ?? "";
+      if (!validationBaseRowByDate.has(originalDate)) {
+        setRowEditSaveStatus("Original date is not a regular lesson date.");
+        setSelectionError("Original date must be an existing regular lesson date.");
+        return;
+      }
+      const timeOrDateChanged =
+        newDate !== originalDate || finalTime !== (draft.original.baseTime || draft.original.displayTime);
+      if (timeOrDateChanged) {
+        const ids = rescheduleIdsByFromDate.get(originalDate) ?? [];
+        if (ids.length > 0) {
+          setRowEditSaveStatus("This date already has a reschedule. Edit the Reschedule row instead.");
+          setSelectionError("This date already has a reschedule. Edit the Reschedule row instead.");
+          return;
+        }
+      }
+      setRowEditConfirm({
+        kind: "regular",
+        originalFromDate: originalDate,
+        baseTime: draft.original.baseTime,
+        baseRoom: draft.original.baseRoom,
+        newDate,
+        finalTime,
+        finalRoom,
+        before,
+        after,
+      });
+      return;
+    }
+
+    if (rowEditSession.kind === "extra") {
+      if (!rowEditSession.entryId) {
+        setRowEditSaveStatus("Missing extra lesson id.");
+        return;
+      }
+      setRowEditConfirm({
+        kind: "extra",
+        entryId: rowEditSession.entryId,
+        newDate,
+        finalTime,
+        finalRoom,
+        before,
+        after,
+      });
+      return;
+    }
+
+    if (!rowEditSession.entryId) {
+      setRowEditSaveStatus("Missing reschedule id.");
+      return;
+    }
+    setRowEditConfirm({
+      kind: "reschedule",
+      entryId: rowEditSession.entryId,
+      originalFromDate: rowEditSession.originalFromDate,
+      newDate,
+      finalTime,
+      finalRoom,
+      before,
+      after,
+    });
+  }
+
+  function confirmRowEditSave() {
+    if (readOnly || !rowEditConfirm) return;
+    const payload = rowEditConfirm;
+
+    if (payload.kind === "regular") {
+      const originalDate = payload.originalFromDate ?? "";
+      const timeOrDateChanged =
+        payload.newDate !== originalDate ||
+        payload.finalTime !== (payload.baseTime || payload.before.time);
+      if (timeOrDateChanged) {
+        const nextList = [
+          ...rescheduleEntries,
+          {
+            id: `${Date.now()}`,
+            fromDate: originalDate,
+            toDate: payload.newDate,
+            time: payload.finalTime,
+            room: payload.finalRoom,
+          },
+        ];
+        setRescheduleEntries(nextList);
+        rescheduleEntriesRef.current = nextList;
+        window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(nextList));
+        persistYearState({ rescheduleEntries: nextList });
+        const nextOverrides = { ...overridesRef.current };
+        delete nextOverrides[originalDate];
+        persistOverrides(nextOverrides);
+      } else {
+        const nextOverrides = { ...overridesRef.current };
+        if (payload.finalRoom === (payload.baseRoom || payload.before.room)) {
+          delete nextOverrides[originalDate];
+        } else {
+          nextOverrides[originalDate] = {
+            ...(nextOverrides[originalDate] ?? {}),
+            room: payload.finalRoom,
+          };
+        }
+        persistOverrides(nextOverrides);
+      }
+    } else if (payload.kind === "extra") {
+      const entryId = String(payload.entryId ?? "");
+      const nextExtra = extraEntries.map((e) =>
+        String(e.id) === entryId
+          ? { ...e, id: entryId, date: payload.newDate, time: payload.finalTime, room: payload.finalRoom }
+          : { ...e, id: String(e.id) },
+      );
+      if (!nextExtra.some((e) => String(e.id) === entryId)) {
+        setRowEditSaveStatus("Could not find that extra lesson to update.");
+        setSelectionError("Could not find that extra lesson to update.");
+        return;
+      }
+      setExtraEntries(nextExtra);
+      extraEntriesRef.current = nextExtra;
+      window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(nextExtra));
+      persistYearState({ extraEntries: nextExtra });
+    } else {
+      const entryId = String(payload.entryId ?? "");
+      const nextList = rescheduleEntries.map((e) => {
+        if (String(e.id) !== entryId) return { ...e, id: String(e.id) };
+        return {
+          ...e,
+          id: entryId,
+          toDate: payload.newDate,
+          time: payload.finalTime,
+          room: payload.finalRoom,
+          pending: false,
+        };
+      });
+      if (!nextList.some((e) => String(e.id) === entryId)) {
+        setRowEditSaveStatus("Could not find that reschedule to update.");
+        setSelectionError("Could not find that reschedule to update.");
+        return;
+      }
+      setRescheduleEntries(nextList);
+      rescheduleEntriesRef.current = nextList;
+      window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(nextList));
+      persistYearState({ rescheduleEntries: nextList });
+    }
+
+    setRowEditConfirm(null);
+    setRowEditSaveStatus("Saving…");
+    setSelectionError("Saving…");
+    void flushSaveLessonYearStateQueue()
+      .then(() => {
+        setRowEditSaveStatus("Saved.");
+        setSelectionError("Saved.");
+        window.setTimeout(() => {
+          setRowEditSaveStatus("");
+          setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+          closeRowEditPanel();
+          setSelectedRowIds([]);
+        }, 900);
+      })
+      .catch(() => {
+        setRowEditSaveStatus("Save failed — try again.");
+        setSelectionError("Cloud save failed. Your change may not have been stored.");
+      });
   }
 
   function saveBulkEdit() {
@@ -2269,6 +2628,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                   effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
                 }))}
                 weekdayLabel={(wd) => WEEKDAY_LABEL[wd] ?? wd}
+                formatRoom={formatRoom}
                 onMerged={(next) => {
                   const removed = records.length - next.length;
                   persistScheduleRecords(next as ScheduleRecord[]);
@@ -2604,6 +2964,84 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                 )}
               </div>
             )}
+
+            {showRowEditPanel && rowEditSession ? (
+              <div
+                ref={rowEditPanelRef}
+                className="mt-4 scroll-mt-4 scroll-mb-32 rounded-xl border border-slate-300 bg-white p-4 shadow-sm"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">Edit lesson</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Change Date, Day, Time, or Room. Save asks for confirmation before writing.
+                      {rowEditSession.kind === "regular"
+                        ? " Regular: date/time change becomes Cancelled + Reschedule; room-only stays as override."
+                        : rowEditSession.kind === "extra"
+                          ? " Extra: updates this extra lesson entry."
+                          : " Reschedule: updates the makeup slot (original from-date stays)."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeRowEditPanel}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="mt-4 max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-white px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      {rowEditSession.kind === "regular"
+                        ? "Regular"
+                        : rowEditSession.kind === "extra"
+                          ? "Extra"
+                          : "Reschedule"}
+                    </p>
+                    <p className="mt-1 text-base font-semibold text-slate-900">
+                      {formatLessonDateLabel(
+                        rowEditSession.draft.original.date ?? "",
+                        rowEditSession.draft.original.weekday,
+                      )}
+                      <span className="mx-2 font-normal text-slate-300">·</span>
+                      {rowEditSession.draft.original.displayTime}
+                      <span className="mx-2 font-normal text-slate-300">·</span>
+                      {formatRoom(rowEditSession.draft.original.displayRoom)}
+                    </p>
+                  </div>
+                  <div className="hidden border-b border-slate-100 bg-slate-50/80 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:grid sm:grid-cols-[6.75rem_minmax(0,1fr)_auto_minmax(0,1.35fr)] sm:gap-3">
+                    <span>Field</span>
+                    <span>Was</span>
+                    <span className="sr-only">To</span>
+                    <span>Change to</span>
+                  </div>
+                  <BulkEditLessonFields
+                    draft={rowEditSession.draft}
+                    yearMin={yearMin}
+                    yearMax={yearMax}
+                    formatRoom={formatRoom}
+                    pickerLabel={pickerLabel}
+                    onChange={(next) =>
+                      setRowEditSession((prev) => (prev ? { ...prev, draft: next } : prev))
+                    }
+                  />
+                  <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-3">
+                    {rowEditSaveStatus ? (
+                      <span className="text-xs font-semibold text-slate-600">{rowEditSaveStatus}</span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={requestRowEditConfirm}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-[#1d76c2] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {showEditPanel && (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -3718,6 +4156,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                   }
                   setShowBulkEditPanel(false);
                   setShowExtraPanel(false);
+                  setShowRowEditPanel(false);
+                  setRowEditSession(null);
+                  setRowEditConfirm(null);
                   setReschedulePanelMode("pending");
                   setSelectionError("");
                   setEditingRescheduleId(null);
@@ -3758,6 +4199,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                   }
                   setShowBulkEditPanel(false);
                   setShowEditPanel(false);
+                  setShowRowEditPanel(false);
+                  setRowEditSession(null);
+                  setRowEditConfirm(null);
                   if (selectedRowIds.length === 1) {
                     const row = scheduleRowById.get(selectedRowIds[0]);
                     if (!row) {
@@ -3793,6 +4237,17 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                   <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
                 </svg>
                 Extra Lesson
+              </button>
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={openRowEditFromSelection}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                  <path d="M14.69 2.86a2 2 0 112.83 2.83l-8.4 8.4a1 1 0 01-.46.26l-3.32.83a.75.75 0 01-.9-.9l.83-3.32a1 1 0 01.26-.46l8.4-8.4zM4.75 16.25a.75.75 0 100 1.5h10.5a.75.75 0 000-1.5H4.75z" />
+                </svg>
+                Edit
               </button>
               <button
                 type="button"
@@ -3903,6 +4358,92 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
           ) : null}
         </div>
       </div>
+
+      {rowEditConfirm ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="row-edit-confirm-title"
+        >
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <h3 id="row-edit-confirm-title" className="text-base font-bold text-slate-900">
+              Confirm save?
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              Review the change below. Nothing is written until you confirm.
+            </p>
+            <dl className="mt-4 space-y-3 text-sm">
+              {(
+                [
+                  ["Date", "date"],
+                  ["Day", "weekday"],
+                  ["Time", "time"],
+                  ["Room", "room"],
+                ] as const
+              ).map(([label, key]) => {
+                const beforeRaw = rowEditConfirm.before[key];
+                const afterRaw = rowEditConfirm.after[key];
+                const before =
+                  key === "weekday"
+                    ? WEEKDAY_LABEL[beforeRaw] ?? beforeRaw
+                    : key === "room"
+                      ? formatRoom(beforeRaw)
+                      : key === "date"
+                        ? formatLessonDateLabel(beforeRaw, rowEditConfirm.before.weekday)
+                        : beforeRaw;
+                const after =
+                  key === "weekday"
+                    ? WEEKDAY_LABEL[afterRaw] ?? afterRaw
+                    : key === "room"
+                      ? formatRoom(afterRaw)
+                      : key === "date"
+                        ? formatLessonDateLabel(afterRaw, rowEditConfirm.after.weekday)
+                        : afterRaw;
+                const changed = before !== after;
+                return (
+                  <div key={key} className="grid grid-cols-[4.5rem_1fr] gap-2">
+                    <dt className="font-semibold text-slate-600">{label}</dt>
+                    <dd className="min-w-0">
+                      {changed ? (
+                        <span className="inline-flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500 line-through">
+                            {before || "—"}
+                          </span>
+                          <span className="text-slate-400" aria-hidden>
+                            →
+                          </span>
+                          <span className="rounded bg-sky-50 px-1.5 py-0.5 text-xs font-semibold text-[#1d76c2]">
+                            {after || "—"}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-slate-800">{after || "—"}</span>
+                      )}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRowEditConfirm(null)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={confirmRowEditSave}
+                className="rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-semibold text-white hover:opacity-90"
+              >
+                Confirm save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

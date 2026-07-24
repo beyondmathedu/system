@@ -817,6 +817,24 @@ export async function closeLatestOpenStudentInactivePeriod(input: { studentId: s
   if (upErr) throw upErr;
 }
 
+/** Set or clear Expected return (first active day) on a specific inactive-history row. */
+export async function updateStudentInactivePeriodEndDate(input: {
+  id: number;
+  endDate: string | null;
+}) {
+  const id = Number(input.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error("Missing inactive period id");
+  }
+  const endDate = normalizeOptionalIsoDate(input.endDate ?? "");
+  const { error } = await supabase
+    .from("student_visibility_periods")
+    .update({ end_date: endDate, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+  notifyScheduleCachesStale();
+}
+
 export async function loadStudentVisibilityMode(studentId: string): Promise<StudentVisibilityMode> {
   // Prefer new periods model; fall back to legacy single-row mode.
   try {

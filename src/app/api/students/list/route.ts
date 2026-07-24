@@ -22,10 +22,19 @@ export async function GET(request: NextRequest) {
   const statusRaw = sp.get("status") ?? "active";
   const status =
     statusRaw === "inactive" || statusRaw === "all" ? statusRaw : ("active" as const);
+  const kindRaw = sp.get("inactiveKind") ?? "all";
+  const inactiveKind =
+    kindRaw === "temporary" || kindRaw === "graduated" ? kindRaw : ("all" as const);
 
   try {
     const supabase = getSupabaseAdmin();
-    const result = await listStudentsForPage(supabase, { offset, limit, q, status });
+    const result = await listStudentsForPage(supabase, {
+      offset,
+      limit,
+      q,
+      status,
+      inactiveKind: status === "inactive" ? inactiveKind : "all",
+    });
     return NextResponse.json({
       ok: true,
       students: result.rows,

@@ -26,7 +26,7 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   const nextHref = `/regular-class-timetable?year=${year}&month=${month}&day=${day}`;
   const [viewer, payload] = await Promise.all([
     getViewerContext(),
-    fetchDayTimetablePayload(year, month, day, { regularOnly: false, includeInactiveSlots: true }),
+    fetchDayTimetablePayload(year, month, day, { regularOnly: false, includeInactiveSlots: true, includeCancelledSlots: true }),
   ]);
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {

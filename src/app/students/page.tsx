@@ -103,6 +103,7 @@ export default function StudentsPage() {
   const [suggestedNextId, setSuggestedNextId] = useState("00001");
   const [dataError, setDataError] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
+  const [inactiveKind, setInactiveKind] = useState<"all" | "temporary" | "graduated">("all");
   const [savingForm, setSavingForm] = useState(false);
   const [pasteDraft, setPasteDraft] = useState("");
   const [pasteNotice, setPasteNotice] = useState("");
@@ -211,6 +212,7 @@ export default function StudentsPage() {
             status: statusFilter,
           });
           if (q) params.set("q", q);
+          if (statusFilter === "inactive") params.set("inactiveKind", inactiveKind);
           const res = await fetch(`/api/students/list?${params.toString()}`, { credentials: "same-origin" });
           const body = (await res.json()) as {
             ok?: boolean;
@@ -259,7 +261,7 @@ export default function StudentsPage() {
         setPageLoading(false);
       }
     },
-    [query, statusFilter],
+    [query, statusFilter, inactiveKind],
   );
 
   async function reloadStudentsList() {
@@ -276,7 +278,7 @@ export default function StudentsPage() {
       void fetchStudentsPage({ page: 1, showAll: false });
     }, STUDENTS_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [fetchStudentsPage, query, statusFilter]);
+  }, [fetchStudentsPage, query, statusFilter, inactiveKind]);
 
   const onFieldChange = (field: keyof StudentForm, value: string) => {
     setForm((prev) => {
@@ -772,7 +774,10 @@ export default function StudentsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setStatusFilter("inactive")}
+                  onClick={() => {
+                    setStatusFilter("inactive");
+                    setInactiveKind("all");
+                  }}
                   className={`whitespace-nowrap rounded-md border px-5 py-2.5 text-sm font-semibold transition ${
                     statusFilter === "inactive"
                       ? "border-[#1d76c2] bg-[#1d76c2] text-white"
@@ -782,6 +787,36 @@ export default function StudentsPage() {
                   Inactive Students
                 </button>
               </div>
+              {statusFilter === "inactive" ? (
+                <div className="mt-2 space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(
+                      [
+                        { value: "all", label: "All inactive" },
+                        { value: "temporary", label: "Temporary" },
+                        { value: "graduated", label: "Graduated / permanent" },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setInactiveKind(opt.value)}
+                        className={`whitespace-nowrap rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
+                          inactiveKind === opt.value
+                            ? "border-slate-700 bg-slate-700 text-white"
+                            : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Temporary = has Expected return. Graduated / permanent = no Return (incl. F.6). Add Return on
+                    Lessons → Inactive history if they come back.
+                  </p>
+                </div>
+              ) : null}
             </div>
             <div className="md:col-span-3">
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">

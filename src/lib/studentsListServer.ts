@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildStudentInactivePeriodsById,
   isStudentInactiveOnDateFromPeriods,
+  isTemporarilyInactiveOnDateFromPeriods,
   withAutoF6InactivePeriod,
 } from "@/lib/studentVisibility";
 
@@ -19,11 +20,16 @@ export type StudentsListRow = {
   math_language: string | null;
 };
 
+/** Sub-filter when status is inactive. */
+export type StudentsInactiveKind = "all" | "temporary" | "graduated";
+
 export type StudentsListParams = {
   offset: number;
   limit: number;
   q?: string;
   status?: "all" | "active" | "inactive";
+  /** Only applied when status === "inactive". Default: all inactive. */
+  inactiveKind?: StudentsInactiveKind;
 };
 
 export type StudentsListResult = {
@@ -55,18 +61,30 @@ function studentMatchesStatus(
   row: StudentsListRow,
   inactivePeriodsById: Record<string, import("@/lib/studentVisibility").StudentInactivePeriod[]>,
   status: StudentsListParams["status"],
+  inactiveKind: StudentsInactiveKind,
   todayHkIso: string,
   year: number,
 ): boolean {
   if (!status || status === "all") return true;
+  const manualPeriods = inactivePeriodsById[row.id] ?? [];
   const periods = withAutoF6InactivePeriod({
-    periods: inactivePeriodsById[row.id] ?? [],
+    periods: manualPeriods,
     studentId: row.id,
     grade: row.grade ?? "",
     year,
   });
   const isInactive = isStudentInactiveOnDateFromPeriods({ periods, dateIso: todayHkIso });
-  return status === "inactive" ? isInactive : !isInactive;
+  if (status === "active") return !isInactive;
+  if (!isInactive) return false;
+
+  if (inactiveKind === "all") return true;
+  const isTemporary = isTemporarilyInactiveOnDateFromPeriods({
+    periods,
+    dateIso: todayHkIso,
+  });
+  if (inactiveKind === "temporary") return isTemporary;
+  // graduated / permanent: inactive with no Expected return covering today
+  return !isTemporary;
 }
 
 export async function listStudentsForPage(
@@ -77,6 +95,10 @@ export async function listStudentsForPage(
   const limit = Math.min(200, Math.max(1, Math.floor(params.limit)));
   const q = (params.q ?? "").trim();
   const status = params.status ?? "active";
+  const inactiveKind: StudentsInactiveKind =
+    params.inactiveKind === "temporary" || params.inactiveKind === "graduated"
+      ? params.inactiveKind
+      : "all";
   const todayHkIso = hkTodayIso();
   const year = hkYear();
 
@@ -161,7 +183,7 @@ export async function listStudentsForPage(
     if (!chunk.length) break;
 
     for (const row of chunk) {
-      if (!studentMatchesStatus(row, inactivePeriodsById, status, todayHkIso, year)) continue;
+      if (!studentMatchesStatus(row, inactivePeriodsById, status, inactiveKind, todayHkIso, year)) continue;
       matched.push(row);
     }
 

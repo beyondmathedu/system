@@ -11,7 +11,9 @@ import {
 import { readYmdParts } from "@/lib/intlFormatParts";
 import {
   ROOM_GROUPS,
+  canonicalScheduleRoomLabel,
   resolveScheduleRoomPickerValue,
+  scheduleRoomsMatch,
 } from "@/lib/dayTimetableShared";
 import { useRoomDisplayLabels } from "@/lib/useRoomDisplayRegistry";
 
@@ -94,7 +96,8 @@ type ScheduleRecord = LessonScheduleRecord;
 function normalizeLessonRecord(raw: ScheduleRecord): ScheduleRecord & { effectiveDate: string } {
   return {
     ...raw,
-    room: (raw.room ?? "").trim(),
+    // Keep schedule JSON on canonical keys (Hope / Hope 2), not display names.
+    room: canonicalScheduleRoomLabel(raw.room ?? ""),
     effectiveDate: raw.effectiveDate ?? toHkIsoDateFromMs(raw.createdAt),
   };
 }
@@ -155,6 +158,16 @@ export default function LessonScheduleGrid({
   }
 
   useEffect(() => {
+    if (initialRecords == null || initialRecords.length === 0) return;
+    const normalized = initialRecords.map(normalizeLessonRecord);
+    const needsCanonicalRewrite = initialRecords.some(
+      (r, i) => (r.room ?? "").trim() !== normalized[i].room,
+    );
+    if (!needsCanonicalRewrite) return;
+    void saveLessonScheduleRecords(studentId, normalized);
+  }, [studentId, initialRecords]);
+
+  useEffect(() => {
     if (initialRecords != null) return;
     let cancelled = false;
     void (async () => {
@@ -164,6 +177,12 @@ export default function LessonScheduleGrid({
         const normalized = (cloudRecords as ScheduleRecord[]).map(normalizeLessonRecord);
         setRecords(normalized);
         window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
+        const needsCanonicalRewrite = (cloudRecords as ScheduleRecord[]).some(
+          (r, i) => (r.room ?? "").trim() !== normalized[i].room,
+        );
+        if (needsCanonicalRewrite) {
+          void saveLessonScheduleRecords(studentId, normalized);
+        }
         return;
       }
       try {
@@ -209,7 +228,8 @@ export default function LessonScheduleGrid({
   const roomFilterOptions = useMemo(() => {
     const set = new Set<string>(ROOM_OPTIONS);
     for (const r of records) {
-      if (r.room?.trim()) set.add(r.room.trim());
+      const canonical = canonicalScheduleRoomLabel(r.room ?? "");
+      if (canonical) set.add(canonical);
     }
     return Array.from(set);
   }, [records]);
@@ -221,10 +241,10 @@ export default function LessonScheduleGrid({
       if (filterTime.trim() && !normalized.time.toLowerCase().includes(filterTime.trim().toLowerCase())) {
         return false;
       }
-      if (filterRoom && normalized.room !== filterRoom) return false;
+      if (filterRoom && !scheduleRoomsMatch(normalized.room, filterRoom, registry)) return false;
       return true;
     });
-  }, [recordsSortedDesc, filterEffectiveDate, filterWeekday, filterTime, filterRoom]);
+  }, [recordsSortedDesc, filterEffectiveDate, filterWeekday, filterTime, filterRoom, registry]);
 
   function loadRecordIntoForm(r: ScheduleRecord) {
     setEditingRecordId(r.id);
@@ -347,6 +367,7 @@ export default function LessonScheduleGrid({
       <ScheduleDuplicateRulesBanner
         records={records.map(normalizeLessonRecord)}
         weekdayLabel={(wd) => WEEKDAY_LABEL[wd] ?? wd}
+        formatRoom={formatRoom}
         onMerged={(next) => {
           persistRecords(next as ScheduleRecord[]);
           setSaveSlotError("");
@@ -566,7 +587,7 @@ export default function LessonScheduleGrid({
                 <span className="font-semibold text-slate-600">Time</span>
                 <span className="font-bold text-slate-900">{effectiveTime || "—"}</span>
                 <span className="font-semibold text-slate-600">Room</span>
-                <span className="font-bold text-slate-900">{room || "—"}</span>
+                <span className="font-bold text-slate-900">{room ? pickerLabel(resolveScheduleRoomPickerValue(room, ROOM_GROUPS[0], registry)) : "—"}</span>
               </div>
             </div>
             {weeklyLessons === 2 ? (
@@ -578,7 +599,7 @@ export default function LessonScheduleGrid({
                   <span className="font-semibold text-slate-600">Time</span>
                   <span className="font-bold text-slate-900">{effectiveTime2 || "—"}</span>
                   <span className="font-semibold text-slate-600">Room</span>
-                  <span className="font-bold text-slate-900">{room2 || "—"}</span>
+                  <span className="font-bold text-slate-900">{room2 ? pickerLabel(resolveScheduleRoomPickerValue(room2, ROOM_GROUPS[0], registry)) : "—"}</span>
                 </div>
               </div>
             ) : null}
@@ -636,7 +657,7 @@ export default function LessonScheduleGrid({
                   <option value="">All</option>
                   {roomFilterOptions.map((rm) => (
                     <option key={rm} value={rm}>
-                      {rm}
+                      {formatRoom(rm)}
                     </option>
                   ))}
                 </select>
@@ -674,7 +695,7 @@ export default function LessonScheduleGrid({
                       </td>
                       <td className="px-3 py-2 font-medium text-slate-900">{WEEKDAY_LABEL[r.weekday] ?? r.weekday}</td>
                       <td className="px-3 py-2 text-slate-800">{r.time}</td>
-                      <td className="px-3 py-2 text-slate-800">{r.room}</td>
+                      <td className="px-3 py-2 text-slate-800">{formatRoom(r.room)}</td>
                       <td className="px-3 py-2 text-right">
                         <div className="inline-flex gap-1">
                           <button

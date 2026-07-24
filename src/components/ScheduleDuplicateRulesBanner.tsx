@@ -13,12 +13,14 @@ type Props<T extends LessonScheduleSlotRule> = {
   records: T[];
   onMerged: (next: T[]) => void;
   weekdayLabel?: (weekday: string) => string;
+  formatRoom?: (room: string) => string;
 };
 
 export default function ScheduleDuplicateRulesBanner<T extends LessonScheduleSlotRule>({
   records,
   onMerged,
   weekdayLabel,
+  formatRoom,
 }: Props<T>) {
   const groups = useMemo(() => findDuplicateScheduleRuleGroups(records), [records]);
   const [merging, setMerging] = useState(false);
@@ -26,6 +28,8 @@ export default function ScheduleDuplicateRulesBanner<T extends LessonScheduleSlo
   if (groups.length === 0) return null;
 
   const removeCount = groups.reduce((n, g) => n + g.remove.length, 0);
+  const slotLabel = (rule: LessonScheduleSlotRule) =>
+    formatScheduleRuleSlotLabel(rule, weekdayLabel, formatRoom);
 
   return (
     <div className="mt-3 rounded-lg border border-orange-300 bg-orange-50 px-3 py-2 text-xs text-orange-950">
@@ -41,11 +45,11 @@ export default function ScheduleDuplicateRulesBanner<T extends LessonScheduleSlo
           >
             <div className="font-medium">Effective {g.effectiveDate}</div>
             <div className="mt-0.5 text-orange-900">
-              保留：{formatScheduleRuleSlotLabel(g.keep, weekdayLabel)}
+              保留：{slotLabel(g.keep)}
             </div>
             {g.remove.map((r) => (
               <div key={r.id ?? scheduleSlotKey(r)} className="text-orange-800 line-through">
-                刪除：{formatScheduleRuleSlotLabel(r, weekdayLabel)}
+                刪除：{slotLabel(r)}
               </div>
             ))}
           </li>
@@ -58,7 +62,7 @@ export default function ScheduleDuplicateRulesBanner<T extends LessonScheduleSlo
           const summary = groups
             .map(
               (g) =>
-                `${g.effectiveDate}: 保留 ${formatScheduleRuleSlotLabel(g.keep, weekdayLabel)}，刪 ${g.remove.length} 條`,
+                `${g.effectiveDate}: 保留 ${slotLabel(g.keep)}，刪 ${g.remove.length} 條`,
             )
             .join("\n");
           if (

@@ -19,14 +19,17 @@ export function normalizeScheduleRoom(roomRaw: string): RoomGroup | "" {
   if (compact === "m後" || compact === "m後房" || compact === "mback" || compact === "m後room") {
     return "M後";
   }
-  if (compact === "hope" || compact === "hope房" || compact === "hope1" || compact === "hope1房") {
+  if (compact === "hope" || compact === "hope房" || compact === "hope1" || compact === "hope1房" || compact === "hopedoor") {
     return "Hope";
   }
-  if (compact === "hope2" || compact === "hope2房") return "Hope 2";
+  if (compact === "hope2" || compact === "hope2房" || compact === "hopeshelf") return "Hope 2";
 
   if (compact.includes("m前") || compact.includes("mfront")) return "M前";
   if (compact.includes("m後") || compact.includes("mback")) return "M後";
-  if (compact.includes("hope2")) return "Hope 2";
+  // Hope - Shelf / hope2 before generic "hope" (Hopedoor still matches hope*)
+  if (compact.includes("hope2") || compact.includes("hopeshelf") || compact.endsWith("shelf")) {
+    return "Hope 2";
+  }
   if (compact.includes("hope")) return "Hope";
   if (compact === "broom") return "B";
 

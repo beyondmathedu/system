@@ -18,21 +18,26 @@ export type ClassroomRow = {
 };
 
 async function fetchClassroomScheduleLabelUncached(slugKey: string): Promise<string | null> {
+  // Prefer canonical schedule keys (Hope / Hope 2), not classrooms.name display
+  // labels like "Hope - Door" — matching uses scheduleRoomsMatch / registry.
+  const fallback = FALLBACK_SLUG_TO_SCHEDULE_LABEL[slugKey];
+  if (fallback) return fallback;
+
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase.from("classrooms").select("name").eq("slug", slugKey).maybeSingle();
+  const { data, error } = await supabase.from("classrooms").select("name, slug").eq("slug", slugKey).maybeSingle();
   if (!error && data?.name) {
     const n = String(data.name).trim();
     if (n) return n;
   }
-  return FALLBACK_SLUG_TO_SCHEDULE_LABEL[slugKey] ?? null;
+  return null;
 }
 
-/** 依網址 slug 取得「課表比對用」房名（與學生 records 內 room 一致）。 */
+/** 依網址 slug 取得「課表比對用」房名（canonical，與學生 records 內 room 一致）。 */
 export async function fetchClassroomScheduleLabel(slug: string): Promise<string | null> {
   const slugKey = slug.trim().toLowerCase();
   return unstable_cache(
     async () => fetchClassroomScheduleLabelUncached(slugKey),
-    ["classroom-schedule-label-v2", slugKey],
+    ["classroom-schedule-label-v3", slugKey],
     { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 }
@@ -90,7 +95,7 @@ async function fetchClassroomRegistryUncached(): Promise<RoomDisplayRegistry> {
 export async function fetchClassroomRegistry(): Promise<RoomDisplayRegistry> {
   return unstable_cache(
     async () => fetchClassroomRegistryUncached(),
-    ["classroom-registry-v2"],
+    ["classroom-registry-v3"],
     { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 }

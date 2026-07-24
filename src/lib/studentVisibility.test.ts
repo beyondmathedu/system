@@ -4,6 +4,7 @@ import {
   isStudentHiddenForFeeSheetMonth,
   isStudentHiddenForFeeSheetMonthFromPeriods,
   isStudentInactiveOnDateFromPeriods,
+  isTemporarilyInactiveOnDateFromPeriods,
   makeStudentInactiveDateChecker,
   makeStudentInactiveDateCheckerFromPeriods,
   normalizeReactivateAsFirstActiveDay,
@@ -26,6 +27,14 @@ describe("period-based inactivity", () => {
     expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-11-14" })).toBe(false);
     expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-11-15" })).toBe(true);
     expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2027-01-01" })).toBe(true);
+  });
+
+  it("treats only pauses with Expected return as temporarily inactive", () => {
+    expect(isTemporarilyInactiveOnDateFromPeriods({ periods, dateIso: "2026-07-15" })).toBe(true);
+    expect(isTemporarilyInactiveOnDateFromPeriods({ periods, dateIso: "2026-09-01" })).toBe(false);
+    // Open-ended / graduated — inactive, but not temporary
+    expect(isTemporarilyInactiveOnDateFromPeriods({ periods, dateIso: "2026-11-15" })).toBe(false);
+    expect(isTemporarilyInactiveOnDateFromPeriods({ periods, dateIso: "2027-01-01" })).toBe(false);
   });
 
   it("keeps extra and makeup visible during inactive periods on timetables", () => {

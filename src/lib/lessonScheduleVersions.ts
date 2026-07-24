@@ -107,10 +107,12 @@ export function hasDuplicateScheduleSlotInVersion<T extends LessonScheduleSlotRu
 export function formatScheduleRuleSlotLabel(
   rule: { weekday: string; time: string; room: string; tutor?: string },
   weekdayLabel?: (wd: string) => string,
+  formatRoom?: (room: string) => string,
 ): string {
   const wd = weekdayLabel ? weekdayLabel(rule.weekday) : rule.weekday;
   const tutor = String(rule.tutor ?? "").trim();
-  return `${wd} ${rule.time} · ${rule.room}${tutor ? ` · ${tutor}` : ""}`;
+  const room = formatRoom ? formatRoom(rule.room) : rule.room;
+  return `${wd} ${rule.time} · ${room}${tutor ? ` · ${tutor}` : ""}`;
 }
 
 /** 同版本內：同一星期几＋時間＋房間只保留一條（優先有導師、較新）。 */
