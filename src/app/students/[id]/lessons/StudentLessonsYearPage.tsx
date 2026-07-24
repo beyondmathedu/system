@@ -62,7 +62,6 @@ import { useStudentLessonYearStateRealtime } from "@/lib/useStudentLessonYearSta
 import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
 import {
   ROOM_GROUPS,
-  canonicalScheduleRoomLabel,
   resolveScheduleRoomPickerValue,
   scheduleRoomsMatch,
   type RoomGroup,
