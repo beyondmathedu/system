@@ -36,6 +36,7 @@ import { scheduleRoomsMatch } from "@/lib/dayTimetableShared";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { monthsToLoadForScheduleRange } from "@/lib/roomScheduleMonths";
 import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
+import { hasTutorNameCandidate } from "@/lib/tutorMonthCandidate";
 import {
   hasRoomScheduleCandidateFromRecords,
   hasRoomScheduleCandidateFromStateSignals,
@@ -194,22 +195,6 @@ function normalizeRecords(raw: unknown): YearLessonRecord[] {
     });
   }
   return out;
-}
-
-function hasTutorNameCandidate(
-  records: YearLessonRecord[],
-  state: YearLessonState,
-  nameSet: Set<string>,
-): boolean {
-  for (const r of records) {
-    const t = String(r.tutor ?? "").trim();
-    if (t && nameSet.has(t)) return true;
-  }
-  for (const ov of Object.values(state.overrides)) {
-    const t = String(ov?.tutor ?? "").trim();
-    if (t && nameSet.has(t)) return true;
-  }
-  return false;
 }
 
 /** 課表記錄／補堂／加堂／覆寫是否可能出現在目標房間（避免對全體學生展開整月）。 */
@@ -802,7 +787,7 @@ async function fetchTutorMonthLessonRowsUncached(
     const records = normalizeRecords(recMap.get(st.id));
     normalizedRecordsById.set(st.id, records);
     const state = stateMap.get(st.id) ?? emptyState();
-    hasTutorCandidateById.set(st.id, hasTutorNameCandidate(records, state, nameSet));
+    hasTutorCandidateById.set(st.id, hasTutorNameCandidate(records, state, nameSet, roomSlotTutorRules));
   }
 
   for (const st of students) {
