@@ -291,8 +291,10 @@ export default function DayTimetableTable({
   const thTimeClass = dailyCompactColumns ? TH_TIME_DAILY : TH_TIME;
   const thRoomRow1Class = dailyCompactColumns ? TH_ROOM_ROW1_DAILY : TH_ROOM_ROW1;
   const tableClassName =
-    dailyCompactColumns || (compactStudentNames && showRegularCapacitySummary)
-      ? "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
+    dailyCompactColumns
+      ? "min-w-[980px] w-full table-fixed border-collapse text-[11px] sm:text-sm"
+      : compactStudentNames && showRegularCapacitySummary
+        ? "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
       : fluidNameCell
         ? "tt-regular-table w-full min-w-0 table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm"
         : "min-w-[960px] w-full border-collapse text-sm";
