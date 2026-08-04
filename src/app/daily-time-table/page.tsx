@@ -100,6 +100,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
                 hideRemarks={readOnly}
                 roomScheduleQuery={roomScheduleQuery}
                 roomGroupsForTable={DAILY_TIME_TABLE_ROOM_ORDER}
+                enableRoomVisibilityToggle
               />
               <DayTimetableLegend timetableStyle={payload.timetableStyle} hideRemarks={readOnly} />
               {readOnly ? (

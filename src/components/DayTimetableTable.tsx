@@ -198,6 +198,8 @@ type Props = {
    * Default uses ROOM_GROUPS from the timetable shared lib.
    */
   roomGroupsForTable?: readonly RoomGroup[];
+  /** Daily page: allow per-room show/hide toggles to reduce empty columns. */
+  enableRoomVisibilityToggle?: boolean;
 };
 
 const COLS_PER_ROOM = 3;
@@ -244,6 +246,7 @@ export default function DayTimetableTable({
   hideRemarks = false,
   roomScheduleQuery,
   roomGroupsForTable,
+  enableRoomVisibilityToggle = false,
 }: Props) {
   const t = dayTimetableTableStrings;
   const {
@@ -277,7 +280,6 @@ export default function DayTimetableTable({
         : [];
     return { roomsForTable, omittedRoomsToday };
   }, [rowFrames, byTimeRoom, baseRoomGroups]);
-  const roomColSpan = roomsForTable.length * COLS_PER_ROOM + 1;
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
   const dailyCompactColumns = repeatRoomHeadersPerTimeSlot;
   const dailyNameCells = dailyCompactColumns || compactStudentNames;
@@ -292,19 +294,10 @@ export default function DayTimetableTable({
   const thRoomRow1Class = dailyCompactColumns ? TH_ROOM_ROW1_DAILY : TH_ROOM_ROW1;
   const tableClassName =
     dailyCompactColumns || (compactStudentNames && showRegularCapacitySummary)
-      ? dailyCompactColumns
-        ? "w-full table-fixed border-collapse text-[11px] sm:text-sm"
-        : "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
+      ? "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
       : fluidNameCell
         ? "tt-regular-table w-full min-w-0 table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm"
         : "min-w-[960px] w-full border-collapse text-sm";
-  const dailyTableMinWidthPx = dailyCompactColumns ? 80 + roomsForTable.length * 260 : undefined;
-  const stickyTimeHeaderClass = dailyCompactColumns
-    ? "sticky left-0 z-20 bg-slate-50 shadow-[1px_0_0_0_rgba(203,213,225,1)]"
-    : "";
-  const stickyTimeCellClass = dailyCompactColumns
-    ? "sticky left-0 z-10 bg-white shadow-[1px_0_0_0_rgba(203,213,225,1)]"
-    : "";
   const [hoverPanel, setHoverPanel] = useState<{
     studentId: string;
     name: string;
@@ -318,6 +311,7 @@ export default function DayTimetableTable({
     hideRemarks ? {} : (payload.timetableRemarksById ?? {}),
   );
   const [savingById, setSavingById] = useState<Record<string, boolean>>({});
+  const [hiddenRooms, setHiddenRooms] = useState<RoomGroup[]>([]);
   const saveTimersRef = useRef<Map<string, number>>(new Map());
   const hideHoverTimerRef = useRef<number | null>(null);
 
@@ -325,6 +319,10 @@ export default function DayTimetableTable({
     setRemarksById(hideRemarks ? {} : (payload.timetableRemarksById ?? {}));
     setHoverPanel(null);
   }, [hideRemarks, payload.timetableRemarksById, payload.dateIso]);
+
+  useEffect(() => {
+    setHiddenRooms((prev) => prev.filter((room) => roomsForTable.includes(room)));
+  }, [roomsForTable]);
 
   useEffect(() => {
     if (!hoverPanel) return;
@@ -371,6 +369,38 @@ export default function DayTimetableTable({
       hideHoverTimerRef.current = null;
     };
   }, []);
+
+  const visibleRoomsForTable = useMemo(() => {
+    if (!enableRoomVisibilityToggle) return roomsForTable;
+    return roomsForTable.filter((room) => !hiddenRooms.includes(room));
+  }, [enableRoomVisibilityToggle, hiddenRooms, roomsForTable]);
+
+  const visibleRoomColSpan = visibleRoomsForTable.length * COLS_PER_ROOM + 1;
+
+  const toggleRoomVisibility = useCallback((room: RoomGroup) => {
+    setHiddenRooms((prev) =>
+      prev.includes(room) ? prev.filter((item) => item !== room) : [...prev, room],
+    );
+  }, []);
+
+  function renderEyeIcon(hidden: boolean) {
+    if (hidden) {
+      return (
+        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+          <path d="M2.5 2.5l15 15" strokeLinecap="round" />
+          <path d="M8.9 4.2A8.7 8.7 0 0110 4.1c4.3 0 7.8 3 9 5.9a10.8 10.8 0 01-3.1 4.2" strokeLinecap="round" />
+          <path d="M7 7a4 4 0 005.5 5.5" strokeLinecap="round" />
+          <path d="M4.1 7.2A10.6 10.6 0 001 10c1.2 2.9 4.7 5.9 9 5.9 1 0 2-.2 2.9-.5" strokeLinecap="round" />
+        </svg>
+      );
+    }
+    return (
+      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+        <path d="M1 10c1.2-2.9 4.7-5.9 9-5.9S17.8 7.1 19 10c-1.2 2.9-4.7 5.9-9 5.9S2.2 12.9 1 10z" />
+        <circle cx="10" cy="10" r="2.6" />
+      </svg>
+    );
+  }
 
   function openHover(params: {
     studentId: string;
@@ -478,11 +508,28 @@ export default function DayTimetableTable({
   function renderRoomHeader(room: RoomGroup) {
     const label = roomLabel(room);
     const href = buildRoomPageHref(room, effectiveRoomScheduleQuery());
-    if (!href) return label;
-    return (
+    const headerLabel = href ? (
       <Link href={href} className="text-[#1d76c2] hover:underline">
         {label}
       </Link>
+    ) : (
+      label
+    );
+    if (!enableRoomVisibilityToggle) return headerLabel;
+    const hidden = hiddenRooms.includes(room);
+    return (
+      <div className="flex items-center justify-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => toggleRoomVisibility(room)}
+          className="inline-flex h-6 w-6 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-800"
+          aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
+          title={hidden ? `Show ${label}` : `Hide ${label}`}
+        >
+          {renderEyeIcon(hidden)}
+        </button>
+        <span>{headerLabel}</span>
+      </div>
     );
   }
 
@@ -512,15 +559,39 @@ export default function DayTimetableTable({
           ) : null}
         </p>
       ) : null}
+      {enableRoomVisibilityToggle ? (
+        <div className="border-b border-slate-200 bg-white px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-slate-600">Rooms</span>
+            {roomsForTable.map((room) => {
+              const hidden = hiddenRooms.includes(room);
+              return (
+                <button
+                  key={`room-visibility-${room}`}
+                  type="button"
+                  onClick={() => toggleRoomVisibility(room)}
+                  className={[
+                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition",
+                    hidden
+                      ? "border-slate-300 bg-slate-100 text-slate-500"
+                      : "border-sky-200 bg-sky-50 text-slate-800",
+                  ].join(" ")}
+                  aria-pressed={!hidden}
+                >
+                  {renderEyeIcon(hidden)}
+                  {roomLabel(room)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-auto rounded-b-lg">
-      <table
-        className={tableClassName}
-        style={dailyTableMinWidthPx ? { minWidth: `${dailyTableMinWidthPx}px` } : undefined}
-      >
+      <table className={tableClassName}>
         {fluidNameCell ? (
           <colgroup>
             <col className="tt-col-time" />
-            {roomsForTable.flatMap((room) => [
+            {visibleRoomsForTable.flatMap((room) => [
               <col key={`col-name-${room}`} />,
               <col key={`col-grade-${room}`} className="tt-col-grade" />,
               <col key={`col-exam-${room}`} className="tt-col-exam" />,
@@ -531,7 +602,7 @@ export default function DayTimetableTable({
           <thead className="sr-only">
             <tr>
               <th scope="col">{t.time}</th>
-              {roomsForTable.flatMap((room) => [
+              {visibleRoomsForTable.flatMap((room) => [
                 <th key={`sr-name-${room}`} scope="col">
                   {room} — {t.name}
                 </th>,
@@ -547,10 +618,10 @@ export default function DayTimetableTable({
         ) : (
           <thead className="bg-slate-50">
             <tr>
-              <th rowSpan={2} className={`${thTimeClass} ${stickyTimeHeaderClass}`}>
+              <th rowSpan={2} className={thTimeClass}>
                 {t.time}
               </th>
-              {roomsForTable.map((room) => (
+              {visibleRoomsForTable.map((room) => (
                 <th
                   key={`room-${room}`}
                   colSpan={COLS_PER_ROOM}
@@ -561,7 +632,7 @@ export default function DayTimetableTable({
               ))}
             </tr>
             <tr>
-              {roomsForTable.flatMap((room) => [
+              {visibleRoomsForTable.flatMap((room) => [
                 <th key={`name-${room}`} className={thNameClass}>
                   {t.name}
                 </th>,
@@ -579,7 +650,7 @@ export default function DayTimetableTable({
           {rowFrames.length === 0 ? (
             <tr>
               <td
-                colSpan={roomColSpan}
+                colSpan={visibleRoomColSpan}
                 className="border border-slate-300 px-4 py-6 text-center text-sm text-slate-500"
               >
                 {emptyMessage}
@@ -591,7 +662,7 @@ export default function DayTimetableTable({
                 {showPeriodSeparatorOnly && frameIdx > 0 ? (
                   <tr>
                     <td
-                      colSpan={roomColSpan}
+                      colSpan={visibleRoomColSpan}
                       className="h-0 border-t-2 border-slate-400 p-0"
                     />
                   </tr>
@@ -602,11 +673,11 @@ export default function DayTimetableTable({
                       <th
                         rowSpan={2}
                         scope="row"
-                        className={`${thTimeClass} ${stickyTimeHeaderClass}`}
+                        className={thTimeClass}
                       >
                         {frame.time}
                       </th>
-                      {roomsForTable.map((room) => (
+                      {visibleRoomsForTable.map((room) => (
                         <th
                           key={`${frame.time}-slot-h1-${room}`}
                           colSpan={COLS_PER_ROOM}
@@ -618,7 +689,7 @@ export default function DayTimetableTable({
                       ))}
                     </tr>
                     <tr className="bg-slate-50">
-                      {roomsForTable.flatMap((room) => [
+                      {visibleRoomsForTable.flatMap((room) => [
                         <th key={`${frame.time}-slot-h2-${room}-n`} className={thNameClass}>
                           {t.name}
                         </th>,
@@ -637,13 +708,13 @@ export default function DayTimetableTable({
                   </>
                 ) : null}
                 {Array.from({ length: frame.maxRows }, (_, idx) => {
-                  const cells = roomsForTable.map((room) => byTimeRoom[`${frame.time}::${room}`] ?? []);
+                  const cells = visibleRoomsForTable.map((room) => byTimeRoom[`${frame.time}::${room}`] ?? []);
                   const timeCell =
                     repeatRoomHeadersPerTimeSlot ? "" : idx === 0 ? frame.time : "";
                   return (
                     <tr key={`${frame.time}-${idx}`}>
-                      <td className={`${TD_TIME} ${stickyTimeCellClass} ${noGridCls}`}>{timeCell}</td>
-                      {roomsForTable.map((room, roomIdx) => {
+                      <td className={`${TD_TIME} ${noGridCls}`}>{timeCell}</td>
+                      {visibleRoomsForTable.map((room, roomIdx) => {
                         const item = cells[roomIdx][idx];
                         const feeTone = item
                           ? feeToneForStudent(feePaymentToneByStudentId, item.studentId)
@@ -761,10 +832,10 @@ export default function DayTimetableTable({
                 })}
                 {showRegularCapacitySummary ? (
                   <tr key={`${frame.time}-cap`} className="bg-emerald-50/90">
-                    <td className={`${TD_TIME_CAP} ${stickyTimeCellClass} border-emerald-200/80 bg-emerald-50`}>
+                    <td className={`${TD_TIME_CAP} border-emerald-200/80`}>
                       {t.balanceRow}
                     </td>
-                    {roomsForTable.map((room) => {
+                    {visibleRoomsForTable.map((room) => {
                       const slotKey = `${frame.time}::${room}`;
                       const list = byTimeRoom[slotKey] ?? [];
                       const regularCount = list.filter((c) => c.lessonType === "恆常").length;
