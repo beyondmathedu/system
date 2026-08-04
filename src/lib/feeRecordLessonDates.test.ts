@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hiddenScheduleRuleStorageKey } from "@/lib/lessonScheduleHidden";
+import { hiddenScheduleRuleDateStorageKey, hiddenScheduleRuleStorageKey } from "@/lib/lessonScheduleHidden";
 import {
   collectAttendedBillableLessonDatesForMonth,
   collectBillableLessonDatesForMonth,
@@ -109,6 +109,47 @@ describe("feeRecordLessonDates", () => {
     });
 
     expect(may.includes("25/5")).toBe(false);
+  });
+
+  it("hides a pending-makeup date from fee count via rule+date hidden key", () => {
+    const ruleId = "may26-tutor-00002-_|04_30_PM|M_-0501";
+    const records = normalizeFeeLessonRecords([
+      {
+        id: ruleId,
+        effectiveDate: "2026-05-01",
+        weekday: "二",
+        time: "04:30 PM",
+        room: "M前",
+        createdAt: 1,
+      },
+    ]);
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-pending-5th",
+      fromDate: "2026-06-30",
+      toDate: "",
+      time: "",
+      room: "",
+      pending: true,
+    });
+
+    const before = collectBillableLessonDatesForMonth({
+      records,
+      state,
+      year: 2026,
+      month1to12: 6,
+    });
+    expect(before.includes("30/6")).toBe(true);
+
+    state.hiddenDates[hiddenScheduleRuleDateStorageKey(ruleId, "2026-06-30")] = true;
+
+    const after = collectBillableLessonDatesForMonth({
+      records,
+      state,
+      year: 2026,
+      month1to12: 6,
+    });
+    expect(after.includes("30/6")).toBe(false);
   });
 
   it("emits two slots on the same weekday when two rules share it", () => {

@@ -32,14 +32,15 @@ export function useStudentLessonYearStateRealtime(
           const raw = payload.new as Record<string, unknown> | null;
           if (!raw || Number(raw.year) !== year) return;
           // REPLICA IDENTITY DEFAULT may omit JSON columns — skip incomplete rows
-          // so we don't wipe local extras/reschedules with empty defaults.
-          const hasJson =
-            "attendance" in raw ||
-            "hidden_dates" in raw ||
-            "overrides" in raw ||
-            "reschedule_entries" in raw ||
-            "extra_entries" in raw;
-          if (!hasJson) return;
+          // so we don't wipe local extras/reschedules/hidden_dates with empty defaults.
+          const requiredJsonKeys = [
+            "attendance",
+            "hidden_dates",
+            "overrides",
+            "reschedule_entries",
+            "extra_entries",
+          ] as const;
+          if (!requiredJsonKeys.every((key) => key in raw)) return;
           const parsed = parseLessonYearStateFromRealtimeRow(raw);
           if (parsed) onRemoteRef.current(parsed.state);
         },

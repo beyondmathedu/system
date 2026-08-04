@@ -4467,15 +4467,23 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                     .map((id) => scheduleRowById.get(id))
                     .filter((r): r is ScheduleRow => Boolean(r));
 
-                  const regularDeletes = selectedRows.filter(
-                    (row) => row.rowKind === "normal" && !row.extraEntryId,
+                  const hideableDeletes = selectedRows.filter(
+                    (row) =>
+                      !row.extraEntryId &&
+                      (row.rowKind === "normal" ||
+                        row.rowKind === "cancelled_original" ||
+                        row.lessonType === TYPE_PENDING),
                   );
                   const willHideWholeDates = new Set<string>();
                   const willHideRuleDates = new Set<string>();
-                  for (const row of regularDeletes) {
+                  for (const row of hideableDeletes) {
                     const parsed = parseRegularLessonRowId(row.rowId);
                     if (!parsed) {
-                      willHideWholeDates.add(row.date);
+                      if (row.scheduleRuleId) {
+                        willHideRuleDates.add(`${row.date} · rule ${row.scheduleRuleId}`);
+                      } else {
+                        willHideWholeDates.add(row.date);
+                      }
                       continue;
                     }
                     willHideRuleDates.add(`${parsed.dateIso} · rule ${parsed.ruleId}`);
@@ -4502,7 +4510,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                     }
                   }
 
+                  const lockedPendingMessages: string[] = [];
                   if (rescheduleIdsToDelete.size > 0) {
+                    const removableRescheduleIds: string[] = [];
                     for (const id of rescheduleIdsToDelete) {
                       const entry = rescheduleEntryById.get(id);
                       if (
@@ -4510,19 +4520,21 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                         isPendingRescheduleEntry(entry) &&
                         !isPendingMakeupEditable(entry.fromDate, hkTodayYmd)
                       ) {
-                        setSelectionError(pendingMakeupLockedMessage(entry.fromDate));
-                        return;
+                        lockedPendingMessages.push(pendingMakeupLockedMessage(entry.fromDate));
+                        continue;
                       }
+                      removableRescheduleIds.push(id);
                     }
-                    const nextEntries = rescheduleEntries.filter(
-                      (e) => !rescheduleIdsToDelete.has(e.id),
-                    );
-                    setRescheduleEntries(nextEntries);
-                    window.localStorage.setItem(
-                      RESCHEDULE_STORAGE_KEY,
-                      JSON.stringify(nextEntries),
-                    );
-                    persistYearState({ rescheduleEntries: nextEntries });
+                    if (removableRescheduleIds.length > 0) {
+                      const removableSet = new Set(removableRescheduleIds);
+                      const nextEntries = rescheduleEntries.filter((e) => !removableSet.has(e.id));
+                      setRescheduleEntries(nextEntries);
+                      window.localStorage.setItem(
+                        RESCHEDULE_STORAGE_KEY,
+                        JSON.stringify(nextEntries),
+                      );
+                      persistYearState({ rescheduleEntries: nextEntries });
+                    }
                   }
 
                   if (extraIdsToDelete.size > 0) {
@@ -4536,16 +4548,34 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
 
                   const nextHidden = { ...hiddenDates };
                   for (const row of selectedRows) {
-                    if (row.rowKind !== "normal" || row.extraEntryId) continue;
+                    if (row.extraEntryId) continue;
+                    if (
+                      row.rowKind !== "normal" &&
+                      row.rowKind !== "cancelled_original" &&
+                      row.lessonType !== TYPE_PENDING
+                    ) {
+                      continue;
+                    }
                     const parsed = parseRegularLessonRowId(row.rowId);
                     if (!parsed) {
-                      nextHidden[row.date] = true;
+                      if (row.scheduleRuleId) {
+                        nextHidden[
+                          hiddenScheduleRuleDateStorageKey(row.scheduleRuleId, row.date)
+                        ] = true;
+                      } else {
+                        nextHidden[row.date] = true;
+                      }
                       continue;
                     }
                     nextHidden[hiddenScheduleRuleDateStorageKey(parsed.ruleId, parsed.dateIso)] = true;
                   }
                   persistHiddenDates(nextHidden);
                   setSelectedRowIds([]);
+                  if (lockedPendingMessages.length > 0) {
+                    setSelectionError(
+                      `Hidden from this list and fee count. Pending makeup entry kept locked: ${lockedPendingMessages[0]}`,
+                    );
+                  }
                 }}
                 className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
