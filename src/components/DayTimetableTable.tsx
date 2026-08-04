@@ -291,13 +291,19 @@ export default function DayTimetableTable({
   const thTimeClass = dailyCompactColumns ? TH_TIME_DAILY : TH_TIME;
   const thRoomRow1Class = dailyCompactColumns ? TH_ROOM_ROW1_DAILY : TH_ROOM_ROW1;
   const tableClassName =
-    dailyCompactColumns
-      ? "w-max min-w-[980px] table-fixed border-collapse text-[11px] sm:text-sm"
-      : compactStudentNames && showRegularCapacitySummary
-        ? "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
+    dailyCompactColumns || (compactStudentNames && showRegularCapacitySummary)
+      ? dailyCompactColumns
+        ? "w-full min-w-[980px] table-fixed border-collapse text-[11px] sm:text-sm"
+        : "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
       : fluidNameCell
         ? "tt-regular-table w-full min-w-0 table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm"
         : "min-w-[960px] w-full border-collapse text-sm";
+  const stickyTimeHeaderClass = dailyCompactColumns
+    ? "sticky left-0 z-20 bg-slate-50 shadow-[1px_0_0_0_rgba(203,213,225,1)]"
+    : "";
+  const stickyTimeCellClass = dailyCompactColumns
+    ? "sticky left-0 z-10 bg-white shadow-[1px_0_0_0_rgba(203,213,225,1)]"
+    : "";
   const [hoverPanel, setHoverPanel] = useState<{
     studentId: string;
     name: string;
@@ -505,7 +511,7 @@ export default function DayTimetableTable({
           ) : null}
         </p>
       ) : null}
-      <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-y-auto overflow-x-auto rounded-b-lg">
+      <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-auto rounded-b-lg">
       <table className={tableClassName}>
         {fluidNameCell ? (
           <colgroup>
@@ -537,7 +543,7 @@ export default function DayTimetableTable({
         ) : (
           <thead className="bg-slate-50">
             <tr>
-              <th rowSpan={2} className={thTimeClass}>
+              <th rowSpan={2} className={`${thTimeClass} ${stickyTimeHeaderClass}`}>
                 {t.time}
               </th>
               {roomsForTable.map((room) => (
@@ -592,7 +598,7 @@ export default function DayTimetableTable({
                       <th
                         rowSpan={2}
                         scope="row"
-                        className={thTimeClass}
+                        className={`${thTimeClass} ${stickyTimeHeaderClass}`}
                       >
                         {frame.time}
                       </th>
@@ -632,7 +638,7 @@ export default function DayTimetableTable({
                     repeatRoomHeadersPerTimeSlot ? "" : idx === 0 ? frame.time : "";
                   return (
                     <tr key={`${frame.time}-${idx}`}>
-                      <td className={`${TD_TIME} ${noGridCls}`}>{timeCell}</td>
+                      <td className={`${TD_TIME} ${stickyTimeCellClass} ${noGridCls}`}>{timeCell}</td>
                       {roomsForTable.map((room, roomIdx) => {
                         const item = cells[roomIdx][idx];
                         const feeTone = item
@@ -751,7 +757,7 @@ export default function DayTimetableTable({
                 })}
                 {showRegularCapacitySummary ? (
                   <tr key={`${frame.time}-cap`} className="bg-emerald-50/90">
-                    <td className={`${TD_TIME_CAP} border-emerald-200/80`}>
+                    <td className={`${TD_TIME_CAP} ${stickyTimeCellClass} border-emerald-200/80 bg-emerald-50`}>
                       {t.balanceRow}
                     </td>
                     {roomsForTable.map((room) => {
