@@ -2381,6 +2381,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     return (
       <tr key={key} className="divide-x divide-slate-100 bg-slate-100">
         <td colSpan={11} className="px-4 py-4 text-center text-sm text-slate-700">
+          <span className="mr-2 inline-flex items-center rounded-md bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
+            Status: Inactive
+          </span>
           <span className="font-semibold text-slate-900">{range}</span>
           {" "}— 此段因 Inactive 不顯示課堂（{gap.effectiveDate} 起
           {gap.reactivateDate ? `，${gap.reactivateDate} 復課` : ""}）

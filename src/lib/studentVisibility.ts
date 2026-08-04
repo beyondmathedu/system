@@ -73,7 +73,10 @@ function sortAndCoalescePeriods(periods: StudentInactivePeriod[]): StudentInacti
     .map((p) => ({
       studentId: String(p.studentId ?? "").trim(),
       startDate: String(p.startDate ?? "").trim(),
-      endDate: normalizeOptionalIsoDate(p.endDate),
+      // periods.endDate is expected to be the first active day (exclusive end).
+      // If stored as the last day of a month by mistake (e.g. stop 6/1–6/30 and set return=6/30),
+      // normalize to the first active day next month so the whole pause month is recognized.
+      endDate: normalizeReactivateAsFirstActiveDay(p.endDate),
       note: typeof p.note === "string" ? p.note : undefined,
     }))
     .filter((p) => isoIsValid(p.startDate));
