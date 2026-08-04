@@ -193,6 +193,11 @@ type Props = {
   /** Link room headers to `/rooms/{slug}` with this query string */
   roomScheduleQuery?: string;
   /** `en`：Regular timetable page */
+  /**
+   * Optional: override the room column order.
+   * Default uses ROOM_GROUPS from the timetable shared lib.
+   */
+  roomGroupsForTable?: readonly RoomGroup[];
 };
 
 const COLS_PER_ROOM = 3;
@@ -238,6 +243,7 @@ export default function DayTimetableTable({
   allowStudentNameLinks = false,
   hideRemarks = false,
   roomScheduleQuery,
+  roomGroupsForTable,
 }: Props) {
   const t = dayTimetableTableStrings;
   const {
@@ -250,26 +256,27 @@ export default function DayTimetableTable({
     feePaymentToneByStudentId,
     timetableStyle,
   } = payload;
+  const baseRoomGroups: readonly RoomGroup[] = roomGroupsForTable ?? ROOM_GROUPS;
   const roomLabel = useCallback(
     (room: RoomGroup) => roomDisplayLabels?.[room] ?? room,
     [roomDisplayLabels],
   );
   const repeatSlotRoomHint = useMemo(
-    () => ROOM_GROUPS.map((room) => roomDisplayLabels?.[room] ?? room).join(", "),
-    [roomDisplayLabels],
+    () => baseRoomGroups.map((room) => roomDisplayLabels?.[room] ?? room).join(", "),
+    [baseRoomGroups, roomDisplayLabels],
   );
   const { roomsForTable, omittedRoomsToday } = useMemo(() => {
-    const withStudents = ROOM_GROUPS.filter((room) =>
+    const withStudents = baseRoomGroups.filter((room) =>
       rowFrames.some((frame) => (byTimeRoom[`${frame.time}::${room}`] ?? []).length > 0),
     ) as RoomGroup[];
     const roomsForTable: RoomGroup[] =
       withStudents.length > 0 ? withStudents : [...ROOM_GROUPS];
     const omittedRoomsToday: RoomGroup[] =
-      rowFrames.length > 0 && withStudents.length < ROOM_GROUPS.length
-        ? (ROOM_GROUPS.filter((r) => !withStudents.includes(r)) as RoomGroup[])
+      rowFrames.length > 0 && withStudents.length < baseRoomGroups.length
+        ? (baseRoomGroups.filter((r) => !withStudents.includes(r)) as RoomGroup[])
         : [];
     return { roomsForTable, omittedRoomsToday };
-  }, [rowFrames, byTimeRoom]);
+  }, [rowFrames, byTimeRoom, baseRoomGroups]);
   const roomColSpan = roomsForTable.length * COLS_PER_ROOM + 1;
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
   const dailyCompactColumns = repeatRoomHeadersPerTimeSlot;

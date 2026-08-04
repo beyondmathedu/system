@@ -13,6 +13,7 @@ import { redactDayTimetableRemarks } from "@/lib/dayTimetableShared";
 import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { fetchDayTimetablePayload, parseDayParams } from "@/lib/dayTimetableGrid";
 import { normalizeStudentId } from "@/lib/studentId";
+import type { RoomGroup } from "@/lib/dayTimetableShared";
 
 type PageProps = {
   searchParams?: Promise<{ year?: string; month?: string; day?: string }>;
@@ -22,6 +23,8 @@ function shiftDay(year: number, month: number, day: number, delta: number) {
   const d = new Date(Date.UTC(year, month - 1, day + delta));
   return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
 }
+
+const DAILY_TIME_TABLE_ROOM_ORDER: readonly RoomGroup[] = ["Hope", "Hope 2", "B", "M前", "M後"];
 
 export default async function DailyTimeTablePage({ searchParams }: PageProps) {
   const sp = searchParams ? await searchParams : undefined;
@@ -96,6 +99,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
                 allowStudentNameLinks={readOnly}
                 hideRemarks={readOnly}
                 roomScheduleQuery={roomScheduleQuery}
+                roomGroupsForTable={DAILY_TIME_TABLE_ROOM_ORDER}
               />
               <DayTimetableLegend timetableStyle={payload.timetableStyle} hideRemarks={readOnly} />
               {readOnly ? (
