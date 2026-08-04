@@ -193,7 +193,10 @@ function assignLLabelsAndDisplayOrder(
 
   const monthCounter: Record<number, number> = {};
   return rows.map((r, i) => {
-    if (r.rowKind === "cancelled_original") {
+    // cancelled_original usually displays "/" because the original slot is cancelled.
+    // For pending makeup, we still want it to count as the paid lesson of that month,
+    // so show "Lx" instead of "/".
+    if (r.rowKind === "cancelled_original" && r.lessonType !== TYPE_PENDING) {
       return { ...r, lLabel: "/", displayOrder: i };
     }
     const rowKey = `${r.date}|${r.time}|${r.room}`;

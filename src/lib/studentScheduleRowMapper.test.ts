@@ -88,6 +88,8 @@ describe("studentScheduleRowMapper", () => {
     const pending = rows.find((r) => r.date === "2026-05-25");
 
     expect(pending?.lessonType).toBe(PENDING_MAKEUP_TYPE_LABEL);
+    expect(pending?.lLabel).not.toBe("/");
+    expect(pending?.lLabel).toMatch(/^L\d+$/);
     expect(pending?.pendingMakeupLabel).toBe("Makeup until end of June");
     expect(rows.some((r) => r.lessonType === "Reschedule")).toBe(false);
   });
