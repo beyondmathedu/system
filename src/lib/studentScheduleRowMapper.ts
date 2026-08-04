@@ -3,7 +3,7 @@
  * Keeps L-label / double-reschedule display logic in one place.
  */
 
-import { readLessonDayOverrideField } from "@/lib/lessonScheduleVersions";
+import { parseCancelledOriginalRowId, readLessonDayOverrideField } from "@/lib/lessonScheduleVersions";
 import {
   formatPendingMakeupReminder,
   isPendingMakeupVisible,
@@ -142,9 +142,9 @@ function mapCoreRowToStudentRow(
   }
 
   if (core.rowKind === "cancelled_original") {
-    const cancelledMatch = /^cancelled-(.+)-(\d{4}-\d{2}-\d{2})$/.exec(core.rowId);
+    const cancelledMatch = parseCancelledOriginalRowId(core.rowId);
     if (cancelledMatch) {
-      rescheduleEntryId = cancelledMatch[1];
+      rescheduleEntryId = cancelledMatch.entryId;
       const entry = state.rescheduleEntries.find((e) => e.id === rescheduleEntryId);
       if (entry?.pending) {
         pendingMakeupLabel = formatPendingMakeupReminder(entry.fromDate, hkTodayYmd);

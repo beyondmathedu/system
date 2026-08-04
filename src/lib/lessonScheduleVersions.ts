@@ -276,6 +276,53 @@ export function regularLessonAttendanceKey(rule: { id?: string }, dateIso: strin
   return rule.id ? `regular:${rule.id}:${dateIso}` : dateIso;
 }
 
+/**
+ * Cancelled-original row identity. Include slotKey so two lessons on the same
+ * fromDate (e.g. double weekly slots) do not share a React key.
+ */
+export function cancelledOriginalSlotKey(slot: {
+  baseRuleId?: string | null;
+  time?: string;
+  room?: string;
+  fallbackRowId?: string;
+}): string {
+  const ruleId = String(slot.baseRuleId ?? "").trim();
+  if (ruleId) return ruleId;
+  const time = String(slot.time ?? "").trim();
+  const room = String(slot.room ?? "").trim();
+  if (time || room) return `${time}|${room}`;
+  return String(slot.fallbackRowId ?? "slot").trim() || "slot";
+}
+
+export function buildCancelledOriginalRowId(
+  entryId: string,
+  fromDate: string,
+  slotKey: string,
+): string {
+  return `cancelled-${entryId}-${fromDate}-${slotKey}`;
+}
+
+export function buildCancelledOriginalAttendanceKey(
+  entryId: string,
+  fromDate: string,
+  slotKey: string,
+): string {
+  return `cancelled:${fromDate}:${entryId}:${slotKey}`;
+}
+
+/** Parse cancelled-original rowId; supports legacy `cancelled-{id}-{date}` without slot. */
+export function parseCancelledOriginalRowId(
+  rowId: string,
+): { entryId: string; fromDate: string; slotKey: string } | null {
+  const m = /^cancelled-(.+)-(\d{4}-\d{2}-\d{2})(?:-(.+))?$/.exec(String(rowId ?? ""));
+  if (!m) return null;
+  return {
+    entryId: m[1],
+    fromDate: m[2],
+    slotKey: m[3] ?? "",
+  };
+}
+
 export function isRegularLessonAttended(
   attendance: Record<string, boolean>,
   rule: { id?: string },

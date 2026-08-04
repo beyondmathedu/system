@@ -1,5 +1,5 @@
 import { normalizeScheduleRoom, ROOM_GROUPS, type RoomGroup } from "@/lib/roomGroups";
-import { FALLBACK_SLUG_TO_SCHEDULE_LABEL } from "@/lib/roomConstants";
+import { FALLBACK_SLUG_TO_SCHEDULE_LABEL, SCHEDULE_LABEL_TO_ROOM_SLUG } from "@/lib/roomConstants";
 
 /** slug → internal timetable room key */
 export const SLUG_TO_ROOM_GROUP: Record<string, RoomGroup> = {
@@ -11,6 +11,23 @@ export const SLUG_TO_ROOM_GROUP: Record<string, RoomGroup> = {
   hope: "Hope",
   "hope-2": "Hope 2",
 };
+
+export const ROOM_GROUP_TO_SLUG: Record<RoomGroup, string> = {
+  B: "b",
+  M前: "m-qian",
+  M後: "m-hou",
+  Hope: "hope",
+  "Hope 2": "hope-2",
+};
+
+export function roomGroupToSlug(group: RoomGroup): string {
+  return ROOM_GROUP_TO_SLUG[group] ?? SCHEDULE_LABEL_TO_ROOM_SLUG[group] ?? "b";
+}
+
+export function roomSlugToGroup(slug: string, fallback: RoomGroup = "B"): RoomGroup {
+  const key = String(slug ?? "").trim().toLowerCase();
+  return SLUG_TO_ROOM_GROUP[key] ?? fallback;
+}
 
 export type RoomDisplayRegistry = {
   displayLabelByGroup: Record<RoomGroup, string>;
@@ -71,6 +88,15 @@ export function buildRoomDisplayRegistry(
     nameToGroup.set(name.toLowerCase(), group);
     nameToGroup.set(group.toLowerCase(), group);
   }
+
+  // Stable aliases so Door/Shelf (and legacy Hope 1) resolve even if a row is missing.
+  nameToGroup.set("hope - door", "Hope");
+  nameToGroup.set("hope door", "Hope");
+  nameToGroup.set("hope1", "Hope");
+  nameToGroup.set("hope 1", "Hope");
+  nameToGroup.set("hope - shelf", "Hope 2");
+  nameToGroup.set("hope shelf", "Hope 2");
+  nameToGroup.set("hope2", "Hope 2");
 
   return { displayLabelByGroup, storageLabelByGroup, nameToGroup };
 }

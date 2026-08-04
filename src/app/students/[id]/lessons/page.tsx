@@ -617,7 +617,11 @@ export default function StudentLessonsPage() {
           <div className="p-6">
             <h2 className="mb-4 text-lg font-bold text-slate-900">Lesson Schedule Settings</h2>
             {scheduleRecords ? (
-              <LessonScheduleGrid studentId={studentId} initialRecords={scheduleRecords} />
+              <LessonScheduleGrid
+                studentId={studentId}
+                initialRecords={scheduleRecords}
+                onRecordsChange={setScheduleRecords}
+              />
             ) : (
               <div className="h-48 animate-pulse rounded-xl bg-slate-100" aria-hidden />
             )}

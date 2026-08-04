@@ -6,8 +6,8 @@ import ScheduleDuplicateRulesBanner from "@/components/ScheduleDuplicateRulesBan
 import { hasDuplicateScheduleSlotInVersion } from "@/lib/lessonScheduleVersions";
 import {
   loadLessonScheduleRecords,
-  saveLessonScheduleRecords,
 } from "@/lib/studentLessonStorage";
+import { queueSaveLessonScheduleRecords } from "@/lib/queueSaveLessonScheduleRecords";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import {
   ROOM_GROUPS,
@@ -105,9 +105,11 @@ function normalizeLessonRecord(raw: ScheduleRecord): ScheduleRecord & { effectiv
 export default function LessonScheduleGrid({
   studentId,
   initialRecords,
+  onRecordsChange,
 }: {
   studentId: string;
   initialRecords?: LessonScheduleRecord[] | null;
+  onRecordsChange?: (records: LessonScheduleRecord[]) => void;
 }) {
   const { formatRoom, pickerLabel, pickerToStorage, registry } = useRoomDisplayLabels();
   const [weeklyLessons, setWeeklyLessons] = useState<1 | 2>(1);
@@ -134,6 +136,7 @@ export default function LessonScheduleGrid({
   const [filterRoom, setFilterRoom] = useState("");
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [saveSlotError, setSaveSlotError] = useState("");
+  const [laterVersionRoomHint, setLaterVersionRoomHint] = useState("");
 
   const timeOptions = useMemo(() => {
     if (weekday === "六") return SATURDAY_TIME_SUGGESTIONS;
@@ -158,16 +161,6 @@ export default function LessonScheduleGrid({
   }
 
   useEffect(() => {
-    if (initialRecords == null || initialRecords.length === 0) return;
-    const normalized = initialRecords.map(normalizeLessonRecord);
-    const needsCanonicalRewrite = initialRecords.some(
-      (r, i) => (r.room ?? "").trim() !== normalized[i].room,
-    );
-    if (!needsCanonicalRewrite) return;
-    void saveLessonScheduleRecords(studentId, normalized);
-  }, [studentId, initialRecords]);
-
-  useEffect(() => {
     if (initialRecords != null) return;
     let cancelled = false;
     void (async () => {
@@ -181,7 +174,8 @@ export default function LessonScheduleGrid({
           (r, i) => (r.room ?? "").trim() !== normalized[i].room,
         );
         if (needsCanonicalRewrite) {
-          void saveLessonScheduleRecords(studentId, normalized);
+          queueSaveLessonScheduleRecords(studentId, normalized);
+          onRecordsChange?.(normalized);
         }
         return;
       }
@@ -199,7 +193,7 @@ export default function LessonScheduleGrid({
     return () => {
       cancelled = true;
     };
-  }, [RECORDS_STORAGE_KEY, studentId, initialRecords]);
+  }, [RECORDS_STORAGE_KEY, studentId, initialRecords, onRecordsChange]);
 
   const effectiveTime = useMemo(() => {
     if (weekday === "日") return customTime?.trim() ? customTime.trim() : "";
@@ -264,20 +258,38 @@ export default function LessonScheduleGrid({
 
   function clearEditMode() {
     setEditingRecordId(null);
+    setLaterVersionRoomHint("");
   }
 
   const persistRecords = (next: ScheduleRecord[]) => {
     const normalized = next.map(normalizeLessonRecord);
     setRecords(normalized);
     window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
-    void saveLessonScheduleRecords(studentId, normalized);
+    onRecordsChange?.(normalized);
+    queueSaveLessonScheduleRecords(studentId, normalized);
   };
+
+  function laterVersionRoomConflicts(
+    candidate: { id?: string; effectiveDate: string; weekday: string; time: string; room: string },
+  ): ScheduleRecord[] {
+    return records
+      .map(normalizeLessonRecord)
+      .filter(
+        (r) =>
+          r.id !== candidate.id &&
+          r.weekday === candidate.weekday &&
+          r.time === candidate.time &&
+          r.effectiveDate > candidate.effectiveDate &&
+          !scheduleRoomsMatch(r.room, candidate.room, registry),
+      );
+  }
 
   const handleSaveRecord = () => {
     const nextTime = effectiveTime;
     if (!nextTime) return;
     if (!effectiveDate.trim()) return;
     setSaveSlotError("");
+    setLaterVersionRoomHint("");
 
     if (editingRecordId) {
       const existing = records.find((rec) => rec.id === editingRecordId);
@@ -302,9 +314,16 @@ export default function LessonScheduleGrid({
         setSaveSlotError("此生效日已有相同星期、時間、房間的課表，請改時間或房間，或使用下方「合併重複」。");
         return;
       }
+      const conflicts = laterVersionRoomConflicts(normalizeLessonRecord(updated));
       const merged = records.map((rec) => (rec.id === editingRecordId ? updated : rec));
       persistRecords(merged);
       clearEditMode();
+      if (conflicts.length > 0) {
+        const latest = [...conflicts].sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))[0];
+        setLaterVersionRoomHint(
+          `已儲存。注意：較晚的生效日 ${formatEffectiveDateZh(latest.effectiveDate)} 仍是 ${formatRoom(latest.room)}；之後課堂會用那一版，不是這筆。若要改成 ${formatRoom(updated.room)}，請一併 Edit 那筆記錄。`,
+        );
+      }
       return;
     }
 
@@ -375,6 +394,9 @@ export default function LessonScheduleGrid({
       />
       {saveSlotError ? (
         <p className="mb-3 text-xs font-medium text-red-600">{saveSlotError}</p>
+      ) : null}
+      {laterVersionRoomHint ? (
+        <p className="mb-3 text-xs font-medium text-amber-800">{laterVersionRoomHint}</p>
       ) : null}
       <ClientOnlyAfterMount fallback={<LessonScheduleGridFallback />}>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8">

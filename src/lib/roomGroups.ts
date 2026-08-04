@@ -8,7 +8,7 @@ export function normalizeScheduleRoom(roomRaw: string): RoomGroup | "" {
   if (!raw) return "";
   const compact = raw
     .replace(/\s+/g, "")
-    .replace(/[-_]/g, "")
+    .replace(/[-_–—−]/g, "") // hyphen / en-dash / em-dash / minus
     .replace(/room/g, "")
     .replace(/房間/g, "房");
 
@@ -19,17 +19,27 @@ export function normalizeScheduleRoom(roomRaw: string): RoomGroup | "" {
   if (compact === "m後" || compact === "m後房" || compact === "mback" || compact === "m後room") {
     return "M後";
   }
+  // Shelf / hope2 before bare hope (otherwise "hopeshelf" would still be ok, but
+  // "hope-shelf" style names must not fall through to Door).
+  if (
+    compact === "hope2" ||
+    compact === "hope2房" ||
+    compact === "hopeshelf" ||
+    compact === "hopeshelf房" ||
+    compact === "hope2shelf"
+  ) {
+    return "Hope 2";
+  }
   if (compact === "hope" || compact === "hope房" || compact === "hope1" || compact === "hope1房" || compact === "hopedoor") {
     return "Hope";
   }
-  if (compact === "hope2" || compact === "hope2房" || compact === "hopeshelf") return "Hope 2";
 
   if (compact.includes("m前") || compact.includes("mfront")) return "M前";
   if (compact.includes("m後") || compact.includes("mback")) return "M後";
-  // Hope - Shelf / hope2 before generic "hope" (Hopedoor still matches hope*)
   if (compact.includes("hope2") || compact.includes("hopeshelf") || compact.endsWith("shelf")) {
     return "Hope 2";
   }
+  if (compact.includes("hopedoor")) return "Hope";
   if (compact.includes("hope")) return "Hope";
   if (compact === "broom") return "B";
 

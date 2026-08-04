@@ -174,6 +174,9 @@ type RescheduleEntry = {
   time: string;
   room: string;
   pending?: boolean;
+  fromScheduleRuleId?: string;
+  fromTime?: string;
+  fromRoom?: string;
 };
 
 type ExtraEntry = {
@@ -182,6 +185,40 @@ type ExtraEntry = {
   time: string;
   room: string;
 };
+
+function fromSlotFieldsFromRow(row: {
+  scheduleRuleId?: string;
+  baseTime?: string;
+  time?: string;
+  baseRoom?: string;
+  room?: string;
+}): Pick<RescheduleEntry, "fromScheduleRuleId" | "fromTime" | "fromRoom"> {
+  const fromScheduleRuleId = String(row.scheduleRuleId ?? "").trim();
+  const fromTime = String(row.baseTime || row.time || "").trim();
+  const fromRoom = String(row.baseRoom || row.room || "").trim();
+  return {
+    ...(fromScheduleRuleId ? { fromScheduleRuleId } : {}),
+    ...(fromTime ? { fromTime } : {}),
+    ...(fromRoom ? { fromRoom } : {}),
+  };
+}
+
+function originalLessonSlotKey(row: {
+  scheduleRuleId?: string;
+  baseTime?: string;
+  time?: string;
+  baseRoom?: string;
+  room?: string;
+  fromScheduleRuleId?: string;
+  fromTime?: string;
+  fromRoom?: string;
+}): string {
+  const ruleId = String(row.fromScheduleRuleId ?? row.scheduleRuleId ?? "").trim();
+  if (ruleId) return `rule:${ruleId}`;
+  const time = String(row.fromTime ?? row.baseTime ?? row.time ?? "").trim();
+  const room = String(row.fromRoom ?? row.baseRoom ?? row.room ?? "").trim();
+  return `slot:${time}|${room}`;
+}
 
 type SortDirection = "asc" | "desc";
 type ScheduleSortKey =
@@ -246,6 +283,7 @@ type RowEditConfirmPayload = {
   kind: RowEditKind;
   entryId?: string;
   originalFromDate?: string;
+  scheduleRuleId?: string;
   baseTime?: string;
   baseRoom?: string;
   newDate: string;
@@ -676,6 +714,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   const EXTRA_STORAGE_KEY = `extra_lessons:${studentId}:${targetYear}`;
   const [editingRescheduleId, setEditingRescheduleId] = useState<string | null>(null);
   const [fromLessonDate, setFromLessonDate] = useState<string>("");
+  const [fromOriginalLessonKey, setFromOriginalLessonKey] = useState<string>("");
   const [toLessonDate, setToLessonDate] = useState<string>("");
   const [showEditPanel, setShowEditPanel] = useState(false);
   const [reschedulePanelMode, setReschedulePanelMode] = useState<"reschedule" | "pending">("reschedule");
@@ -815,6 +854,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
         toDate: String(e.toDate ?? ""),
         time: String(e.time ?? ""),
         room: String(e.room ?? ""),
+        ...(e.fromScheduleRuleId
+          ? { fromScheduleRuleId: String(e.fromScheduleRuleId) }
+          : {}),
+        ...(e.fromTime ? { fromTime: String(e.fromTime) } : {}),
+        ...(e.fromRoom ? { fromRoom: String(e.fromRoom) } : {}),
       }));
       const nextExtra = (state.extraEntries ?? []).map((e) => ({
         ...e,
@@ -1298,14 +1342,16 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
   );
 
   /** Full-year regular lesson dates for reschedule validation (not month/range filtered). */
-  const validationBaseRowByDate = useMemo(() => {
-    if (!studentId) return new Map<string, ScheduleRow>();
+  const validationBaseRowsByDate = useMemo(() => {
+    if (!studentId) return new Map<string, ScheduleRow[]>();
     const rows = buildStudentBaseScheduleRows(records, scheduleMapperState, targetYear, hkTodayYmd).filter(
       (r) => !isLessonDateHiddenByInactivePeriod(r.date),
     );
-    const map = new Map<string, ScheduleRow>();
+    const map = new Map<string, ScheduleRow[]>();
     for (const r of rows) {
-      if (!map.has(r.date)) map.set(r.date, r);
+      const list = map.get(r.date) ?? [];
+      list.push(r);
+      map.set(r.date, list);
     }
     return map;
   }, [
@@ -1316,6 +1362,29 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     hkTodayYmd,
     isLessonDateHiddenByInactivePeriod,
   ]);
+
+  /** Prefer first regular row for a date (legacy single-slot helpers). */
+  const validationBaseRowByDate = useMemo(() => {
+    const map = new Map<string, ScheduleRow>();
+    for (const [date, list] of validationBaseRowsByDate) {
+      if (list[0]) map.set(date, list[0]);
+    }
+    return map;
+  }, [validationBaseRowsByDate]);
+
+  const fromDateOriginalLessons = useMemo(() => {
+    if (!fromLessonDate) return [] as ScheduleRow[];
+    return validationBaseRowsByDate.get(fromLessonDate) ?? [];
+  }, [fromLessonDate, validationBaseRowsByDate]);
+
+  const selectedFromOriginalLesson = useMemo(() => {
+    if (!fromOriginalLessonKey) return fromDateOriginalLessons[0] ?? null;
+    return (
+      fromDateOriginalLessons.find((r) => originalLessonSlotKey(r) === fromOriginalLessonKey) ??
+      fromDateOriginalLessons[0] ??
+      null
+    );
+  }, [fromDateOriginalLessons, fromOriginalLessonKey]);
 
   const rescheduleEntryById = useMemo(() => {
     const map = new Map<string, RescheduleEntry>();
@@ -1534,6 +1603,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       }
       setEditingRescheduleId(entry.id);
       setFromLessonDate(entry.fromDate);
+      setFromOriginalLessonKey(
+        entry.fromScheduleRuleId || entry.fromTime || entry.fromRoom
+          ? originalLessonSlotKey(entry)
+          : "",
+      );
       setToLessonDate(isPendingRescheduleEntry(entry) ? "" : entry.toDate);
       setLockFromLessonDate(true);
       const wd = weekdayFromIsoDate(
@@ -1552,6 +1626,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
 
     setEditingRescheduleId(opts?.editingId ?? null);
     setFromLessonDate(opts?.fromDate ?? "");
+    setFromOriginalLessonKey(opts?.row?.rowKind === "normal" ? originalLessonSlotKey(opts.row) : "");
     setToLessonDate(opts?.toDate ?? toHkIsoDateFromMs(Date.now()));
     setLockFromLessonDate(opts?.lockFrom ?? false);
     if (opts?.row?.rowKind === "normal") {
@@ -1819,16 +1894,28 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       const timeOrDateChanged =
         newDate !== originalDate || finalTime !== (draft.original.baseTime || draft.original.displayTime);
       if (timeOrDateChanged) {
-        const ids = rescheduleIdsByFromDate.get(originalDate) ?? [];
-        if (ids.length > 0) {
-          setRowEditSaveStatus("This date already has a reschedule. Edit the Reschedule row instead.");
-          setSelectionError("This date already has a reschedule. Edit the Reschedule row instead.");
+        const sourceRow = scheduleRowById.get(rowEditSession.rowId);
+        const fromSlotKey = originalLessonSlotKey({
+          scheduleRuleId: sourceRow?.scheduleRuleId,
+          baseTime: draft.original.baseTime || draft.original.displayTime,
+          baseRoom: draft.original.baseRoom || draft.original.displayRoom,
+        });
+        const slotConflict = rescheduleEntries.some((e) => {
+          if (e.fromDate !== originalDate) return false;
+          if (!e.fromScheduleRuleId && !e.fromTime && !e.fromRoom) return true;
+          return originalLessonSlotKey(e) === fromSlotKey;
+        });
+        if (slotConflict) {
+          setRowEditSaveStatus("This lesson already has a reschedule. Edit the Reschedule row instead.");
+          setSelectionError("This lesson already has a reschedule. Edit the Reschedule row instead.");
           return;
         }
       }
+      const sourceRow = scheduleRowById.get(rowEditSession.rowId);
       setRowEditConfirm({
         kind: "regular",
         originalFromDate: originalDate,
+        scheduleRuleId: sourceRow?.scheduleRuleId,
         baseTime: draft.original.baseTime,
         baseRoom: draft.original.baseRoom,
         newDate,
@@ -1891,6 +1978,11 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             toDate: payload.newDate,
             time: payload.finalTime,
             room: payload.finalRoom,
+            ...fromSlotFieldsFromRow({
+              scheduleRuleId: payload.scheduleRuleId,
+              baseTime: payload.baseTime || payload.before.time,
+              baseRoom: payload.baseRoom || payload.before.room,
+            }),
           },
         ];
         setRescheduleEntries(nextList);
@@ -1985,12 +2077,6 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     if (bulkEditMode === "each") {
       let nextReschedule = [...rescheduleEntries];
       const nextOverrides = { ...overridesRef.current };
-      const rescheduleFromDates = new Map<string, string[]>();
-      for (const e of nextReschedule) {
-        const list = rescheduleFromDates.get(e.fromDate) ?? [];
-        list.push(e.id);
-        rescheduleFromDates.set(e.fromDate, list);
-      }
 
       for (let i = 0; i < bulkEditLessonDrafts.length; i++) {
         const draft = bulkEditLessonDrafts[i];
@@ -2039,8 +2125,14 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             setSelectionError(`${lessonLabel}: original date must be an existing regular lesson date.`);
             return;
           }
-          const ids = rescheduleFromDates.get(originalDate) ?? [];
-          if (ids.length > 0) {
+          const fromSlot = fromSlotFieldsFromRow(scheduleRow);
+          const fromSlotKey = originalLessonSlotKey(scheduleRow);
+          const slotConflict = nextReschedule.some((e) => {
+            if (e.fromDate !== originalDate) return false;
+            if (!e.fromScheduleRuleId && !e.fromTime && !e.fromRoom) return true;
+            return originalLessonSlotKey(e) === fromSlotKey;
+          });
+          if (slotConflict) {
             setBulkEditSaveStatus(`${lessonLabel} already has a reschedule. Edit it separately.`);
             setSelectionError(`${lessonLabel} already has a reschedule. Edit it separately.`);
             return;
@@ -2054,9 +2146,9 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
               toDate: newDate,
               time: finalTime,
               room: finalRoom,
+              ...fromSlot,
             },
           ];
-          rescheduleFromDates.set(originalDate, [newId]);
           delete nextOverrides[originalDate];
         } else if (scheduleRoomsMatch(finalRoom, scheduleRow.baseRoom)) {
           delete nextOverrides[originalDate];
@@ -2131,10 +2223,16 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
           setSelectionError("Original date must be an existing regular lesson date.");
           return;
         }
-        const ids = rescheduleIdsByFromDate.get(originalDate) ?? [];
-        if (ids.length > 0) {
-          setBulkEditSaveStatus("This date already has a reschedule. Use Reschedule to edit it.");
-          setSelectionError("This date already has a reschedule. Use Reschedule to edit it.");
+        const fromSlot = fromSlotFieldsFromRow(scheduleRow);
+        const fromSlotKey = originalLessonSlotKey(scheduleRow);
+        const slotConflict = rescheduleEntries.some((e) => {
+          if (e.fromDate !== originalDate) return false;
+          if (!e.fromScheduleRuleId && !e.fromTime && !e.fromRoom) return true;
+          return originalLessonSlotKey(e) === fromSlotKey;
+        });
+        if (slotConflict) {
+          setBulkEditSaveStatus("This lesson already has a reschedule. Use Reschedule to edit it.");
+          setSelectionError("This lesson already has a reschedule. Use Reschedule to edit it.");
           return;
         }
         const nextList = [
@@ -2145,6 +2243,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
             toDate: newDate,
             time: finalTime,
             room: finalRoom,
+            ...fromSlot,
           },
         ];
         setRescheduleEntries(nextList);
@@ -2378,7 +2477,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
     if (!fromLessonDate) {
       return { kind: "empty" as const };
     }
-    const row = validationBaseRowByDate.get(fromLessonDate);
+    const row = selectedFromOriginalLesson;
     if (!row) {
       return { kind: "noRow" as const, date: fromLessonDate };
     }
@@ -2392,8 +2491,10 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
       displayTime: row.time,
       displayRoom: row.room,
       hasOverride,
+      scheduleRuleId: row.scheduleRuleId,
+      slotOptions: fromDateOriginalLessons,
     };
-  }, [fromLessonDate, validationBaseRowByDate, overrides]);
+  }, [fromLessonDate, selectedFromOriginalLesson, overrides, fromDateOriginalLessons]);
 
   const LESSON_SUMMARY_SAVE_DEBOUNCE_MS = 600;
 
@@ -3143,13 +3244,49 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       max={yearMax}
                       value={fromLessonDate}
                       disabled={lockFromLessonDate}
-                      onChange={(e) => setFromLessonDate(e.target.value)}
+                      onChange={(e) => {
+                        setFromLessonDate(e.target.value);
+                        setFromOriginalLessonKey("");
+                      }}
                       className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                     />
                     {lockFromLessonDate ? (
                       <p className="mt-1 text-[11px] text-slate-500">Filled from selected row; original date is locked.</p>
                     ) : null}
                   </label>
+
+                  {fromDateOriginalLessons.length > 1 ? (
+                    <label className="block">
+                      <span className="mb-1 block text-sm font-semibold text-slate-700">
+                        Original Lesson
+                      </span>
+                      <select
+                        value={
+                          fromOriginalLessonKey ||
+                          (selectedFromOriginalLesson
+                            ? originalLessonSlotKey(selectedFromOriginalLesson)
+                            : "")
+                        }
+                        disabled={false}
+                        onChange={(e) => setFromOriginalLessonKey(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                      >
+                        {fromDateOriginalLessons.map((r) => {
+                          const key = originalLessonSlotKey(r);
+                          return (
+                            <option key={key} value={key}>
+                              {(WEEKDAY_LABEL[r.weekday] ?? r.weekday) +
+                                ` ${r.time} · ${formatRoom(r.room)}`}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        This date has {fromDateOriginalLessons.length} regular lessons — pick which
+                        one to cancel / move.
+                      </p>
+                    </label>
+                  ) : null}
 
                   {reschedulePanelMode === "reschedule" ? (
                     <label className="block">
@@ -3267,10 +3404,34 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                               setSelectionError("Original date must be an existing regular lesson date.");
                               return;
                             }
+                            const fromSlotRow =
+                              selectedFromOriginalLesson ??
+                              fromDateOriginalLessons[0] ??
+                              validationBaseRowByDate.get(from) ??
+                              null;
+                            if (!fromSlotRow) {
+                              setEditSaveStatus("Original date is not a regular lesson date.");
+                              setSelectionError("Original date must be an existing regular lesson date.");
+                              return;
+                            }
+                            const fromSlot = fromSlotFieldsFromRow(fromSlotRow);
+                            const fromSlotKey = originalLessonSlotKey(fromSlotRow);
                             const ids = rescheduleIdsByFromDate.get(from) ?? [];
-                            if (ids.some((id) => id !== editingRescheduleId)) {
-                              setEditSaveStatus("This original date already has a reschedule record.");
-                              setSelectionError("This original date already has a reschedule record.");
+                            const slotConflict = rescheduleEntries.some((e) => {
+                              if (e.id === editingRescheduleId) return false;
+                              if (e.fromDate !== from) return false;
+                              if (!e.fromScheduleRuleId && !e.fromTime && !e.fromRoom) return true;
+                              return originalLessonSlotKey(e) === fromSlotKey;
+                            });
+                            if (slotConflict || ids.some((id) => {
+                              if (id === editingRescheduleId) return false;
+                              const e = rescheduleEntryById.get(id);
+                              if (!e) return false;
+                              if (!e.fromScheduleRuleId && !e.fromTime && !e.fromRoom) return true;
+                              return originalLessonSlotKey(e) === fromSlotKey;
+                            })) {
+                              setEditSaveStatus("This original lesson already has a reschedule record.");
+                              setSelectionError("This original lesson already has a reschedule record.");
                               return;
                             }
                             const finalTime = editForm.timeCustom.trim()
@@ -3294,6 +3455,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                         time: finalTime,
                                         room: finalRoom,
                                         pending: false,
+                                        ...fromSlot,
                                       }
                                     : e,
                                 )
@@ -3305,6 +3467,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                     toDate: to,
                                     time: finalTime,
                                     room: finalRoom,
+                                    ...fromSlot,
                                   },
                                 ];
                             setRescheduleEntries(nextList);
@@ -3448,10 +3611,26 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                               setSelectionError("Original date must be an existing regular lesson date.");
                               return;
                             }
-                            const ids = rescheduleIdsByFromDate.get(from) ?? [];
-                            if (ids.length > 0) {
-                              setEditSaveStatus("This original date already has a reschedule record.");
-                              setSelectionError("This original date already has a reschedule record.");
+                            const fromSlotRow =
+                              selectedFromOriginalLesson ??
+                              fromDateOriginalLessons[0] ??
+                              validationBaseRowByDate.get(from) ??
+                              null;
+                            if (!fromSlotRow) {
+                              setEditSaveStatus("Original date is not a regular lesson date.");
+                              setSelectionError("Original date must be an existing regular lesson date.");
+                              return;
+                            }
+                            const fromSlot = fromSlotFieldsFromRow(fromSlotRow);
+                            const fromSlotKey = originalLessonSlotKey(fromSlotRow);
+                            const slotConflict = rescheduleEntries.some((e) => {
+                              if (e.fromDate !== from) return false;
+                              if (!e.fromScheduleRuleId && !e.fromTime && !e.fromRoom) return true;
+                              return originalLessonSlotKey(e) === fromSlotKey;
+                            });
+                            if (slotConflict) {
+                              setEditSaveStatus("This original lesson already has a reschedule record.");
+                              setSelectionError("This original lesson already has a reschedule record.");
                               return;
                             }
                             const nextList = [
@@ -3463,6 +3642,7 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                                 time: "",
                                 room: "",
                                 pending: true,
+                                ...fromSlot,
                               },
                             ];
                             setRescheduleEntries(nextList);
@@ -4187,10 +4367,12 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                       return;
                     }
                     setFromLessonDate(row.date);
+                    setFromOriginalLessonKey(originalLessonSlotKey(row));
                     setToLessonDate("");
                     setLockFromLessonDate(true);
                   } else {
                     setFromLessonDate("");
+                    setFromOriginalLessonKey("");
                     setToLessonDate("");
                     setLockFromLessonDate(false);
                   }

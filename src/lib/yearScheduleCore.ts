@@ -12,8 +12,12 @@ import {
 } from "@/lib/lessonSystemStart";
 import { isLessonScheduleHidden } from "@/lib/lessonScheduleHidden";
 import {
+  buildCancelledOriginalAttendanceKey,
+  buildCancelledOriginalRowId,
+  cancelledOriginalSlotKey,
   getActiveDedupedScheduleRulesForDate,
   normalizeScheduleWeekday,
+  parseCancelledOriginalRowId,
   readLessonDayOverrideField,
   regularLessonAttendanceKey,
   tutorDisplayForLessonRow,
@@ -22,11 +26,70 @@ import {
   isPendingRescheduleEntry,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
-import { scheduleRoomsMatch, weekdayCnFromIsoDateHk } from "@/lib/dayTimetableShared";
+import { scheduleRoomsMatch, weekdayCnFromIsoDateHk, canonicalScheduleTimeLabel } from "@/lib/dayTimetableShared";
 import {
   resolveRoomSlotTutorForLessonRow,
   type RoomSlotTutorRule,
 } from "@/lib/roomSlotTutorRules";
+
+export function rescheduleEntryHasFromSlot(e: {
+  fromScheduleRuleId?: string | null;
+  fromTime?: string | null;
+  fromRoom?: string | null;
+}): boolean {
+  return Boolean(
+    String(e.fromScheduleRuleId ?? "").trim() ||
+      String(e.fromTime ?? "").trim() ||
+      String(e.fromRoom ?? "").trim(),
+  );
+}
+
+/** Match a reschedule to one original regular slot (rule id preferred, else time/room). */
+export function rescheduleMatchesOriginalLesson(
+  e: {
+    fromDate: string;
+    fromScheduleRuleId?: string | null;
+    fromTime?: string | null;
+    fromRoom?: string | null;
+  },
+  orig: {
+    date: string;
+    time: string;
+    room: string;
+    baseRule?: { id?: string } | null;
+  },
+): boolean {
+  if (String(e.fromDate ?? "").trim() !== orig.date) return false;
+  const ruleId = String(e.fromScheduleRuleId ?? "").trim();
+  if (ruleId) return String(orig.baseRule?.id ?? "") === ruleId;
+  const fromTime = String(e.fromTime ?? "").trim();
+  const fromRoom = String(e.fromRoom ?? "").trim();
+  if (!fromTime && !fromRoom) return true;
+  const timeOk =
+    !fromTime ||
+    canonicalScheduleTimeLabel(fromTime) === canonicalScheduleTimeLabel(orig.time);
+  const roomOk = !fromRoom || scheduleRoomsMatch(fromRoom, orig.room);
+  return timeOk && roomOk;
+}
+
+export function findRescheduleForOriginalLesson<T extends YearLessonRescheduleEntry>(
+  entries: T[],
+  orig: {
+    date: string;
+    time: string;
+    room: string;
+    baseRule?: { id?: string } | null;
+  },
+): T | undefined {
+  const onDate = entries.filter((e) => String(e.fromDate ?? "").trim() === orig.date);
+  if (onDate.length === 0) return undefined;
+  const slotted = onDate.filter((e) => rescheduleEntryHasFromSlot(e));
+  if (slotted.length > 0) {
+    return slotted.find((e) => rescheduleMatchesOriginalLesson(e, orig));
+  }
+  // Legacy entries without from-slot cancel every lesson on that date.
+  return onDate[0];
+}
 
 export type YearLessonRecord = {
   id?: string;
@@ -39,18 +102,24 @@ export type YearLessonRecord = {
   createdAt: number;
 };
 
+export type YearLessonRescheduleEntry = {
+  id: string;
+  fromDate: string;
+  toDate: string;
+  time: string;
+  room: string;
+  pending?: boolean;
+  /** When set, only this regular slot on fromDate is cancelled (not every lesson that day). */
+  fromScheduleRuleId?: string;
+  fromTime?: string;
+  fromRoom?: string;
+};
+
 export type YearLessonState = {
   attendance: Record<string, boolean>;
   hiddenDates: Record<string, boolean>;
   overrides: Record<string, { time?: string; room?: string; tutor?: string; lessonSummary?: string }>;
-  rescheduleEntries: Array<{
-    id: string;
-    fromDate: string;
-    toDate: string;
-    time: string;
-    room: string;
-    pending?: boolean;
-  }>;
+  rescheduleEntries: YearLessonRescheduleEntry[];
   extraEntries: Array<{ id: string; date: string; time: string; room: string }>;
 };
 
@@ -266,20 +335,27 @@ function buildScheduleRows(
   }
   }
 
-  const rescheduleByFromDate = new Map<string, (typeof state.rescheduleEntries)[number]>();
-  for (const e of state.rescheduleEntries) {
-    if (e.fromDate) rescheduleByFromDate.set(e.fromDate, e);
-  }
   const rescheduleById = new Map(state.rescheduleEntries.map((e) => [e.id, e]));
 
   const rows: Row[] = [];
   const emittedRescheduleIds = new Set<string>();
   for (const orig of baseRows) {
-    const e = rescheduleByFromDate.get(orig.date);
+    const e = findRescheduleForOriginalLesson(state.rescheduleEntries, {
+      date: orig.date,
+      time: orig.time,
+      room: orig.room,
+      baseRule: orig.baseRule,
+    });
     if (!e) {
       rows.push({ ...orig });
       continue;
     }
+    const slotKey = cancelledOriginalSlotKey({
+      baseRuleId: orig.baseRule?.id,
+      time: orig.time,
+      room: orig.room,
+      fallbackRowId: orig.rowId,
+    });
     rows.push({
       ...orig,
       time: orig.baseRule
@@ -289,8 +365,8 @@ function buildScheduleRows(
         ? (state.overrides[e.fromDate]?.room ?? orig.baseRule.room).toString()
         : orig.room,
       rowKind: "cancelled_original",
-      rowId: `cancelled-${e.id}-${e.fromDate}`,
-      attendanceKey: `cancelled:${e.fromDate}:${e.id}`,
+      rowId: buildCancelledOriginalRowId(e.id, e.fromDate, slotKey),
+      attendanceKey: buildCancelledOriginalAttendanceKey(e.id, e.fromDate, slotKey),
       baseRule: orig.baseRule,
       fromExtra: false,
     });
@@ -371,8 +447,8 @@ function buildScheduleRows(
   return visibleRows.map((r) => {
     let lessonType: BuiltScheduleRow["lessonType"] = "恆常";
     if (r.rowKind === "cancelled_original") {
-      const cancelledMatch = /^cancelled-(.+)-(\d{4}-\d{2}-\d{2})$/.exec(r.rowId);
-      const pendingEntry = cancelledMatch ? rescheduleById.get(cancelledMatch[1]) : undefined;
+      const cancelledMatch = parseCancelledOriginalRowId(r.rowId);
+      const pendingEntry = cancelledMatch ? rescheduleById.get(cancelledMatch.entryId) : undefined;
       lessonType =
         pendingEntry && isPendingRescheduleEntry(pendingEntry)
           ? PENDING_MAKEUP_TYPE_LABEL
