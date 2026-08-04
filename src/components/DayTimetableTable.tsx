@@ -293,11 +293,12 @@ export default function DayTimetableTable({
   const tableClassName =
     dailyCompactColumns || (compactStudentNames && showRegularCapacitySummary)
       ? dailyCompactColumns
-        ? "w-full min-w-[980px] table-fixed border-collapse text-[11px] sm:text-sm"
+        ? "w-full table-fixed border-collapse text-[11px] sm:text-sm"
         : "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
       : fluidNameCell
         ? "tt-regular-table w-full min-w-0 table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm"
         : "min-w-[960px] w-full border-collapse text-sm";
+  const dailyTableMinWidthPx = dailyCompactColumns ? 80 + roomsForTable.length * 260 : undefined;
   const stickyTimeHeaderClass = dailyCompactColumns
     ? "sticky left-0 z-20 bg-slate-50 shadow-[1px_0_0_0_rgba(203,213,225,1)]"
     : "";
@@ -512,7 +513,10 @@ export default function DayTimetableTable({
         </p>
       ) : null}
       <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-auto rounded-b-lg">
-      <table className={tableClassName}>
+      <table
+        className={tableClassName}
+        style={dailyTableMinWidthPx ? { minWidth: `${dailyTableMinWidthPx}px` } : undefined}
+      >
         {fluidNameCell ? (
           <colgroup>
             <col className="tt-col-time" />
