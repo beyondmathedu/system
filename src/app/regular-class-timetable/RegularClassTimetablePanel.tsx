@@ -12,6 +12,7 @@ import {
   regularTimetableEmptyMessage,
   type DayTimetablePayload,
   type RegularTimetableLessonFilterFlags,
+  type RoomGroup,
 } from "@/lib/dayTimetableShared";
 
 const FILTER_TICKS: Array<{ key: keyof RegularTimetableLessonFilterFlags; label: string }> = [
@@ -21,6 +22,8 @@ const FILTER_TICKS: Array<{ key: keyof RegularTimetableLessonFilterFlags; label:
   { key: "inactive", label: "Inactive" },
   { key: "cancelled", label: "Cancelled" },
 ];
+
+const REGULAR_TIME_TABLE_ROOM_ORDER: readonly RoomGroup[] = ["Hope", "Hope 2", "B", "M前", "M後"];
 
 type Props = {
   payload: DayTimetablePayload;
@@ -102,6 +105,7 @@ export default function RegularClassTimetablePanel({ payload }: Props) {
           emptyMessage={regularTimetableEmptyMessage(flags)}
           showRegularCapacitySummary
           compactStudentNames
+          roomGroupsForTable={REGULAR_TIME_TABLE_ROOM_ORDER}
         />
         <DayTimetableLegend timetableStyle={payload.timetableStyle} showCapacityLegend />
         <div className="mt-6">
