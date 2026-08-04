@@ -271,7 +271,7 @@ export default function LessonScheduleGrid({
 
   function laterVersionRoomConflicts(
     candidate: { id?: string; effectiveDate: string; weekday: string; time: string; room: string },
-  ): ScheduleRecord[] {
+  ): Array<ScheduleRecord & { effectiveDate: string }> {
     return records
       .map(normalizeLessonRecord)
       .filter(

@@ -32,6 +32,13 @@ function samplePayload(): DayTimetablePayload {
       { time: "5:30 PM", maxRows: 1 },
     ],
     regularPeriodMaxByRoom: { B: 4, "M前": 4, "M後": 4, Hope: 4, "Hope 2": 4 },
+    roomDisplayLabels: {
+      B: "B",
+      "M前": "M前",
+      "M後": "M後",
+      Hope: "Hope - Door",
+      "Hope 2": "Hope - Shelf",
+    },
     feePaymentToneByStudentId: {},
     timetableStyle: DEFAULT_DAY_TIMETABLE_STYLE,
   };
