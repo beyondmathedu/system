@@ -3911,7 +3911,13 @@ export function StudentLessonsYearPage({ targetYear = defaultLessonYear() }: { t
                   <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Month</span>
                   <select
                     value={filterMonth}
-                    onChange={(e) => setFilterMonth(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFilterMonth(v);
+                      // Inactive gap rows are only inserted when no sorting is applied.
+                      // When user picks Month=All, reset sort so they can always see Status: Inactive.
+                      if (!v) setSortConfig(null);
+                    }}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
                   >
                     <option value="">All</option>
