@@ -49,16 +49,17 @@ function stableJson(value: unknown): string {
 
 function normalizeScheduleRecords(raw: unknown): YearLessonRecord[] {
   if (!Array.isArray(raw)) return [];
-  const mapped = raw.map((item) => {
-    if (!item || typeof item !== "object") return item;
-    const row = item as Record<string, unknown>;
-    const out = { ...row } as YearLessonRecord;
-    if (typeof row.room === "string") {
-      const room = canonicalScheduleRoomLabel(row.room);
-      if (room !== row.room.trim()) out.room = room;
-    }
-    return out;
-  }) as YearLessonRecord[];
+  type RepairableRecord = YearLessonRecord & { effectiveDate: string };
+  const mapped: RepairableRecord[] = toYearLessonRecords(raw).map((row) => {
+    const room = canonicalScheduleRoomLabel(String(row.room ?? ""));
+    return {
+      ...row,
+      room: room || row.room,
+      effectiveDate:
+        row.effectiveDate ??
+        new Date(row.createdAt).toISOString().slice(0, 10),
+    };
+  });
   return repairCollidingScheduleRuleIds(mapped).rules;
 }
 
