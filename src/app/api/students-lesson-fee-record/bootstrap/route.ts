@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getViewerContext } from "@/lib/authz";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { loadFeeRecordBootstrap } from "@/lib/lessonDataServer";
+import { loadFeeRecordBootstrapCached } from "@/lib/lessonDataServer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -23,11 +22,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = getSupabaseAdmin();
-    const payload = await loadFeeRecordBootstrap(supabase, {
-      sheetYear,
-      sheetMonth,
-    });
+    const payload = await loadFeeRecordBootstrapCached(sheetYear, sheetMonth);
     return NextResponse.json({ ok: true, ...payload });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load fee record data";

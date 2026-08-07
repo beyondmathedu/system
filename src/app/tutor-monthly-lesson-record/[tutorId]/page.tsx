@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import TutorMonthlyYearMonthPicker from "@/components/TutorMonthlyYearMonthPicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
+import { getViewerContext } from "@/lib/authz";
 import { fetchTutorMonthLessonRows } from "@/lib/roomScheduleAggregate";
 import { formatDateSlash } from "@/lib/yearScheduleCore";
 import {
@@ -20,6 +22,7 @@ import { loadLatestTutorRates, loadMultiStudentFirstAmount } from "@/lib/payroll
 import { readYmParts } from "@/lib/intlFormatParts";
 import DownloadTutorMonthlyPdfButton from "@/components/DownloadTutorMonthlyPdfButton";
 import { formatGradeDisplay } from "@/lib/grade";
+import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +68,10 @@ type PageProps = {
 };
 
 export default async function TutorMonthlyLessonRecordDetailPage({ params, searchParams }: PageProps) {
+  const viewer = await getViewerContext();
+  if (!viewer.userId) redirect("/login?next=/tutor-monthly-lesson-record");
+  redirectTutorAwayFromAdminPages(viewer);
+
   const { tutorId: rawId } = await params;
   const tutorId = decodeURIComponent(rawId);
   const sp = searchParams ? await searchParams : {};
@@ -75,7 +82,8 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
   const entry = await fetchTutorNavEntryById(tutorId);
   if (!entry) notFound();
 
-  const [{ rows, loadError }, rates, multiStudentFirstAmount] = await Promise.all([
+  const [navViewer, { rows, loadError }, rates, multiStudentFirstAmount] = await Promise.all([
+    buildAppTopNavViewer(viewer),
     fetchTutorMonthLessonRows(entry.matchNames, year, month),
     loadLatestTutorRates(tutorId),
     loadMultiStudentFirstAmount(),
@@ -255,7 +263,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
   return (
     <div className="min-h-screen bg-slate-100 pt-5 pb-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav />
+        <AppTopNav viewer={navViewer} />
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>

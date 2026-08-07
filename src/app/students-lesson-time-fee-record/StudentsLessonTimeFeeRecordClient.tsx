@@ -8,13 +8,15 @@ import {
   useRef,
   useState,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import Link from "next/link";
 import AppTopNav from "@/components/AppTopNav";
+import { VirtualTableSpacerRow } from "@/components/VirtualTableSpacerRow";
+import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import {
   FEE_OPENING_BALANCE_AS_OF_MONTH,
   FEE_OPENING_BALANCE_AS_OF_YEAR,
-  readFeeOpeningBalancesFromLocal,
   upsertStudentFeeOpeningBalance,
   writeFeeOpeningBalanceToLocal,
 } from "@/lib/studentFeeOpeningBalance";
@@ -33,7 +35,6 @@ import {
 } from "@/lib/studentFeePricingGrade";
 import {
   DEFAULT_FEE_TIER_BUNDLE,
-  loadStudentFeeTierSettings,
   resolveFeeTierSettingsForStudent,
   saveStudentFeeTierSettings,
   type StudentFeeTierBundle,
@@ -55,13 +56,17 @@ import {
   toYearLessonStateFromClient,
 } from "@/lib/feeRecordLessonDates";
 import {
+  hydrateFeeRecordBootstrap,
+  type FeeRecordBootstrapApiBody,
+} from "@/lib/feeRecordBootstrapHydrate";
+import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
+import {
   isStudentHiddenForFeeSheetMonthFromPeriods,
   makeStudentInactiveDateCheckerFromPeriods,
   type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import {
   availableLessonYears,
-  defaultLessonYear,
 } from "@/lib/lessonCalendar";
 import {
   LESSON_SYSTEM_START_MONTH,
@@ -587,34 +592,57 @@ type SortDirection = "asc" | "desc";
 type SortKey = "id" | "name" | "grade" | "weekday" | "expected" | "submitted";
 type SortConfig = { key: SortKey; direction: SortDirection } | null;
 
-export default function StudentsLessonTimeFeeRecordPage() {
-  const [students, setStudents] = useState<StudentRow[]>([]);
-  const [sheetMonth, setSheetMonth] = useState(() => hkMonthNow());
+export default function StudentsLessonTimeFeeRecordPage({
+  initialBootstrap,
+  initialYear,
+  initialMonth,
+  navViewer = null,
+}: {
+  initialBootstrap: FeeRecordBootstrapApiBody;
+  initialYear: number;
+  initialMonth: number;
+  navViewer?: AppTopNavViewer | null;
+}) {
+  const initialHydrated = useMemo(
+    () => hydrateFeeRecordBootstrap(initialBootstrap, initialYear, initialMonth),
+    // Only seed once from server props — month/year changes refetch below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const [students, setStudents] = useState<StudentRow[]>(() => initialHydrated.students as StudentRow[]);
+  const [sheetMonth, setSheetMonth] = useState(() => initialMonth);
   const availableYears = useMemo(() => availableLessonYears(), []);
-  const [sheetYear, setSheetYear] = useState(() => defaultLessonYear());
-  const [recordsByStudentId, setRecordsByStudentId] = useState<Record<string, RecordState>>({});
-  const [submittedByStudentMonth, setSubmittedByStudentMonth] = useState<
-    Record<string, Partial<Record<number, number>>>
-  >({});
-  const [openingBalanceByStudentId, setOpeningBalanceByStudentId] = useState<Record<string, number>>(
-    {},
+  const [sheetYear, setSheetYear] = useState(() => initialYear);
+  const [recordsByStudentId, setRecordsByStudentId] = useState<Record<string, RecordState>>(() => {
+    const next: Record<string, RecordState> = {};
+    for (const [id, r] of Object.entries(initialHydrated.recordsByStudentId)) {
+      next[id] = { ...defaultRecordState(), ...r };
+    }
+    return next;
+  });
+  const [submittedByStudentMonth, setSubmittedByStudentMonth] = useState(
+    () => initialHydrated.submittedByStudentMonth,
+  );
+  const [openingBalanceByStudentId, setOpeningBalanceByStudentId] = useState(
+    () => initialHydrated.openingBalanceByStudentId,
   );
   /** 已存庫嘅「計價年級／劃一價」（fee_start..上月），用於重算以往月應收港幣。 */
-  const [historicalMonthFeeByStudentId, setHistoricalMonthFeeByStudentId] = useState<
-    Record<string, Partial<Record<number, { lessonUnitPrice: number; feePricingGrade: string }>>>
-  >({});
+  const [historicalMonthFeeByStudentId, setHistoricalMonthFeeByStudentId] = useState(
+    () => initialHydrated.historicalMonthFeeByStudentId,
+  );
   const [lessonRecordsByStudentId, setLessonRecordsByStudentId] = useState<
     Record<string, LessonRecord[]>
-  >({});
-  const [remedialCountByStudentId, setRemedialCountByStudentId] = useState<Record<string, number>>(
-    {},
+  >(() => initialHydrated.lessonRecordsByStudentId as Record<string, LessonRecord[]>);
+  const [remedialCountByStudentId, setRemedialCountByStudentId] = useState(
+    () => initialHydrated.remedialCountByStudentId,
   );
-  const [lessonYearStateByStudentId, setLessonYearStateByStudentId] = useState<
-    Record<string, StudentLesson2026State>
-  >({});
-  const [visibilityByStudentId, setVisibilityByStudentId] = useState<
-    Record<string, StudentVisibilityFeeContext>
-  >({});
+  const [lessonYearStateByStudentId, setLessonYearStateByStudentId] = useState(
+    () => initialHydrated.lessonYearStateByStudentId,
+  );
+  const [visibilityByStudentId, setVisibilityByStudentId] = useState(
+    () => initialHydrated.visibilityByStudentId,
+  );
   const saveTimersRef = useState(() => new Map<string, number>())[0];
   const openingBalanceSaveTimersRef = useState(() => new Map<string, number>())[0];
 
@@ -630,20 +658,41 @@ export default function StudentsLessonTimeFeeRecordPage() {
   const [syncingZoho, setSyncingZoho] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const [feeTierBundle, setFeeTierBundle] = useState<StudentFeeTierBundle>({
-    ...DEFAULT_FEE_TIER_BUNDLE,
-    legacy: { ...DEFAULT_FEE_TIER_BUNDLE.legacy },
-    current: { ...DEFAULT_FEE_TIER_BUNDLE.current },
-  });
-  const [feeTierDraft, setFeeTierDraft] = useState<StudentFeeTierBundle>({
-    ...DEFAULT_FEE_TIER_BUNDLE,
-    legacy: { ...DEFAULT_FEE_TIER_BUNDLE.legacy },
-    current: { ...DEFAULT_FEE_TIER_BUNDLE.current },
-  });
+  const [feeTierBundle, setFeeTierBundle] = useState<StudentFeeTierBundle>(() =>
+    initialHydrated.feeTierBundle
+      ? {
+          ...initialHydrated.feeTierBundle,
+          legacy: { ...initialHydrated.feeTierBundle.legacy },
+          current: { ...initialHydrated.feeTierBundle.current },
+        }
+      : {
+          ...DEFAULT_FEE_TIER_BUNDLE,
+          legacy: { ...DEFAULT_FEE_TIER_BUNDLE.legacy },
+          current: { ...DEFAULT_FEE_TIER_BUNDLE.current },
+        },
+  );
+  const [feeTierDraft, setFeeTierDraft] = useState<StudentFeeTierBundle>(() =>
+    initialHydrated.feeTierBundle
+      ? {
+          ...initialHydrated.feeTierBundle,
+          legacy: { ...initialHydrated.feeTierBundle.legacy },
+          current: { ...initialHydrated.feeTierBundle.current },
+        }
+      : {
+          ...DEFAULT_FEE_TIER_BUNDLE,
+          legacy: { ...DEFAULT_FEE_TIER_BUNDLE.legacy },
+          current: { ...DEFAULT_FEE_TIER_BUNDLE.current },
+        },
+  );
   const [feeTierSaveMsg, setFeeTierSaveMsg] = useState("");
-  const [openingBalanceSaveMsg, setOpeningBalanceSaveMsg] = useState("");
-  const [openingBalanceTableMissing, setOpeningBalanceTableMissing] = useState(false);
+  const [openingBalanceSaveMsg, setOpeningBalanceSaveMsg] = useState(
+    () => initialHydrated.openingBalanceSaveMsg,
+  );
+  const [openingBalanceTableMissing, setOpeningBalanceTableMissing] = useState(
+    () => initialHydrated.openingBalanceTableMissing,
+  );
   const pendingOpeningBalanceRef = useRef<Map<string, number>>(new Map());
+  const skipBootstrapFetchRef = useRef(true);
   type FeeDetailDialogState =
     | { kind: "arrears"; studentId: string; title: string }
     | { kind: "makeup"; studentId: string };
@@ -673,20 +722,40 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [feeDetailDialog]);
 
-  useEffect(() => {
-    let m = true;
-    void (async () => {
-      const t = await loadStudentFeeTierSettings();
-      if (!m) return;
+  const applyHydratedBootstrap = useCallback((hydrated: ReturnType<typeof hydrateFeeRecordBootstrap>) => {
+    setStudents(hydrated.students as StudentRow[]);
+    setVisibilityByStudentId(hydrated.visibilityByStudentId);
+    setRemedialCountByStudentId(hydrated.remedialCountByStudentId);
+    setSubmittedByStudentMonth(hydrated.submittedByStudentMonth);
+    setHistoricalMonthFeeByStudentId(hydrated.historicalMonthFeeByStudentId);
+    setRecordsByStudentId(() => {
+      const next: Record<string, RecordState> = {};
+      for (const [id, r] of Object.entries(hydrated.recordsByStudentId)) {
+        next[id] = { ...defaultRecordState(), ...r };
+      }
+      return next;
+    });
+    setOpeningBalanceByStudentId(hydrated.openingBalanceByStudentId);
+    setOpeningBalanceTableMissing(hydrated.openingBalanceTableMissing);
+    setOpeningBalanceSaveMsg(hydrated.openingBalanceSaveMsg);
+    setLessonRecordsByStudentId(hydrated.lessonRecordsByStudentId as Record<string, LessonRecord[]>);
+    setLessonYearStateByStudentId(hydrated.lessonYearStateByStudentId);
+    if (hydrated.feeTierBundle) {
+      const t = {
+        ...hydrated.feeTierBundle,
+        legacy: { ...hydrated.feeTierBundle.legacy },
+        current: { ...hydrated.feeTierBundle.current },
+      };
       setFeeTierBundle(t);
       setFeeTierDraft(t);
-    })();
-    return () => {
-      m = false;
-    };
+    }
   }, []);
 
   useEffect(() => {
+    if (skipBootstrapFetchRef.current) {
+      skipBootstrapFetchRef.current = false;
+      return;
+    }
     let mounted = true;
     void (async () => {
       try {
@@ -695,169 +764,9 @@ export default function StudentsLessonTimeFeeRecordPage() {
           { credentials: "same-origin" },
         );
         if (!res.ok) throw new Error("bootstrap failed");
-        const body = (await res.json()) as {
-          ok?: boolean;
-          students?: StudentRow[];
-          metricsRows?: Array<{ student_id?: string; remedial_count?: number | null }>;
-          feeRows?: Array<{
-            student_id: string;
-            year: number;
-            month: number;
-            submitted_amount: number;
-            submitted_lesson_count?: number | null;
-            lesson_unit_price: number | null;
-            fee_pricing_grade: string | null;
-            remarks: string;
-            makeup_remarks: string;
-            balance_due_remarks: string;
-            send_fee: boolean;
-          }>;
-          recordsMap?: Record<string, unknown[]>;
-          yearStatesMap?: Record<string, StudentLesson2026State>;
-          openingResult?: {
-            balances: Record<string, number>;
-            error?: string;
-            tableMissing?: boolean;
-          };
-          feeStartMonth?: number;
-          endMonthForPricing?: number;
-          visibilityByStudentId?: Record<string, StudentVisibilityFeeContext>;
-        };
+        const body = (await res.json()) as FeeRecordBootstrapApiBody;
         if (!mounted || !body.ok) return;
-
-        const mapped = body.students ?? [];
-        setStudents(mapped);
-        setVisibilityByStudentId(body.visibilityByStudentId ?? {});
-        setRecordsByStudentId((prev) => {
-          const next = { ...prev };
-          for (const st of mapped) {
-            if (!next[st.id]) next[st.id] = defaultRecordState();
-          }
-          return next;
-        });
-
-        if (mapped.length === 0) {
-          setRemedialCountByStudentId({});
-          setSubmittedByStudentMonth({});
-          setHistoricalMonthFeeByStudentId({});
-          setOpeningBalanceByStudentId({});
-          setLessonRecordsByStudentId({});
-          setLessonYearStateByStudentId({});
-          setVisibilityByStudentId({});
-          return;
-        }
-
-        const currentMonth = Number(sheetMonth);
-        const feeStartMonth = body.feeStartMonth ?? feeSystemStartMonth1to12(sheetYear);
-        const endMonthForPricing = body.endMonthForPricing ?? currentMonth - 1;
-        const feeRows = body.feeRows ?? [];
-        const recordsMap = body.recordsMap ?? {};
-        const yearStatesMap = body.yearStatesMap ?? {};
-
-        const nextRemedial: Record<string, number> = {};
-        for (const row of body.metricsRows ?? []) {
-          nextRemedial[String(row.student_id ?? "")] = Number(row.remedial_count ?? 0) || 0;
-        }
-        setRemedialCountByStudentId(nextRemedial);
-
-        const submittedNext: Record<string, Partial<Record<number, number>>> = {};
-        const historicalNext: Record<
-          string,
-          Partial<Record<number, { lessonUnitPrice: number; feePricingGrade: string }>>
-        > = {};
-
-        if (endMonthForPricing >= feeStartMonth) {
-          for (const row of feeRows) {
-            const mo = row.month;
-            if (mo < feeStartMonth || mo > endMonthForPricing) continue;
-            const sid = row.student_id;
-            if (!sid || !mo) continue;
-            if (!historicalNext[sid]) historicalNext[sid] = {};
-            const rawG = String(row.fee_pricing_grade ?? "").trim();
-            const c = normalizeGradeCode(rawG);
-            historicalNext[sid][mo] = {
-              lessonUnitPrice: Number(row.lesson_unit_price ?? 0) || 0,
-              feePricingGrade: /^F[1-6]$/.test(c) ? c : "",
-            };
-          }
-        }
-
-        for (const row of feeRows) {
-          const sid = row.student_id;
-          const mo = row.month;
-          if (!sid || !mo || mo < feeStartMonth || mo > currentMonth) continue;
-          if (!submittedNext[sid]) submittedNext[sid] = {};
-          submittedNext[sid][mo] = Number(row.submitted_amount ?? 0) || 0;
-        }
-
-        setSubmittedByStudentMonth(submittedNext);
-        setHistoricalMonthFeeByStudentId(endMonthForPricing >= feeStartMonth ? historicalNext : {});
-
-        setRecordsByStudentId((prev) => {
-          const next = { ...prev };
-          for (const r of feeRows) {
-            if (r.month !== currentMonth) continue;
-            const id = r.student_id;
-            if (!next[id]) next[id] = defaultRecordState();
-            next[id] = {
-              ...next[id],
-              submitted: Number(r.submitted_amount ?? 0) || 0,
-              submittedLessonCount:
-                r.submitted_lesson_count == null || Number.isNaN(Number(r.submitted_lesson_count))
-                  ? null
-                  : Number(r.submitted_lesson_count),
-              lessonUnitPrice: Number(r.lesson_unit_price ?? 0) || 0,
-              feePricingGrade: (() => {
-                const raw = String(r.fee_pricing_grade ?? "").trim();
-                const c = normalizeGradeCode(raw);
-                return /^F[1-6]$/.test(c) ? c : "";
-              })(),
-              remarks: String(r.remarks ?? ""),
-              makeupRemarks: String(r.makeup_remarks ?? ""),
-              balanceDueRemarks: String(r.balance_due_remarks ?? ""),
-              sendFee: Boolean(r.send_fee),
-            };
-          }
-          return next;
-        });
-
-        if (sheetYear === OPENING_BALANCE_AS_OF_YEAR) {
-          const openingResult = body.openingResult ?? { balances: {} };
-          const local = readFeeOpeningBalancesFromLocal();
-          const merged = { ...local, ...openingResult.balances };
-          setOpeningBalanceByStudentId(merged);
-          setOpeningBalanceTableMissing(Boolean(openingResult.tableMissing));
-          if (openingResult.error) {
-            setOpeningBalanceSaveMsg(
-              openingResult.tableMissing
-                ? "期初結餘表未建立：請在 Supabase 執行 supabase/supabase_student_fee_opening_balances.sql（已暫存本機）"
-                : `期初結餘讀取失敗：${openingResult.error}（已用本機備份）`,
-            );
-          } else {
-            setOpeningBalanceSaveMsg("");
-            setOpeningBalanceTableMissing(false);
-          }
-        } else {
-          setOpeningBalanceByStudentId({});
-          setOpeningBalanceTableMissing(false);
-          setOpeningBalanceSaveMsg("");
-        }
-
-        const nextRecords: Record<string, LessonRecord[]> = {};
-        const nextYearState: Record<string, StudentLesson2026State> = {};
-        for (const st of mapped) {
-          const id = st.id;
-          let records: LessonRecord[] = [];
-          const rawCloudRecords = recordsMap[id];
-          if (Array.isArray(rawCloudRecords)) {
-            records = rawCloudRecords as LessonRecord[];
-          }
-          nextRecords[id] = records;
-
-          nextYearState[id] = yearStatesMap[id] ?? emptyLessonYearState();
-        }
-        setLessonRecordsByStudentId(nextRecords);
-        setLessonYearStateByStudentId(nextYearState);
+        applyHydratedBootstrap(hydrateFeeRecordBootstrap(body, sheetYear, sheetMonth));
       } catch {
         if (!mounted) return;
         setStudents([]);
@@ -867,7 +776,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     return () => {
       mounted = false;
     };
-  }, [sheetMonth, sheetYear]);
+  }, [sheetMonth, sheetYear, applyHydratedBootstrap]);
 
   const submittedBeforeByStudentId = useMemo(() => {
     const currentMonth = Number(sheetMonth);
@@ -1133,6 +1042,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
     }
     setFeeTierBundle({ ...feeTierDraft });
     setFeeTierSaveMsg(res.cloudSynced ? "Saved + cloud" : "Saved locally");
+    notifyScheduleCachesStale();
     window.setTimeout(() => setFeeTierSaveMsg(""), 2800);
   }, [feeTierDraft]);
 
@@ -1504,6 +1414,18 @@ export default function StudentsLessonTimeFeeRecordPage() {
     contentKey: `${filteredSortedStudents.length}:${sheetYear}:${sheetMonth}`,
   });
 
+  const feeRowVirtualizer = useVirtualizer({
+    count: filteredSortedStudents.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 88,
+    overscan: 10,
+  });
+  const feeVirtualRows = feeRowVirtualizer.getVirtualItems();
+  const feePadTop = feeVirtualRows[0]?.start ?? 0;
+  const feePadBottom =
+    feeRowVirtualizer.getTotalSize() - (feeVirtualRows[feeVirtualRows.length - 1]?.end ?? 0);
+  const feeTableColSpan = 11 + L_COUNT + (sheetYear === OPENING_BALANCE_AS_OF_YEAR ? 1 : 0);
+
   const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
   const monthlyArrearsRowsForDialog = useMemo(() => {
@@ -1623,7 +1545,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav />
+        <AppTopNav viewer={navViewer} />
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">Student Lesson Time & Tuition Record</h1>
@@ -2023,7 +1945,11 @@ export default function StudentsLessonTimeFeeRecordPage() {
                       </thead>
 
                       <tbody>
-                        {filteredSortedStudents.map((st, index) => {
+                        <VirtualTableSpacerRow height={feePadTop} colSpan={feeTableColSpan} />
+                        {feeVirtualRows.map((virtualRow) => {
+                          const index = virtualRow.index;
+                          const st = filteredSortedStudents[index];
+                          if (!st) return null;
                           const r = recordsByStudentId[st.id] ?? defaultRecordState();
                           const arrearsDue = balanceBeforeByStudentId[st.id] ?? 0;
                           const totalDue = totalDueByStudentId[st.id] ?? 0;
@@ -2062,6 +1988,7 @@ export default function StudentsLessonTimeFeeRecordPage() {
                             />
                           );
                         })}
+                        <VirtualTableSpacerRow height={feePadBottom} colSpan={feeTableColSpan} />
                       </tbody>
                     </table>
                   </div>

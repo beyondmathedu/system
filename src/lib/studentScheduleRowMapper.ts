@@ -181,6 +181,13 @@ function mapCoreRowToStudentRow(
   };
 }
 
+function rowCountsTowardMonthLLabel(r: StudentLessonScheduleRow): boolean {
+  if (r.extraEntryId && isDoubleReschedulePairId(r.extraEntryId)) return false;
+  // Reschedule targets are makeup slots; the paid lesson stays on the original month (Lx there).
+  if (r.rowKind === "reschedule") return false;
+  return true;
+}
+
 function assignLLabelsAndDisplayOrder(
   rows: StudentLessonScheduleRow[],
 ): StudentLessonScheduleRow[] {
@@ -193,12 +200,6 @@ function assignLLabelsAndDisplayOrder(
 
   const monthCounter: Record<number, number> = {};
   return rows.map((r, i) => {
-    // cancelled_original usually displays "/" because the original slot is cancelled.
-    // For pending makeup, we still want it to count as the paid lesson of that month,
-    // so show "Lx" instead of "/".
-    if (r.rowKind === "cancelled_original" && r.lessonType !== TYPE_PENDING) {
-      return { ...r, lLabel: "/", displayOrder: i };
-    }
     const rowKey = `${r.date}|${r.time}|${r.room}`;
     if (r.extraEntryId && isDoubleReschedulePairId(r.extraEntryId)) {
       return { ...r, lLabel: "/", displayOrder: i };
@@ -207,6 +208,9 @@ function assignLLabelsAndDisplayOrder(
       const start = (monthCounter[r.month] ?? 0) + 1;
       monthCounter[r.month] = start + 1;
       return { ...r, lLabel: `L${start} / L${start + 1}`, displayOrder: i };
+    }
+    if (!rowCountsTowardMonthLLabel(r)) {
+      return { ...r, lLabel: "/", displayOrder: i };
     }
     monthCounter[r.month] = (monthCounter[r.month] ?? 0) + 1;
     return { ...r, lLabel: `L${monthCounter[r.month]}`, displayOrder: i };

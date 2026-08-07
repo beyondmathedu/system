@@ -37,7 +37,92 @@ export type LessonScheduleSlotRule = LessonScheduleVersionRule & {
 };
 
 export function scheduleSlotKey(rule: { weekday: string; time: string; room: string }): string {
-  return `${rule.weekday}|${String(rule.time).trim()}|${canonicalScheduleRoomLabel(rule.room)}`;
+  const weekday = normalizeScheduleWeekday(rule.weekday);
+  return `${weekday}|${String(rule.time).trim()}|${canonicalScheduleRoomLabel(rule.room)}`;
+}
+
+/** Stable React list key — unique even when legacy patch ids collide across weekdays. */
+export function scheduleRecordRowKey(rule: {
+  id?: string;
+  effectiveDate?: string;
+  weekday: string;
+  time: string;
+  room: string;
+}): string {
+  const id = String(rule.id ?? "").trim();
+  const slot = scheduleSlotKey(rule);
+  const eff = String(rule.effectiveDate ?? "").trim();
+  return id ? `${id}|${slot}|${eff}` : `${slot}|${eff}`;
+}
+
+const WEEKDAY_ID_TOKEN: Record<string, string> = {
+  日: "0",
+  一: "1",
+  二: "2",
+  三: "3",
+  四: "4",
+  五: "5",
+  六: "6",
+};
+
+/** ASCII token for rule ids (avoids stripping Chinese weekdays to `_`). */
+export function scheduleRuleSlotIdToken(rule: {
+  weekday: string;
+  time: string;
+  room: string;
+}): string {
+  const wd =
+    WEEKDAY_ID_TOKEN[normalizeScheduleWeekday(rule.weekday)] ??
+    normalizeScheduleWeekday(rule.weekday);
+  const time = String(rule.time).trim().replace(/[^a-zA-Z0-9]/g, "_");
+  const room = canonicalScheduleRoomLabel(rule.room).replace(/[^a-zA-Z0-9]/g, "_");
+  return `wd${wd}-${time}-${room}`;
+}
+
+/**
+ * Fix records that share the same `id` but represent different weekday/time/room slots.
+ * (Legacy May 2026 tutor patch ids stripped Chinese weekdays, causing collisions.)
+ */
+export function repairCollidingScheduleRuleIds<T extends LessonScheduleSlotRule>(
+  rules: T[],
+): { rules: T[]; repairedCount: number } {
+  const seenIds = new Set<string>();
+  const out: T[] = [];
+  let repairedCount = 0;
+
+  for (const r of rules) {
+    const id = String(r.id ?? "").trim();
+    if (!id) {
+      out.push(r);
+      continue;
+    }
+
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      out.push(r);
+      continue;
+    }
+
+    const existing = out.find((x) => x.id === id);
+    if (existing && scheduleSlotKey(existing) === scheduleSlotKey(r)) {
+      const idx = out.indexOf(existing);
+      if (idx >= 0) out[idx] = pickPreferredDuplicateScheduleRule(existing, r);
+      continue;
+    }
+
+    const token = scheduleRuleSlotIdToken(r);
+    let newId = `${id}__${token}`;
+    let suffix = 2;
+    while (seenIds.has(newId)) {
+      newId = `${id}__${token}-${suffix}`;
+      suffix += 1;
+    }
+    seenIds.add(newId);
+    out.push({ ...r, id: newId });
+    repairedCount += 1;
+  }
+
+  return { rules: out, repairedCount };
 }
 
 export type DuplicateScheduleRuleGroup<T extends LessonScheduleSlotRule> = {

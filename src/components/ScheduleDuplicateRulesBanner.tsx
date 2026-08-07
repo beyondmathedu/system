@@ -5,6 +5,7 @@ import {
   findDuplicateScheduleRuleGroups,
   formatScheduleRuleSlotLabel,
   pruneDuplicateScheduleRules,
+  scheduleRecordRowKey,
   scheduleSlotKey,
   type LessonScheduleSlotRule,
 } from "@/lib/lessonScheduleVersions";
@@ -48,7 +49,7 @@ export default function ScheduleDuplicateRulesBanner<T extends LessonScheduleSlo
               保留：{slotLabel(g.keep)}
             </div>
             {g.remove.map((r) => (
-              <div key={r.id ?? scheduleSlotKey(r)} className="text-orange-800 line-through">
+              <div key={scheduleRecordRowKey(r)} className="text-orange-800 line-through">
                 刪除：{slotLabel(r)}
               </div>
             ))}

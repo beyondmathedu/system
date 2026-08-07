@@ -17,6 +17,7 @@ import {
 
 const FILTER_TICKS: Array<{ key: keyof RegularTimetableLessonFilterFlags; label: string }> = [
   { key: "regular", label: "Regular" },
+  { key: "pendingMakeup", label: "Pending makeup" },
   { key: "extra", label: "Extra" },
   { key: "reschedule", label: "Reschedule" },
   { key: "inactive", label: "Inactive" },

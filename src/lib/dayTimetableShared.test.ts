@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import {
   canonicalScheduleRoomLabel,
   filterDayTimetablePayloadByLessonView,
@@ -45,10 +46,40 @@ function samplePayload(): DayTimetablePayload {
 }
 
 describe("filterDayTimetablePayloadByLessonView", () => {
-  it("keeps regular and pending makeup in regular view", () => {
+  it("keeps regular in regular view but not pending makeup", () => {
     const filtered = filterDayTimetablePayloadByLessonView(samplePayload(), "regular");
     expect(filtered.byTimeRoom["4:00 PM::B"]?.map((c) => c.lessonType)).toEqual(["恆常"]);
     expect(filtered.rowFrames).toEqual([{ time: "4:00 PM", maxRows: 1 }]);
+  });
+
+  it("shows pending makeup only when pendingMakeup flag is on", () => {
+    const base = samplePayload();
+    base.byTimeRoom["6:00 PM::M前"] = [
+      {
+        studentId: "00257",
+        name: "Pending",
+        grade: "F.4",
+        scheduleRemarks: "",
+        lessonType: PENDING_MAKEUP_TYPE_LABEL,
+        tutorDisplay: "Alex",
+        pendingMakeupLabel: "Makeup until end of September",
+      },
+    ];
+    base.rowFrames.push({ time: "6:00 PM", maxRows: 1 });
+
+    expect(
+      filterDayTimetablePayloadByLessonView(base, "regular").byTimeRoom["6:00 PM::M前"],
+    ).toBeUndefined();
+    expect(
+      filterDayTimetablePayloadByLessonView(base, {
+        regular: false,
+        extra: false,
+        reschedule: false,
+        inactive: false,
+        cancelled: false,
+        pendingMakeup: true,
+      }).byTimeRoom["6:00 PM::M前"]?.[0]?.lessonType,
+    ).toBe(PENDING_MAKEUP_TYPE_LABEL);
   });
 
   it("adds extra onto regular for extra view", () => {
@@ -137,6 +168,7 @@ describe("filterDayTimetablePayloadByLessonView", () => {
         reschedule: false,
         inactive: false,
         cancelled: true,
+        pendingMakeup: false,
       }).byTimeRoom["2:30 PM::Hope"]?.[0]?.lessonType,
     ).toBe("取消");
   });
@@ -148,6 +180,7 @@ describe("filterDayTimetablePayloadByLessonView", () => {
       reschedule: true,
       inactive: false,
       cancelled: false,
+      pendingMakeup: false,
     });
     expect(filtered.byTimeRoom["4:00 PM::B"]?.map((c) => c.lessonType)).toEqual(["加堂"]);
     expect(filtered.byTimeRoom["5:30 PM::M前"]?.[0]?.lessonType).toBe("補堂");

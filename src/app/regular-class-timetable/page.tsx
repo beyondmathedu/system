@@ -4,6 +4,7 @@ import AppTopNav from "@/components/AppTopNav";
 import { dayTimetablePageIntroStrings } from "@/lib/dayTimetableUiStrings";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
@@ -26,7 +27,12 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   const nextHref = `/regular-class-timetable?year=${year}&month=${month}&day=${day}`;
   const [viewer, payload] = await Promise.all([
     getViewerContext(),
-    fetchDayTimetablePayload(year, month, day, { regularOnly: false, includeInactiveSlots: true, includeCancelledSlots: true }),
+    fetchDayTimetablePayload(year, month, day, {
+      regularOnly: false,
+      includeInactiveSlots: true,
+      includeCancelledSlots: true,
+      includePendingMakeupSlots: true,
+    }),
   ]);
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
@@ -40,10 +46,12 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   const next = shiftDay(year, month, day, 1);
   const base = "/regular-class-timetable";
 
+  const navViewer = await buildAppTopNavViewer(viewer);
+
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="regular-timetable" />
+        <AppTopNav highlight="regular-timetable" viewer={navViewer} />
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>

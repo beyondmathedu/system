@@ -1,8 +1,12 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import MultiStudentFirstAmountEditor from "@/components/MultiStudentFirstAmountEditor";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
+import { getViewerContext } from "@/lib/authz";
 import { loadMultiStudentFirstAmount } from "@/lib/payrollSettings";
+import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import {
   fetchTutorsForMonthlyLessonNav,
   TUTOR_NAV_STATUS_LABEL,
@@ -15,7 +19,12 @@ export const dynamic = "force-dynamic";
 const SECTION_ORDER: TutorNavStatus[] = ["工作中", "放假中", "已解僱"];
 
 export default async function TutorMonthlyLessonRecordPage() {
-  const [{ tutors }, firstSeatAmount] = await Promise.all([
+  const viewer = await getViewerContext();
+  if (!viewer.userId) redirect("/login?next=/tutor-monthly-lesson-record");
+  redirectTutorAwayFromAdminPages(viewer);
+
+  const [navViewer, { tutors }, firstSeatAmount] = await Promise.all([
+    buildAppTopNavViewer(viewer),
     fetchTutorsForMonthlyLessonNav(),
     loadMultiStudentFirstAmount(),
   ]);
@@ -23,7 +32,7 @@ export default async function TutorMonthlyLessonRecordPage() {
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav />
+        <AppTopNav viewer={navViewer} />
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>

@@ -5,6 +5,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import { FALLBACK_ROOM_NAV_LINKS, type RoomNavItem } from "@/lib/roomConstants";
 import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
 import { supabase } from "@/lib/supabase";
@@ -27,15 +28,26 @@ type MeNavResponse = {
   roomScheduleQuery?: string | null;
 };
 
-export default function AppTopNavContent({ highlight = null }: { highlight?: HighlightKey }) {
-  const [roomLinks, setRoomLinks] = useState<RoomNavItem[]>(FALLBACK_ROOM_NAV_LINKS);
-  const [roomScheduleQuery, setRoomScheduleQuery] = useState("");
-  const [viewerRole, setViewerRole] = useState<string | null>(null);
+export default function AppTopNavContent({
+  highlight = null,
+  viewer = null,
+}: {
+  highlight?: HighlightKey;
+  viewer?: AppTopNavViewer | null;
+}) {
+  const [roomLinks, setRoomLinks] = useState<RoomNavItem[]>(
+    () => viewer?.roomNavLinks?.length ? viewer.roomNavLinks : FALLBACK_ROOM_NAV_LINKS,
+  );
+  const [roomScheduleQuery, setRoomScheduleQuery] = useState(
+    () => String(viewer?.roomScheduleQuery ?? "").trim(),
+  );
+  const [viewerRole, setViewerRole] = useState<string | null>(() => viewer?.role ?? null);
   const [loggingOut, setLoggingOut] = useState(false);
   const pathname = usePathname();
   const isAdminNav = viewerRole === "admin";
   const isTutorRole = viewerRole === "tutor";
   const showTutorMenu = isTutorRole;
+  const hasServerViewer = Boolean(viewer?.role);
 
   async function onLogOut() {
     if (loggingOut) return;
@@ -50,24 +62,7 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
   useEffect(() => {
     let mounted = true;
 
-    async function loadNav() {
-      try {
-        const res = await fetch("/api/me", { credentials: "same-origin" });
-        if (res.ok) {
-          const body = (await res.json()) as MeNavResponse;
-          if (!mounted) return;
-          const role = String(body.role ?? "").toLowerCase() || null;
-          setViewerRole(role);
-          setRoomScheduleQuery(String(body.roomScheduleQuery ?? "").trim());
-          if (role === "tutor" && body.roomNavLinks?.length) {
-            setRoomLinks(body.roomNavLinks);
-            return;
-          }
-        }
-      } catch {
-        /* fallback to classrooms list */
-      }
-
+    async function loadAdminRoomsFromClient() {
       const { data, error } = await supabase
         .from("classrooms")
         .select("id, name, slug, sort_order")
@@ -83,10 +78,41 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
       );
     }
 
+    async function loadNav() {
+      if (hasServerViewer) {
+        // Server already seeded role + room links; only refresh admin rooms after edits.
+        return;
+      }
+      try {
+        const res = await fetch("/api/me", { credentials: "same-origin" });
+        if (res.ok) {
+          const body = (await res.json()) as MeNavResponse;
+          if (!mounted) return;
+          const role = String(body.role ?? "").toLowerCase() || null;
+          setViewerRole(role);
+          setRoomScheduleQuery(String(body.roomScheduleQuery ?? "").trim());
+          if (role === "tutor" && body.roomNavLinks?.length) {
+            setRoomLinks(body.roomNavLinks);
+            return;
+          }
+          if (role === "admin") {
+            await loadAdminRoomsFromClient();
+            return;
+          }
+        }
+      } catch {
+        /* fallback to classrooms list */
+      }
+
+      await loadAdminRoomsFromClient();
+    }
+
     void loadNav();
 
     const onClassroomsUpdated = () => {
-      void loadNav();
+      if (viewerRole === "admin" || !hasServerViewer) {
+        void loadAdminRoomsFromClient();
+      }
     };
     window.addEventListener("beyondmath:classrooms-updated", onClassroomsUpdated);
 
@@ -94,7 +120,7 @@ export default function AppTopNavContent({ highlight = null }: { highlight?: Hig
       mounted = false;
       window.removeEventListener("beyondmath:classrooms-updated", onClassroomsUpdated);
     };
-  }, []);
+  }, [hasServerViewer, viewerRole]);
 
   const base =
     "shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium transition active:bg-white/30 active:font-semibold sm:px-2.5 sm:text-sm";

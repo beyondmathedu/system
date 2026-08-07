@@ -143,21 +143,19 @@ export async function listStudentsForPage(
     };
   }
 
-  // Status filter uses grade + manual visibility — scan full list, then paginate.
+  // Status filter needs grade + visibility — scan id/grade only, then hydrate the page.
   const { inactivePeriodsById, currentInactiveStartById } = await loadAllInactivePeriodsMaps(
     supabase,
     todayHkIso,
   );
-  const matched: StudentsListRow[] = [];
+  const matchedIds: string[] = [];
   let scanOffset = 0;
-  const scanChunk = 200;
+  const scanChunk = 500;
 
   while (true) {
     let chunkQuery = supabase
       .from("students")
-      .select(
-        "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language",
-      )
+      .select("id, grade")
       .order("id", { ascending: true })
       .range(scanOffset, scanOffset + scanChunk - 1);
 
@@ -179,20 +177,54 @@ export async function listStudentsForPage(
     const { data, error } = await chunkQuery;
     if (error) throw new Error(error.message);
 
-    const chunk = (data ?? []) as StudentsListRow[];
+    const chunk = (data ?? []) as Array<{ id: string; grade: string | null }>;
     if (!chunk.length) break;
 
     for (const row of chunk) {
-      if (!studentMatchesStatus(row, inactivePeriodsById, status, inactiveKind, todayHkIso, year)) continue;
-      matched.push(row);
+      const stub: StudentsListRow = {
+        id: row.id,
+        name_zh: null,
+        name_en: null,
+        nickname_en: null,
+        birth_date: null,
+        student_phone: null,
+        email: null,
+        school: null,
+        textbook_publisher: null,
+        grade: row.grade,
+        math_language: null,
+      };
+      if (!studentMatchesStatus(stub, inactivePeriodsById, status, inactiveKind, todayHkIso, year)) {
+        continue;
+      }
+      matchedIds.push(row.id);
     }
 
     if (chunk.length < scanChunk) break;
     scanOffset += scanChunk;
   }
 
-  const total = matched.length;
-  const pageRows = matched.slice(offset, offset + limit);
+  const total = matchedIds.length;
+  const pageIds = matchedIds.slice(offset, offset + limit);
+  if (!pageIds.length) {
+    return {
+      rows: [],
+      total,
+      hasMore: false,
+      manualInactiveEffectiveById: currentInactiveStartById,
+    };
+  }
+
+  const { data: pageData, error: pageErr } = await supabase
+    .from("students")
+    .select(
+      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language",
+    )
+    .in("id", pageIds);
+  if (pageErr) throw new Error(pageErr.message);
+
+  const byId = new Map((pageData ?? []).map((r) => [String((r as StudentsListRow).id), r as StudentsListRow]));
+  const pageRows = pageIds.map((id) => byId.get(id)).filter(Boolean) as StudentsListRow[];
 
   return {
     rows: pageRows,

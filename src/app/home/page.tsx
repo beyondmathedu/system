@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
@@ -140,6 +142,57 @@ export default async function HomeLandingPage() {
   const viewer = await getViewerContext();
   if (!viewer.userId) redirect("/login");
   redirectTutorAwayFromAdminPages(viewer);
+  const navViewer = await buildAppTopNavViewer(viewer);
+  const ymdToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const randomLine = dailyPositiveLine(ymdToday);
+
+  return (
+    <div className="min-h-screen bg-slate-100 py-10">
+      <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
+        <AppTopNav highlight="dashboard" viewer={navViewer} />
+
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="px-6 py-10 text-center text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
+            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+              <span className="mr-2" aria-hidden>
+                👋
+              </span>
+              歡迎！
+            </h1>
+            <p className="mt-2 text-sm text-blue-100 sm:text-base">{randomLine}</p>
+          </div>
+
+          <Suspense fallback={<HomeDashboardSkeleton />}>
+            <HomeDashboardBody />
+          </Suspense>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeDashboardSkeleton() {
+  return (
+    <div className="space-y-4 p-6" aria-busy="true">
+      <div className="h-24 animate-pulse rounded-lg bg-slate-100" />
+      <div className="h-40 animate-pulse rounded-lg bg-slate-100" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="h-48 animate-pulse rounded-lg bg-slate-100" />
+        <div className="h-48 animate-pulse rounded-lg bg-slate-100" />
+        <div className="h-48 animate-pulse rounded-lg bg-slate-100" />
+        <div className="h-48 animate-pulse rounded-lg bg-slate-100" />
+      </div>
+      <p className="sr-only">Loading dashboard…</p>
+    </div>
+  );
+}
+
+async function HomeDashboardBody() {
   const dashboard = await fetchHomeDashboardData();
   const {
     ymdToday,
@@ -157,26 +210,8 @@ export default async function HomeLandingPage() {
     daysLeftInMonth,
   } = dashboard;
 
-  const randomLine = dailyPositiveLine(ymdToday);
-
   return (
-    <div className="min-h-screen bg-slate-100 py-10">
-      <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="dashboard" />
-
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="px-6 py-10 text-center text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
-            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
-              <span className="mr-2" aria-hidden>
-                👋
-              </span>
-              歡迎！
-            </h1>
-            <p className="mt-2 text-sm text-blue-100 sm:text-base">
-              {randomLine}
-            </p>
-          </div>
-
+    <>
           <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               <section className="rounded-lg border border-slate-200 bg-white px-4 py-3">
@@ -347,9 +382,7 @@ export default async function HomeLandingPage() {
               emptyHint="暫停上堂而知道幾時返嚟，可填預計復課日。"
             />
           </div>
-        </div>
-      </div>
-    </div>
+    </>
   );
 }
 

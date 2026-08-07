@@ -90,6 +90,29 @@ describe("dayTimetableScheduleRows", () => {
     expect(rows.some((r) => r.lessonType === "補堂")).toBe(false);
   });
 
+  it("shows pending makeup with label when includePendingMakeup is true", () => {
+    const records = [mondayRule()];
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-pending",
+      fromDate: "2026-05-25",
+      toDate: "",
+      time: "4:00 PM",
+      room: "M前",
+      pending: true,
+    });
+
+    const rows = buildDayTimetableRowsForDate(records, state, "2026-05-25", "2026-06-01", {
+      includePendingMakeup: true,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      lessonType: PENDING_MAKEUP_TYPE_LABEL,
+      pendingMakeupLabel: "Makeup until end of June",
+    });
+  });
+
   it("respects hidden_dates by rule id", () => {
     const records = [mondayRule({ id: "rule-hide-me" })];
     const state = emptyState();

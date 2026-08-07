@@ -2,7 +2,8 @@
  * Maps yearScheduleCore rows to the daily / regular timetable cell shape.
  */
 
-import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
+import { PENDING_MAKEUP_TYPE_LABEL, formatPendingMakeupReminder, isPendingMakeupVisible, isPendingRescheduleEntry } from "@/lib/pendingMakeup";
+import { parseCancelledOriginalRowId } from "@/lib/lessonScheduleVersions";
 import {
   buildYearScheduleRowsForDateRange,
   type BuiltScheduleRow,
@@ -26,7 +27,22 @@ function yearFromIso(dateIso: string): number {
   return m ? Number(m[1]) : 2026;
 }
 
-function mapCoreRowToDayRow(row: BuiltScheduleRow): DayTimetableBuiltRow {
+function mapCoreRowToDayRow(
+  row: BuiltScheduleRow,
+  state: YearLessonState,
+  todayYmd: string,
+): DayTimetableBuiltRow {
+  let pendingMakeupLabel: string | undefined;
+  if (row.rowKind === "cancelled_original") {
+    const cancelledMatch = parseCancelledOriginalRowId(row.rowId);
+    if (cancelledMatch) {
+      const entry = state.rescheduleEntries.find((e) => e.id === cancelledMatch.entryId);
+      if (entry && isPendingRescheduleEntry(entry)) {
+        pendingMakeupLabel = formatPendingMakeupReminder(entry.fromDate, todayYmd);
+      }
+    }
+  }
+
   return {
     date: row.date,
     time: row.time || "待定",
@@ -34,6 +50,7 @@ function mapCoreRowToDayRow(row: BuiltScheduleRow): DayTimetableBuiltRow {
     lessonType: row.lessonType,
     tutorDisplay: row.tutorDisplay,
     noteDisplay: row.noteDisplay,
+    pendingMakeupLabel,
   };
 }
 
@@ -41,8 +58,8 @@ export function buildDayTimetableRowsForDate(
   records: YearLessonRecord[],
   state: YearLessonState,
   targetDateIso: string,
-  _todayYmd: string,
-  options?: { roomSlotTutorRules?: RoomSlotTutorRule[] },
+  todayYmd: string,
+  options?: { roomSlotTutorRules?: RoomSlotTutorRule[]; includePendingMakeup?: boolean },
 ): DayTimetableBuiltRow[] {
   const year = yearFromIso(targetDateIso);
   const coreRows = buildYearScheduleRowsForDateRange(
@@ -54,6 +71,10 @@ export function buildDayTimetableRowsForDate(
     { roomSlotTutorRules: options?.roomSlotTutorRules },
   );
   return coreRows
-    .map((row) => mapCoreRowToDayRow(row))
-    .filter((row) => row.lessonType !== PENDING_MAKEUP_TYPE_LABEL);
+    .map((row) => mapCoreRowToDayRow(row, state, todayYmd))
+    .filter((row) => {
+      if (row.lessonType !== PENDING_MAKEUP_TYPE_LABEL) return true;
+      if (!options?.includePendingMakeup) return false;
+      return isPendingMakeupVisible(row.date, todayYmd);
+    });
 }

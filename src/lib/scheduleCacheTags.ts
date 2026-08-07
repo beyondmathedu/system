@@ -4,3 +4,4 @@ export const SCHEDULE_CACHE_TAG_DAY_TIMETABLE = "bm-day-timetable-v1";
 export const SCHEDULE_CACHE_TAG_HOME = "bm-home-dashboard-v1";
 export const SCHEDULE_CACHE_TAG_STUDENT_PROGRESS = "bm-student-progress-v1";
 export const SCHEDULE_CACHE_TAG_CLASSROOMS = "bm-classrooms-v1";
+export const SCHEDULE_CACHE_TAG_FEE_RECORD = "bm-fee-record-v1";

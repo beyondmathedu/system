@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { fetchClassroomMeta } from "@/lib/classroomsRegistry";
 import {
@@ -27,8 +28,9 @@ export default async function TutorRoomsPortal() {
     redirect("/login");
   }
 
-  const enriched = await Promise.all(
-    links.map(async (item) => {
+  const [navViewer, ...enriched] = await Promise.all([
+    buildAppTopNavViewer(viewer),
+    ...links.map(async (item) => {
       const slug = item.href.replace(/^\/rooms\//, "");
       const meta = await fetchClassroomMeta(slug);
       return {
@@ -36,12 +38,12 @@ export default async function TutorRoomsPortal() {
         description: meta?.description ?? "",
       };
     }),
-  );
+  ]);
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="rooms" />
+        <AppTopNav highlight="rooms" viewer={navViewer} />
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold">我的教室</h1>

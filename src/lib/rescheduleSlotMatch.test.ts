@@ -36,7 +36,23 @@ describe("reschedule cancels only matching slot on same date", () => {
     },
   ];
 
-  it("legacy entry without from-slot still cancels both lessons", () => {
+  it("legacy entry without from-slot cancels all lessons only on single-slot dates", () => {
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-legacy",
+      fromDate: "2026-07-04",
+      toDate: "2026-07-20",
+      time: "04:30 PM",
+      room: "Hope",
+    });
+    const rows = buildYearScheduleRowsForMonth([records[0]], state, 2026, 7);
+    const cancelled = rows.filter(
+      (r) => r.date === "2026-07-04" && r.rowKind === "cancelled_original",
+    );
+    expect(cancelled).toHaveLength(1);
+  });
+
+  it("legacy entry without from-slot does not cancel when multiple lessons share the date", () => {
     const state = emptyState();
     state.rescheduleEntries.push({
       id: "rs-legacy",
@@ -46,10 +62,46 @@ describe("reschedule cancels only matching slot on same date", () => {
       room: "Hope",
     });
     const rows = buildYearScheduleRowsForMonth(records, state, 2026, 7);
-    const cancelled = rows.filter(
-      (r) => r.date === "2026-07-04" && r.rowKind === "cancelled_original",
+    const jul4 = rows.filter((r) => r.date === "2026-07-04");
+    expect(jul4.every((r) => r.rowKind === "normal")).toBe(true);
+  });
+
+  it("two slotted reschedules on the same original date stay independent", () => {
+    const state = emptyState();
+    state.rescheduleEntries.push(
+      {
+        id: "rs-1000",
+        fromDate: "2026-07-04",
+        toDate: "2026-08-04",
+        time: "06:00 PM",
+        room: "B",
+        fromScheduleRuleId: "rule-1000",
+        fromTime: "10:00 AM",
+        fromRoom: "B",
+      },
+      {
+        id: "rs-1130",
+        fromDate: "2026-07-04",
+        toDate: "2026-08-14",
+        time: "06:00 PM",
+        room: "B",
+        fromScheduleRuleId: "rule-1130",
+        fromTime: "11:30 AM",
+        fromRoom: "B",
+      },
     );
-    expect(cancelled).toHaveLength(2);
+    const rows = buildYearScheduleRowsForMonth(records, state, 2026, 7);
+    const jul4 = rows
+      .filter((r) => r.date === "2026-07-04")
+      .map((r) => ({ time: r.time, kind: r.rowKind }))
+      .sort((a, b) => a.time.localeCompare(b.time));
+    expect(jul4).toEqual([
+      { time: "10:00 AM", kind: "cancelled_original" },
+      { time: "11:30 AM", kind: "cancelled_original" },
+    ]);
+    const augustRows = buildYearScheduleRowsForMonth(records, state, 2026, 8);
+    expect(augustRows.some((r) => r.date === "2026-08-04" && r.rowKind === "reschedule")).toBe(true);
+    expect(augustRows.some((r) => r.date === "2026-08-14" && r.rowKind === "reschedule")).toBe(true);
   });
 
   it("fromScheduleRuleId cancels only that lesson", () => {

@@ -105,8 +105,11 @@ function normalizeRecord(item) {
   };
 }
 
+const WEEKDAY_ID_TOKEN = { 日: "0", 一: "1", 二: "2", 三: "3", 四: "4", 五: "5", 六: "6" };
+
 function slotKey(r) {
-  return `${r.weekday}|${r.time}|${normalizeRoom(r.room)}`;
+  const wd = WEEKDAY_ID_TOKEN[r.weekday] ?? r.weekday;
+  return `${wd}|${r.time}|${normalizeRoom(r.room)}`;
 }
 
 function activeBySlotOnDate(records, dateIso) {

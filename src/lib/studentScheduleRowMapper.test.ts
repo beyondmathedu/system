@@ -49,11 +49,12 @@ describe("studentScheduleRowMapper", () => {
 
     expect(cancelled).toBeDefined();
     expect(cancelled?.rowKind).toBe("cancelled_original");
-    expect(cancelled?.lLabel).toBe("/");
+    expect(cancelled?.lLabel).toBe("L4");
 
     expect(reschedule).toBeDefined();
     expect(reschedule?.rescheduleFromDate).toBe("2026-05-25");
     expect(reschedule?.rescheduleEntryId).toBe("rs-1");
+    expect(reschedule?.lLabel).toBe("/");
   });
 
   it("expands all months when no month option is set (Month filter All)", () => {
@@ -169,6 +170,29 @@ describe("studentScheduleRowMapper", () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.date >= "2026-05-18" && r.date <= "2026-05-31")).toBe(true);
     expect(rows.some((r) => r.date === "2026-05-11")).toBe(false);
+  });
+
+  it("cross-month reschedule keeps L labels in origin month only", () => {
+    const records = [mondayRule()];
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-jul-aug",
+      fromDate: "2026-07-27",
+      toDate: "2026-08-04",
+      time: "4:00 PM",
+      room: "M前",
+    });
+
+    const july = buildStudentScheduleRows(records, state, YEAR, "2026-07-15", { month: 7 });
+    const august = buildStudentScheduleRows(records, state, YEAR, "2026-08-01", { month: 8 });
+
+    const julyCancelled = july.find((r) => r.date === "2026-07-27");
+    const augustReschedule = august.find((r) => r.date === "2026-08-04" && r.lessonType === "Reschedule");
+    const augustRegular = august.filter((r) => r.lessonType === "Regular");
+
+    expect(julyCancelled?.lLabel).toMatch(/^L\d+$/);
+    expect(augustReschedule?.lLabel).toBe("/");
+    expect(augustRegular[0]?.lLabel).toBe("L1");
   });
 
   it("base schedule rows ignore reschedule state (used for original-slot validation)", () => {

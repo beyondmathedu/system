@@ -29,6 +29,10 @@ import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { supabase } from "@/lib/supabase";
 import { canonicalScheduleRoomLabel } from "@/lib/dayTimetableShared";
 import {
+  repairCollidingScheduleRuleIds,
+  type LessonScheduleSlotRule,
+} from "@/lib/lessonScheduleVersions";
+import {
   attendanceRecordDelta,
   buildAttendancePatchFromKeys,
   buildLessonYearStateUpsertRow,
@@ -243,7 +247,13 @@ export async function loadLessonScheduleRecords(studentId: string) {
     .maybeSingle();
 
   if (!data?.records || !Array.isArray(data.records)) return [];
-  return data.records;
+  const { records, repairedCount } = normalizeAndRepairLessonScheduleRecords(
+    data.records as LessonScheduleSlotRule[],
+  );
+  if (repairedCount > 0) {
+    void saveLessonScheduleRecords(studentId, records);
+  }
+  return records;
 }
 
 export async function loadLessonScheduleRecordsBatch(studentIds: string[]) {
@@ -274,8 +284,18 @@ function normalizeLessonRecordsForStorage(records: unknown[]): unknown[] {
   });
 }
 
+export function normalizeAndRepairLessonScheduleRecords<T extends LessonScheduleSlotRule>(
+  records: T[],
+): { records: T[]; repairedCount: number } {
+  const normalized = normalizeLessonRecordsForStorage(records) as T[];
+  const { rules, repairedCount } = repairCollidingScheduleRuleIds(normalized);
+  return { records: rules, repairedCount };
+}
+
 export async function saveLessonScheduleRecords(studentId: string, records: unknown[]) {
-  const normalized = normalizeLessonRecordsForStorage(records);
+  const { records: normalized } = normalizeAndRepairLessonScheduleRecords(
+    normalizeLessonRecordsForStorage(records) as LessonScheduleSlotRule[],
+  );
   const { error } = await supabase.from("student_lesson_records").upsert(
     { student_id: studentId, records: normalized, updated_at: new Date().toISOString() },
     { onConflict: "student_id" },

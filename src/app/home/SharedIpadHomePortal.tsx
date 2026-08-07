@@ -1,6 +1,7 @@
 import Link from "next/link";
 import AppTopNav from "@/components/AppTopNav";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import type { ViewerContext } from "@/lib/authz";
 import { fetchClassroomMeta } from "@/lib/classroomsRegistry";
 import { buildTutorRoomNavLinks, defaultRoomScheduleSearch } from "@/lib/tutorRoomAccess";
@@ -12,8 +13,9 @@ type Props = {
 export default async function SharedIpadHomePortal({ viewer }: Props) {
   const roomQuery = defaultRoomScheduleSearch(viewer);
   const links = buildTutorRoomNavLinks(viewer.allowedRoomSlugs);
-  const enriched = await Promise.all(
-    links.map(async (item) => {
+  const [navViewer, ...enriched] = await Promise.all([
+    buildAppTopNavViewer(viewer),
+    ...links.map(async (item) => {
       const slug = item.href.replace(/^\/rooms\//, "");
       const meta = await fetchClassroomMeta(slug);
       return {
@@ -22,12 +24,12 @@ export default async function SharedIpadHomePortal({ viewer }: Props) {
         href: `${item.href}?${roomQuery}`,
       };
     }),
-  );
+  ]);
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="dashboard" />
+        <AppTopNav highlight="dashboard" viewer={navViewer} />
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>

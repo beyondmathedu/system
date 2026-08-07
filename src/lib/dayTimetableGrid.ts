@@ -479,6 +479,11 @@ export type FetchDayTimetableOptions = {
    * Regular Class Timetable Cancelled tick needs these; Daily Timetable does not.
    */
   includeCancelledSlots?: boolean;
+  /**
+   * Include leave / pending makeup on the original lesson date.
+   * Regular Class Timetable Pending makeup tick; Daily Timetable does not.
+   */
+  includePendingMakeupSlots?: boolean;
 };
 
 type DayTimetableStaticBundle = {
@@ -617,7 +622,7 @@ async function fetchDayTimetablePayloadUncached(
   const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const dateIso = toDayIso(year, month, day);
   const titleDate = `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
-  const { regularOnly, includeInactiveSlots = false, includeCancelledSlots = false } = options;
+  const { regularOnly, includeInactiveSlots = false, includeCancelledSlots = false, includePendingMakeupSlots = false } = options;
 
   const supabase = getSupabaseAdmin();
   const targetWeekday = weekdayCnFromIsoDateHk(dateIso);
@@ -687,17 +692,28 @@ async function fetchDayTimetablePayloadUncached(
 
     const dayRows = buildDayTimetableRowsForDate(records, state, dateIso, todayIso, {
       roomSlotTutorRules,
+      includePendingMakeup: includePendingMakeupSlots,
     })
       .map((r) => ({ ...r, normalizedRoom: resolveRoomGroupFromRegistry(r.room, roomRegistry) }))
       .filter((r) => {
         // Daily: hide vacated cancelled-original. Regular Class Timetable may keep them.
         if (r.lessonType === "取消" && !includeCancelledSlots) return false;
         if (onlyRegular && r.lessonType === "取消") return false;
-        if (onlyRegular && r.lessonType !== "恆常" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL) {
+        if (
+          onlyRegular &&
+          r.lessonType !== "恆常" &&
+          r.lessonType !== PENDING_MAKEUP_TYPE_LABEL
+        ) {
           return false;
         }
         // Inactive: keep regular slot; also show intentional extra / makeup on this date.
-        if (isInactive && r.lessonType !== "恆常" && r.lessonType !== "加堂" && r.lessonType !== "補堂") {
+        if (
+          isInactive &&
+          r.lessonType !== "恆常" &&
+          r.lessonType !== "加堂" &&
+          r.lessonType !== "補堂" &&
+          !(includePendingMakeupSlots && r.lessonType === PENDING_MAKEUP_TYPE_LABEL)
+        ) {
           return false;
         }
         return ROOM_GROUPS.includes(r.normalizedRoom as RoomGroup);
@@ -861,13 +877,15 @@ const fetchDayTimetablePayloadCached = unstable_cache(
     regularOnly: boolean,
     includeInactiveSlots: boolean,
     includeCancelledSlots: boolean,
+    includePendingMakeupSlots: boolean,
   ) =>
     fetchDayTimetablePayloadUncached(year, month, day, {
       regularOnly,
       includeInactiveSlots,
       includeCancelledSlots,
+      includePendingMakeupSlots,
     }),
-  ["day-timetable-payload-v21"],
+  ["day-timetable-payload-v22"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
@@ -885,5 +903,6 @@ export async function fetchDayTimetablePayload(
     options.regularOnly,
     Boolean(options.includeInactiveSlots),
     Boolean(options.includeCancelledSlots),
+    Boolean(options.includePendingMakeupSlots),
   );
 }

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { defaultDailyTimetablePath, isSharedIpadTutorViewer, isTutorViewer } from "@/lib/tutorRoomAccess";
 import RoomsAdminClient from "./RoomsAdminClient";
@@ -14,5 +15,6 @@ export default async function RoomsIndexPage() {
 
   if (viewer.role !== "admin") redirect("/login");
 
-  return <RoomsAdminClient />;
+  const navViewer = await buildAppTopNavViewer(viewer);
+  return <RoomsAdminClient navViewer={navViewer} />;
 }

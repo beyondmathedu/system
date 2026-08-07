@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import ScheduleDuplicateRulesBanner from "@/components/ScheduleDuplicateRulesBanner";
-import { hasDuplicateScheduleSlotInVersion } from "@/lib/lessonScheduleVersions";
+import { hasDuplicateScheduleSlotInVersion, scheduleRecordRowKey } from "@/lib/lessonScheduleVersions";
 import {
   loadLessonScheduleRecords,
+  normalizeAndRepairLessonScheduleRecords,
 } from "@/lib/studentLessonStorage";
 import { queueSaveLessonScheduleRecords } from "@/lib/queueSaveLessonScheduleRecords";
 import { readYmdParts } from "@/lib/intlFormatParts";
@@ -102,6 +103,15 @@ function normalizeLessonRecord(raw: ScheduleRecord): ScheduleRecord & { effectiv
   };
 }
 
+function normalizeAndRepairRecords(records: ScheduleRecord[]): {
+  records: ScheduleRecord[];
+  repairedIdCount: number;
+} {
+  const normalized = records.map(normalizeLessonRecord);
+  const { records: rules, repairedCount } = normalizeAndRepairLessonScheduleRecords(normalized);
+  return { records: rules, repairedIdCount: repairedCount };
+}
+
 export default function LessonScheduleGrid({
   studentId,
   initialRecords,
@@ -124,10 +134,12 @@ export default function LessonScheduleGrid({
 
   const RECORDS_STORAGE_KEY = `lesson_schedule_records:${studentId}`;
   const recordsBootstrapKey =
-    initialRecords != null ? `props:${studentId}:${initialRecords.length}` : `fetch:${studentId}`;
+    initialRecords != null
+      ? `props:${studentId}:${initialRecords.map((r) => r.id).join("\0")}`
+      : `fetch:${studentId}`;
   const [recordsBootstrap, setRecordsBootstrap] = useState(recordsBootstrapKey);
   const [records, setRecords] = useState<ScheduleRecord[]>(() =>
-    initialRecords?.map(normalizeLessonRecord) ?? [],
+    initialRecords != null ? normalizeAndRepairRecords(initialRecords).records : [],
   );
   const [effectiveDate, setEffectiveDate] = useState(() => toHkIsoDateFromMs(Date.now()));
   const [filterEffectiveDate, setFilterEffectiveDate] = useState("");
@@ -152,9 +164,13 @@ export default function LessonScheduleGrid({
   if (recordsBootstrapKey !== recordsBootstrap) {
     setRecordsBootstrap(recordsBootstrapKey);
     if (initialRecords != null) {
-      const normalized = initialRecords.map(normalizeLessonRecord);
-      setRecords(normalized);
-      window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
+      const { records: repaired, repairedIdCount } = normalizeAndRepairRecords(initialRecords);
+      setRecords(repaired);
+      window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(repaired));
+      if (repairedIdCount > 0) {
+        queueSaveLessonScheduleRecords(studentId, repaired);
+        onRecordsChange?.(repaired);
+      }
     } else {
       setRecords([]);
     }
@@ -167,15 +183,17 @@ export default function LessonScheduleGrid({
       const cloudRecords = await loadLessonScheduleRecords(studentId);
       if (cancelled) return;
       if (Array.isArray(cloudRecords) && cloudRecords.length > 0) {
-        const normalized = (cloudRecords as ScheduleRecord[]).map(normalizeLessonRecord);
-        setRecords(normalized);
-        window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
-        const needsCanonicalRewrite = (cloudRecords as ScheduleRecord[]).some(
-          (r, i) => (r.room ?? "").trim() !== normalized[i].room,
+        const { records: repaired, repairedIdCount } = normalizeAndRepairRecords(
+          cloudRecords as ScheduleRecord[],
         );
-        if (needsCanonicalRewrite) {
-          queueSaveLessonScheduleRecords(studentId, normalized);
-          onRecordsChange?.(normalized);
+        setRecords(repaired);
+        window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(repaired));
+        const needsCanonicalRewrite = (cloudRecords as ScheduleRecord[]).some(
+          (r, i) => (r.room ?? "").trim() !== repaired[i]?.room,
+        );
+        if (repairedIdCount > 0 || needsCanonicalRewrite) {
+          queueSaveLessonScheduleRecords(studentId, repaired);
+          onRecordsChange?.(repaired);
         }
         return;
       }
@@ -184,7 +202,8 @@ export default function LessonScheduleGrid({
         if (!raw) return;
         const parsed = JSON.parse(raw) as ScheduleRecord[];
         if (Array.isArray(parsed)) {
-          setRecords(parsed.map(normalizeLessonRecord));
+          const { records: repaired } = normalizeAndRepairRecords(parsed);
+          setRecords(repaired);
         }
       } catch {
         // ignore corrupted storage
@@ -210,7 +229,7 @@ export default function LessonScheduleGrid({
 
   const recordsSortedDesc = useMemo(
     () =>
-      [...records].sort((a, b) => {
+      [...normalizeAndRepairRecords(records).records].sort((a, b) => {
         const da = a.effectiveDate ?? "";
         const db = b.effectiveDate ?? "";
         const c = db.localeCompare(da);
@@ -262,11 +281,14 @@ export default function LessonScheduleGrid({
   }
 
   const persistRecords = (next: ScheduleRecord[]) => {
-    const normalized = next.map(normalizeLessonRecord);
+    const { records: normalized, repairedIdCount } = normalizeAndRepairRecords(next);
     setRecords(normalized);
     window.localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(normalized));
     onRecordsChange?.(normalized);
     queueSaveLessonScheduleRecords(studentId, normalized);
+    if (repairedIdCount > 0) {
+      setSaveSlotError("Fixed duplicate rule ids and saved to cloud.");
+    }
   };
 
   function laterVersionRoomConflicts(
@@ -707,7 +729,7 @@ export default function LessonScheduleGrid({
                 <tbody>
                   {filteredRecordsSortedDesc.map((r) => (
                     <tr
-                      key={r.id}
+                      key={scheduleRecordRowKey(r)}
                       className={`divide-x divide-slate-100 border-b border-slate-100 ${
                         editingRecordId === r.id ? "bg-[#1d76c2]/5" : ""
                       }`}

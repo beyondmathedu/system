@@ -5,6 +5,7 @@ import AppTopNav from "@/components/AppTopNav";
 import BackNavButton from "@/components/BackNavButton";
 import { fetchClassroomMeta } from "@/lib/classroomsRegistry";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { defaultLessonYear, parseLessonYear, studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { readMonthPart, readYmdParts } from "@/lib/intlFormatParts";
@@ -131,6 +132,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
     return mondayToSundayRange(todayIso);
   })();
   const { rows, loadError } = await fetchRoomScheduleAggregate(key, year, month, range);
+  const navViewer = await buildAppTopNavViewer(viewer);
 
   const basePath = `/rooms/${key}`;
   const titleSuffix = (() => {
@@ -151,7 +153,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="room" />
+        <AppTopNav highlight="room" viewer={navViewer} />
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>

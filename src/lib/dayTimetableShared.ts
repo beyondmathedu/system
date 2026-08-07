@@ -102,6 +102,7 @@ export type RegularTimetableLessonFilterFlags = {
   reschedule: boolean;
   inactive: boolean;
   cancelled: boolean;
+  pendingMakeup: boolean;
 };
 
 export const DEFAULT_REGULAR_TIMETABLE_FILTER: RegularTimetableLessonFilterFlags = {
@@ -110,6 +111,7 @@ export const DEFAULT_REGULAR_TIMETABLE_FILTER: RegularTimetableLessonFilterFlags
   reschedule: false,
   inactive: false,
   cancelled: false,
+  pendingMakeup: false,
 };
 
 export const ALL_REGULAR_TIMETABLE_FILTER: RegularTimetableLessonFilterFlags = {
@@ -118,6 +120,7 @@ export const ALL_REGULAR_TIMETABLE_FILTER: RegularTimetableLessonFilterFlags = {
   reschedule: true,
   inactive: true,
   cancelled: true,
+  pendingMakeup: true,
 };
 
 /** @deprecated Prefer RegularTimetableLessonFilterFlags; kept for call-site migration. */
@@ -128,7 +131,7 @@ export type RegularTimetableLessonView =
   | "reschedule"
   | "inactive";
 
-const REGULAR_TIMETABLE_REGULAR_TYPES = new Set<string>(["恆常", PENDING_MAKEUP_TYPE_LABEL]);
+const REGULAR_TIMETABLE_REGULAR_TYPES = new Set<string>(["恆常"]);
 
 export function regularTimetableFilterFromView(
   view: RegularTimetableLessonView,
@@ -154,8 +157,11 @@ function regularTimetableCellMatchesFilter(
 ): boolean {
   const isCancelled = cell.lessonType === "取消";
   const isPaused = Boolean(cell.isInactive);
-  const isRegular = !isPaused && !isCancelled && REGULAR_TIMETABLE_REGULAR_TYPES.has(cell.lessonType);
+  const isPendingMakeup = cell.lessonType === PENDING_MAKEUP_TYPE_LABEL;
+  const isRegular =
+    !isPaused && !isCancelled && !isPendingMakeup && REGULAR_TIMETABLE_REGULAR_TYPES.has(cell.lessonType);
   if (flags.regular && isRegular) return true;
+  if (flags.pendingMakeup && isPendingMakeup) return true;
   if (flags.extra && cell.lessonType === "加堂") return true;
   if (flags.reschedule && cell.lessonType === "補堂") return true;
   if (flags.inactive && isPaused) return true;
@@ -203,8 +209,9 @@ export function regularTimetableEmptyMessage(flags: RegularTimetableLessonFilter
   if (flags.reschedule) parts.push("reschedule");
   if (flags.inactive) parts.push("inactive");
   if (flags.cancelled) parts.push("cancelled");
+  if (flags.pendingMakeup) parts.push("pending makeup");
   if (parts.length === 0) return "Select at least one lesson type to show.";
-  if (parts.length === 5) return "No lessons on this day.";
+  if (parts.length === 6) return "No lessons on this day.";
   if (parts.length === 1) return `No ${parts[0]} lessons on this day.`;
   const last = parts[parts.length - 1];
   return `No ${parts.slice(0, -1).join(", ")} or ${last} lessons on this day.`;

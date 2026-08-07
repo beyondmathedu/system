@@ -9,6 +9,7 @@ import {
 import { SCHEDULE_CACHE_TAG_HOME } from "@/lib/scheduleCacheTags";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import {
   compareStudentReactivateReminders,
   formatStudentReactivateReminderDetail,
@@ -306,19 +307,48 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     });
   }
 
-  const [feeTierBundle, { data: recRows }, { data: yearStateRowsRaw }] = await Promise.all([
+  const [feeTierBundle, recordsChunk, yearStateChunk] = await Promise.all([
     loadStudentFeeTierSettingsAdmin(supabase),
     activeStudentIds.length
-      ? supabase.from("student_lesson_records").select("student_id, records").in("student_id", activeStudentIds)
-      : Promise.resolve({ data: [] as unknown[] }),
+      ? fetchRowsInChunks<{ student_id?: string; records?: unknown }>({
+          ids: activeStudentIds,
+          concurrency: 8,
+          query: (chunk) =>
+            supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
+        })
+      : Promise.resolve({ data: [] as Array<{ student_id?: string; records?: unknown }>, error: null }),
     activeStudentIds.length
-      ? supabase
-          .from("student_lessons_year_state")
-          .select("student_id, attendance, reschedule_entries, extra_entries")
-          .eq("year", year)
-          .in("student_id", activeStudentIds)
-      : Promise.resolve({ data: [] as unknown[] }),
+      ? fetchRowsInChunks<{
+          student_id?: string;
+          attendance?: Record<string, boolean>;
+          reschedule_entries?: unknown;
+          extra_entries?: unknown;
+        }>({
+          ids: activeStudentIds,
+          concurrency: 8,
+          query: (chunk) =>
+            supabase
+              .from("student_lessons_year_state")
+              .select("student_id, attendance, reschedule_entries, extra_entries")
+              .eq("year", year)
+              .in("student_id", chunk),
+        })
+      : Promise.resolve({
+          data: [] as Array<{
+            student_id?: string;
+            attendance?: Record<string, boolean>;
+            reschedule_entries?: unknown;
+            extra_entries?: unknown;
+          }>,
+          error: null,
+        }),
   ]);
+
+  if (recordsChunk.error) throw new Error(recordsChunk.error);
+  if (yearStateChunk.error) throw new Error(yearStateChunk.error);
+
+  const recRows = recordsChunk.data;
+  const yearStateRowsRaw = yearStateChunk.data;
 
   type YearStateRow = {
     student_id?: string;

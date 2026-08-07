@@ -19,7 +19,7 @@ function emptyState(): YearLessonState {
 }
 
 describe("feeRecordLessonDates", () => {
-  it("excludes cancelled from-date and includes reschedule to-date", () => {
+  it("includes cancelled from-date and excludes cross-month reschedule to-date", () => {
     const records = normalizeFeeLessonRecords([
       {
         id: "rule-mon",
@@ -52,8 +52,8 @@ describe("feeRecordLessonDates", () => {
       month1to12: 6,
     });
 
-    expect(may.includes("25/5")).toBe(false);
-    expect(june.includes("3/6")).toBe(true);
+    expect(may.includes("25/5")).toBe(true);
+    expect(june.includes("3/6")).toBe(false);
   });
 
   it("includes pending makeup on original date", () => {
@@ -201,7 +201,7 @@ describe("feeRecordLessonDates", () => {
     expect(dates.filter((d) => d === "10/5").length).toBe(2);
   });
 
-  it("includes reschedule to-date when schedule records are empty", () => {
+  it("includes reschedule from-date (not to-date) when schedule records are empty", () => {
     const state = emptyState();
     state.rescheduleEntries.push({
       id: "rs-only",
@@ -211,6 +211,13 @@ describe("feeRecordLessonDates", () => {
       room: "M前",
     });
 
+    const may = collectBillableLessonDatesForMonth({
+      records: [],
+      state,
+      year: 2026,
+      month1to12: 5,
+      legacyWeekdays: [],
+    });
     const june = collectBillableLessonDatesForMonth({
       records: [],
       state,
@@ -219,7 +226,8 @@ describe("feeRecordLessonDates", () => {
       legacyWeekdays: [],
     });
 
-    expect(june).toEqual(["3/6"]);
+    expect(may).toEqual(["25/5"]);
+    expect(june).toEqual([]);
   });
 
   it("falls back to weekday estimate when schedule records are empty", () => {

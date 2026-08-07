@@ -2,14 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getViewerContext } from "@/lib/authz";
 import { defaultLessonYear, parseLessonYear } from "@/lib/lessonCalendar";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
-import {
-  loadExamInfoServer,
-  loadLessonScheduleRecordsServer,
-  loadLessonYearStateServer,
-  loadStudentInactivePeriodsBatchServer,
-  loadStudentVisibilityModeServer,
-} from "@/lib/lessonDataServer";
-import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
+import { loadStudentLessonsBootstrap } from "@/lib/lessonDataServer";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
 import { normalizeStudentId } from "@/lib/studentId";
 
@@ -48,40 +41,21 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
-  const supabase = await createSupabaseServerClient();
-  const [studentRes, examInfo, scheduleRecords, yearState, visibilityMode, inactivePeriods, roomSlotTutorRules] =
-    await Promise.all([
-    supabase
-      .from("students")
-      .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
-      .eq("id", studentId)
-      .maybeSingle(),
-    loadExamInfoServer(supabase, studentId),
-    loadLessonScheduleRecordsServer(supabase, studentId),
-    loadLessonYearStateServer(supabase, studentId, year),
-    loadStudentVisibilityModeServer(supabase, studentId),
-    loadStudentInactivePeriodsBatchServer(supabase, [studentId]),
-    loadRoomSlotTutorRulesServer(supabase),
-  ]);
+  try {
+    const supabase = await createSupabaseServerClient();
+    const payload = await loadStudentLessonsBootstrap(supabase, studentId, year);
+    const readOnly =
+      isSharedIpad ||
+      role === "tutor" ||
+      String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
 
-  if (studentRes.error) {
-    return NextResponse.json({ ok: false, error: studentRes.error.message }, { status: 500 });
+    return NextResponse.json({
+      ok: true,
+      readOnly,
+      ...payload,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to load lessons bootstrap";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
-
-  const readOnly =
-    isSharedIpad ||
-    role === "tutor" ||
-    String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
-
-  return NextResponse.json({
-    ok: true,
-    readOnly,
-    student: studentRes.data,
-    examInfo,
-    scheduleRecords,
-    yearState,
-    visibilityMode,
-    inactivePeriods,
-    roomSlotTutorRules,
-  });
 }

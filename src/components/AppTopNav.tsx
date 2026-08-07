@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import AppTopNavContent from "./AppTopNavContent";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import type { HighlightKey } from "./AppTopNavContent";
 
 export type { HighlightKey };
@@ -30,12 +31,22 @@ function NavHydrationShell() {
   );
 }
 
-export default function AppTopNav({ highlight = null }: { highlight?: HighlightKey }) {
+export default function AppTopNav({
+  highlight = null,
+  viewer = null,
+}: {
+  highlight?: HighlightKey;
+  viewer?: AppTopNavViewer | null;
+}) {
   const navReady = useSyncExternalStore(subscribeNavReady, () => true, () => false);
 
   return (
     <div className="contents">
-      {navReady ? <AppTopNavContent highlight={highlight} /> : <NavHydrationShell />}
+      {navReady ? (
+        <AppTopNavContent highlight={highlight} viewer={viewer} />
+      ) : (
+        <NavHydrationShell />
+      )}
     </div>
   );
 }

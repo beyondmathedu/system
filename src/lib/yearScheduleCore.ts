@@ -80,6 +80,7 @@ export function findRescheduleForOriginalLesson<T extends YearLessonRescheduleEn
     room: string;
     baseRule?: { id?: string } | null;
   },
+  sameDateRegularSlotCount = 1,
 ): T | undefined {
   const onDate = entries.filter((e) => String(e.fromDate ?? "").trim() === orig.date);
   if (onDate.length === 0) return undefined;
@@ -87,8 +88,11 @@ export function findRescheduleForOriginalLesson<T extends YearLessonRescheduleEn
   if (slotted.length > 0) {
     return slotted.find((e) => rescheduleMatchesOriginalLesson(e, orig));
   }
-  // Legacy entries without from-slot cancel every lesson on that date.
-  return onDate[0];
+  // Legacy whole-day cancel only when that date has a single regular slot.
+  if (sameDateRegularSlotCount <= 1) {
+    return onDate[0];
+  }
+  return undefined;
 }
 
 export type YearLessonRecord = {
@@ -339,13 +343,21 @@ function buildScheduleRows(
 
   const rows: Row[] = [];
   const emittedRescheduleIds = new Set<string>();
+  const baseRowsPerDate = new Map<string, number>();
   for (const orig of baseRows) {
-    const e = findRescheduleForOriginalLesson(state.rescheduleEntries, {
-      date: orig.date,
-      time: orig.time,
-      room: orig.room,
-      baseRule: orig.baseRule,
-    });
+    baseRowsPerDate.set(orig.date, (baseRowsPerDate.get(orig.date) ?? 0) + 1);
+  }
+  for (const orig of baseRows) {
+    const e = findRescheduleForOriginalLesson(
+      state.rescheduleEntries,
+      {
+        date: orig.date,
+        time: orig.time,
+        room: orig.room,
+        baseRule: orig.baseRule,
+      },
+      baseRowsPerDate.get(orig.date) ?? 1,
+    );
     if (!e) {
       rows.push({ ...orig });
       continue;

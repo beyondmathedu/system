@@ -118,13 +118,33 @@ function collectBillableDatesFromScheduleRows(params: {
   isDateInactive?: (dateIso: string) => boolean;
 }): string[] {
   const { records, state, year, month1to12, isDateInactive } = params;
+  const prefix = monthIsoPrefix(year, month1to12);
   const rows = buildYearScheduleRowsForMonth(records, state, year, month1to12);
   const dates: string[] = [];
   for (const row of rows) {
+    if (row.rowKind === "cancelled_original") {
+      if (isDateInactive?.(row.date)) continue;
+      dates.push(isoYmdToMonthDay(row.date));
+      continue;
+    }
+    // Reschedule makeup dates belong to the original month, not the target month.
+    if (row.rowKind === "reschedule") continue;
     if (!BILLABLE_LESSON_TYPES.has(row.lessonType)) continue;
     if (isDateInactive?.(row.date)) continue;
     dates.push(isoYmdToMonthDay(row.date));
   }
+
+  // Empty schedule records still store reschedule entries; bill the from-date month.
+  for (const entry of state.rescheduleEntries ?? []) {
+    if (entry.pending) continue;
+    const fromDate = String(entry.fromDate ?? "").trim();
+    const toDate = String(entry.toDate ?? "").trim();
+    if (!fromDate.startsWith(prefix) || !toDate) continue;
+    if (isDateInactive?.(fromDate)) continue;
+    const display = isoYmdToMonthDay(fromDate);
+    if (!dates.includes(display)) dates.push(display);
+  }
+
   return dates;
 }
 

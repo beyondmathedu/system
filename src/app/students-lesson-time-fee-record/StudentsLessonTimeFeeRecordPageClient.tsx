@@ -1,6 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
+import type { FeeRecordBootstrapApiBody } from "@/lib/feeRecordBootstrapHydrate";
 
 function StudentsLessonTimeFeeRecordSkeleton() {
   return (
@@ -16,11 +18,27 @@ function StudentsLessonTimeFeeRecordSkeleton() {
 const StudentsLessonTimeFeeRecordClient = dynamic(
   () => import("./StudentsLessonTimeFeeRecordClient"),
   {
-    ssr: false,
     loading: StudentsLessonTimeFeeRecordSkeleton,
   },
 );
 
-export default function StudentsLessonTimeFeeRecordPageClient() {
-  return <StudentsLessonTimeFeeRecordClient />;
+export default function StudentsLessonTimeFeeRecordPageClient({
+  initialBootstrap,
+  initialYear,
+  initialMonth,
+  navViewer,
+}: {
+  initialBootstrap: FeeRecordBootstrapApiBody;
+  initialYear: number;
+  initialMonth: number;
+  navViewer?: AppTopNavViewer | null;
+}) {
+  return (
+    <StudentsLessonTimeFeeRecordClient
+      initialBootstrap={initialBootstrap}
+      initialYear={initialYear}
+      initialMonth={initialMonth}
+      navViewer={navViewer}
+    />
+  );
 }

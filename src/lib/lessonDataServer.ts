@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { unstable_cache } from "next/cache";
 import {
   FEE_OPENING_BALANCE_AS_OF_MONTH,
   FEE_OPENING_BALANCE_AS_OF_YEAR,
@@ -25,12 +26,18 @@ import {
   isMissingFeeRecordColumnError,
   normalizeFeeRecordRow,
 } from "@/lib/studentMonthlyFeeRecordsCompat";
+import { SCHEDULE_CACHE_TAG_FEE_RECORD } from "@/lib/scheduleCacheTags";
+import {
+  loadStudentFeeTierSettingsAdmin,
+} from "@/lib/studentFeeTierSettings";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import {
   buildStudentInactivePeriodsById,
   normalizeOptionalIsoDate,
   type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
+import { loadRoomSlotTutorRulesCached } from "@/lib/roomSlotTutorRules";
 
 export type StudentExamInfo = {
   examDate: string;
@@ -95,6 +102,7 @@ function hkTodayIso(now = new Date()): string {
 }
 
 export type StudentInactivePeriodRowServer = {
+  id?: number;
   student_id: string;
   start_date: string;
   end_date: string | null;
@@ -120,7 +128,7 @@ export async function loadStudentInactivePeriodsBatchServer(
     query: (chunk) =>
       supabase
         .from("student_visibility_periods")
-        .select("student_id, start_date, end_date, note")
+        .select("id, student_id, start_date, end_date, note")
         .in("student_id", chunk)
         .order("start_date", { ascending: true }),
   });
@@ -155,12 +163,17 @@ export async function loadStudentInactivePeriodsBatchServer(
     return out;
   }
 
-  return (data ?? []).map((row) => ({
-    student_id: String((row as { student_id?: string }).student_id ?? ""),
-    start_date: String((row as { start_date?: string }).start_date ?? ""),
-    end_date: normalizeOptionalIsoDate((row as { end_date?: string | null }).end_date),
-    note: String((row as { note?: string | null }).note ?? ""),
-  }));
+  return (data ?? []).map((row) => {
+    const idRaw = (row as { id?: number | string | null }).id;
+    const idNum = idRaw == null || idRaw === "" ? NaN : Number(idRaw);
+    return {
+      ...(Number.isFinite(idNum) && idNum > 0 ? { id: idNum } : {}),
+      student_id: String((row as { student_id?: string }).student_id ?? ""),
+      start_date: String((row as { start_date?: string }).start_date ?? ""),
+      end_date: normalizeOptionalIsoDate((row as { end_date?: string | null }).end_date),
+      note: String((row as { note?: string | null }).note ?? ""),
+    };
+  });
 }
 
 export async function loadStudentVisibilityModeServer(
@@ -552,20 +565,24 @@ export async function loadFeeRecordBootstrap(
       ? loadStudentFeeOpeningBalancesServer(supabase, ids)
       : Promise.resolve({ balances: {} as Record<string, number> });
 
-  const [metricsResult, feeRows, recordsMap, yearStatesMap, openingResult] = await Promise.all([
-    ids.length ? loadLessonMetricsBatchServer(supabase, ids, sheetYear) : Promise.resolve({ data: [], error: null }),
-    ids.length
-      ? loadStudentMonthlyFeeRecordsInMonthRangeServer(supabase, {
-          studentIds: ids,
-          year: sheetYear,
-          monthFrom: feeStartMonth,
-          monthTo: currentMonth,
-        })
-      : Promise.resolve([] as FeeRecordBootstrapRow[]),
-    ids.length ? loadLessonScheduleRecordsBatchServer(supabase, ids) : Promise.resolve({}),
-    ids.length ? loadLessonYearStatesBatchServer(supabase, ids, sheetYear) : Promise.resolve({}),
-    openingPromise,
-  ]);
+  const [metricsResult, feeRows, recordsMap, yearStatesMap, openingResult, feeTierBundle] =
+    await Promise.all([
+      ids.length
+        ? loadLessonMetricsBatchServer(supabase, ids, sheetYear)
+        : Promise.resolve({ data: [], error: null }),
+      ids.length
+        ? loadStudentMonthlyFeeRecordsInMonthRangeServer(supabase, {
+            studentIds: ids,
+            year: sheetYear,
+            monthFrom: feeStartMonth,
+            monthTo: currentMonth,
+          })
+        : Promise.resolve([] as FeeRecordBootstrapRow[]),
+      ids.length ? loadLessonScheduleRecordsBatchServer(supabase, ids) : Promise.resolve({}),
+      ids.length ? loadLessonYearStatesBatchServer(supabase, ids, sheetYear) : Promise.resolve({}),
+      openingPromise,
+      loadStudentFeeTierSettingsAdmin(supabase),
+    ]);
 
   if (metricsResult.error) throw new Error(metricsResult.error);
 
@@ -586,5 +603,72 @@ export async function loadFeeRecordBootstrap(
     feeStartMonth,
     endMonthForPricing,
     visibilityByStudentId,
+    feeTierBundle,
   };
 }
+
+export type FeeRecordBootstrapPayload = Awaited<ReturnType<typeof loadFeeRecordBootstrap>>;
+
+async function loadFeeRecordBootstrapUncached(sheetYear: number, sheetMonth: number) {
+  return loadFeeRecordBootstrap(getSupabaseAdmin(), { sheetYear, sheetMonth });
+}
+
+/** Cached fee-sheet bootstrap (students + schedules + fee rows + tiers). */
+export async function loadFeeRecordBootstrapCached(
+  sheetYear: number,
+  sheetMonth: number,
+): Promise<FeeRecordBootstrapPayload> {
+  const y = Math.floor(sheetYear);
+  const m = Math.floor(sheetMonth);
+  return unstable_cache(
+    () => loadFeeRecordBootstrapUncached(y, m),
+    ["fee-record-bootstrap-v1", String(y), String(m)],
+    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
+  )();
+}
+
+export type StudentLessonsBootstrapStudent = {
+  id: string;
+  name_zh: string | null;
+  name_en: string | null;
+  nickname_en: string | null;
+  grade: string | null;
+  school: string | null;
+  textbook_publisher: string | null;
+};
+
+/** One pass for student lessons hub / year page (shared by API + RSC). */
+export async function loadStudentLessonsBootstrap(
+  supabase: SupabaseClient,
+  studentId: string,
+  year: number,
+) {
+  const [studentRes, examInfo, scheduleRecords, yearState, visibilityMode, inactivePeriods, roomSlotTutorRules] =
+    await Promise.all([
+      supabase
+        .from("students")
+        .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
+        .eq("id", studentId)
+        .maybeSingle(),
+      loadExamInfoServer(supabase, studentId),
+      loadLessonScheduleRecordsServer(supabase, studentId),
+      loadLessonYearStateServer(supabase, studentId, year),
+      loadStudentVisibilityModeServer(supabase, studentId),
+      loadStudentInactivePeriodsBatchServer(supabase, [studentId]),
+      loadRoomSlotTutorRulesCached(),
+    ]);
+
+  if (studentRes.error) throw new Error(studentRes.error.message);
+
+  return {
+    student: (studentRes.data ?? null) as StudentLessonsBootstrapStudent | null,
+    examInfo,
+    scheduleRecords,
+    yearState,
+    visibilityMode,
+    inactivePeriods,
+    roomSlotTutorRules,
+  };
+}
+
+export type StudentLessonsBootstrapPayload = Awaited<ReturnType<typeof loadStudentLessonsBootstrap>>;

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppTopNav from "@/components/AppTopNav";
+import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import {
   getNextClassroomId,
@@ -30,7 +31,11 @@ function dispatchClassroomsUpdated() {
   }
 }
 
-export default function RoomsAdminClient() {
+export default function RoomsAdminClient({
+  navViewer = null,
+}: {
+  navViewer?: AppTopNavViewer | null;
+}) {
   const [rows, setRows] = useState<Classroom[]>([]);
   const [loadError, setLoadError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -297,7 +302,7 @@ export default function RoomsAdminClient() {
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="room" />
+        <AppTopNav highlight="room" viewer={navViewer} />
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
