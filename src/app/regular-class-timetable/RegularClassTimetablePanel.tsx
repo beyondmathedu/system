@@ -99,6 +99,11 @@ export default function RegularClassTimetablePanel({ payload }: Props) {
             </span>
           </div>
         </div>
+        {flags.inactive ? (
+          <p className="mb-3 text-[11px] text-slate-600">
+            Inactive shows only pauses with an Expected return date. Graduated or open-ended inactive students are excluded.
+          </p>
+        ) : null}
         <DayTimetableTable
           key={`${payload.dateIso}:${filterKey}`}
           payload={tablePayload}

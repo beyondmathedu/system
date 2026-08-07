@@ -17,7 +17,12 @@ import {
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { filterActiveStudentsOnDate, filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
-import { buildStudentInactivePeriodsById, type StudentInactivePeriod } from "@/lib/studentVisibility";
+import {
+  buildStudentInactivePeriodsById,
+  isTemporarilyInactiveOnDateFromPeriods,
+  withAutoF6InactivePeriod,
+  type StudentInactivePeriod,
+} from "@/lib/studentVisibility";
 import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
 import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
@@ -634,7 +639,17 @@ async function fetchDayTimetablePayloadUncached(
   );
   const activeIdSet = new Set(activeStudentList.map((s) => s.id));
   const inactiveStudentList = includeInactiveSlots
-    ? staticBundle.studentList.filter((st) => !activeIdSet.has(st.id))
+    ? staticBundle.studentList.filter((st) => {
+        if (activeIdSet.has(st.id)) return false;
+        const periods = withAutoF6InactivePeriod({
+          periods: inactivePeriodsById.get(st.id) ?? [],
+          studentId: st.id,
+          grade: st.grade,
+          year,
+        });
+        // Regular Class Timetable: only pauses with Expected return — skip graduated / open-ended inactive.
+        return isTemporarilyInactiveOnDateFromPeriods({ periods, dateIso });
+      })
     : [];
   const studentList = activeStudentList;
 
@@ -852,7 +867,7 @@ const fetchDayTimetablePayloadCached = unstable_cache(
       includeInactiveSlots,
       includeCancelledSlots,
     }),
-  ["day-timetable-payload-v20"],
+  ["day-timetable-payload-v21"],
   /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
   { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
