@@ -60,7 +60,17 @@ function normalizeScheduleRecords(raw: unknown): YearLessonRecord[] {
         new Date(row.createdAt).toISOString().slice(0, 10),
     };
   });
-  return repairCollidingScheduleRuleIds(mapped).rules;
+  // Explicit remap: repair() is generic over LessonScheduleSlotRule (createdAt optional).
+  return repairCollidingScheduleRuleIds(mapped).rules.map((r) => ({
+    id: r.id,
+    effectiveDate: r.effectiveDate,
+    weekday: r.weekday,
+    time: r.time,
+    room: r.room,
+    tutor: r.tutor,
+    lessonSummary: (r as YearLessonRecord).lessonSummary,
+    createdAt: typeof r.createdAt === "number" ? r.createdAt : Date.now(),
+  }));
 }
 
 function toYearLessonRecords(raw: unknown): YearLessonRecord[] {
