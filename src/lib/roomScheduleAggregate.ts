@@ -142,11 +142,17 @@ function coerceExtra(raw: unknown): YearLessonState["extraEntries"] {
     const id = String(o.id ?? "");
     const date = String(o.date ?? "");
     if (!id || !date) continue;
+    const originDate = String(o.originDate ?? "").trim();
+    const originTime = String(o.originTime ?? "").trim();
+    const originRoom = String(o.originRoom ?? "").trim();
     out.push({
       id,
       date,
       time: String(o.time ?? ""),
       room: String(o.room ?? ""),
+      ...(originDate ? { originDate } : {}),
+      ...(originTime ? { originTime } : {}),
+      ...(originRoom ? { originRoom } : {}),
     });
   }
   return out;

@@ -58,12 +58,19 @@ function coerceExtraEntriesFromDb(raw: unknown): unknown[] {
     const o = item as Record<string, unknown>;
     const id = String(o.id ?? "").trim();
     if (!id) continue;
+    const originDate = String(o.originDate ?? "").trim();
+    const originTime = String(o.originTime ?? "").trim();
+    const originRoom = String(o.originRoom ?? "").trim();
+    const { originDate: _od, originTime: _ot, originRoom: _or, ...rest } = o;
     out.push({
-      ...o,
+      ...rest,
       id,
       date: String(o.date ?? ""),
       time: String(o.time ?? ""),
       room: String(o.room ?? ""),
+      ...(originDate ? { originDate } : {}),
+      ...(originTime ? { originTime } : {}),
+      ...(originRoom ? { originRoom } : {}),
     });
   }
   return out;

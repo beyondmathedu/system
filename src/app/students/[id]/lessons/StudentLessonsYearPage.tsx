@@ -228,6 +228,10 @@ type ExtraEntry = {
   date: string;
   time: string;
   room: string;
+  /** Set when Extra was moved; L / fee stay on this original date's month. */
+  originDate?: string;
+  originTime?: string;
+  originRoom?: string;
 };
 
 function fromSlotFieldsFromRow(row: {
@@ -918,13 +922,21 @@ export function StudentLessonsYearPage({
         ...(e.fromTime ? { fromTime: String(e.fromTime) } : {}),
         ...(e.fromRoom ? { fromRoom: String(e.fromRoom) } : {}),
       }));
-      const nextExtra = (state.extraEntries ?? []).map((e) => ({
-        ...e,
-        id: String(e.id),
-        date: String(e.date ?? ""),
-        time: String(e.time ?? ""),
-        room: String(e.room ?? ""),
-      }));
+      const nextExtra = (state.extraEntries ?? []).map((e) => {
+        const originDate = String(e.originDate ?? "").trim();
+        const originTime = String(e.originTime ?? "").trim();
+        const originRoom = String(e.originRoom ?? "").trim();
+        return {
+          ...e,
+          id: String(e.id),
+          date: String(e.date ?? ""),
+          time: String(e.time ?? ""),
+          room: String(e.room ?? ""),
+          ...(originDate ? { originDate } : {}),
+          ...(originTime ? { originTime } : {}),
+          ...(originRoom ? { originRoom } : {}),
+        };
+      });
       setAttendance(state.attendance);
       setHiddenDates(state.hiddenDates);
       setOverrides(state.overrides);
@@ -1871,7 +1883,12 @@ export function StudentLessonsYearPage({
 
     if (selectedRows.length === 1) {
       const row = selectedRows[0];
-      if (row.rowKind !== "normal" || row.extraEntryId) {
+      if (row.extraEntryId) {
+        // Extra date moves use Edit (originDate), not classic regular reschedule.
+        openRowEditFromSelection();
+        return;
+      }
+      if (row.rowKind !== "normal") {
         openClassicReschedulePanel({ row });
         return;
       }
@@ -1911,6 +1928,35 @@ export function StudentLessonsYearPage({
     }
 
     if (row.rowKind === "cancelled_original") {
+      if (row.extraEntryId) {
+        const entry = extraEntries.find((e) => String(e.id) === String(row.extraEntryId));
+        if (!entry) {
+          setSelectionError("Cannot find that Extra lesson entry.");
+          return;
+        }
+        const { timePreset, timeCustom } = pickTimePreset(entry.time, weekdayFromIsoDate(entry.date));
+        const draft: BulkEditLessonDraft = {
+          rowId: `extra-${entry.id}`,
+          date: entry.date,
+          timePreset,
+          timeCustom,
+          room: resolveScheduleRoomPickerValue(entry.room, ROOM_GROUPS[0], registry),
+          original: {
+            date: entry.date,
+            weekday: weekdayFromIsoDate(entry.date),
+            displayTime: entry.time,
+            displayRoom: entry.room,
+            baseTime: entry.time,
+            baseRoom: entry.room,
+          },
+        };
+        setShowBulkEditPanel(false);
+        setShowEditPanel(false);
+        setShowExtraPanel(false);
+        setRowEditSession({ kind: "extra", rowId: draft.rowId, entryId: entry.id, draft });
+        setShowRowEditPanel(true);
+        return;
+      }
       setSelectionError("Cancelled rows cannot be edited here. Select the Reschedule row instead.");
       return;
     }
@@ -2140,11 +2186,42 @@ export function StudentLessonsYearPage({
       }
     } else if (payload.kind === "extra") {
       const entryId = String(payload.entryId ?? "");
-      const nextExtra = extraEntries.map((e) =>
-        String(e.id) === entryId
-          ? { ...e, id: entryId, date: payload.newDate, time: payload.finalTime, room: payload.finalRoom }
-          : { ...e, id: String(e.id) },
-      );
+      const nextExtra = extraEntries.map((e) => {
+        if (String(e.id) !== entryId) return { ...e, id: String(e.id) };
+        const prevDate = String(e.date ?? "").trim();
+        const prevTime = String(e.time ?? "").trim();
+        const prevRoom = String(e.room ?? "").trim();
+        const newDate = payload.newDate;
+        const existingOrigin = String(e.originDate ?? "").trim();
+        const originDate = existingOrigin || prevDate;
+        const originTime = String(e.originTime ?? "").trim() || prevTime;
+        const originRoom = String(e.originRoom ?? "").trim() || prevRoom;
+        const moved = Boolean(originDate && originDate !== newDate);
+        const {
+          originDate: _od,
+          originTime: _ot,
+          originRoom: _or,
+          ...rest
+        } = e;
+        return moved
+          ? {
+              ...rest,
+              id: entryId,
+              date: newDate,
+              time: payload.finalTime,
+              room: payload.finalRoom,
+              originDate,
+              originTime,
+              originRoom,
+            }
+          : {
+              ...rest,
+              id: entryId,
+              date: newDate,
+              time: payload.finalTime,
+              room: payload.finalRoom,
+            };
+      });
       if (!nextExtra.some((e) => String(e.id) === entryId)) {
         setRowEditSaveStatus("Could not find that extra lesson to update.");
         setSelectionError("Could not find that extra lesson to update.");
@@ -3237,7 +3314,7 @@ export function StudentLessonsYearPage({
                       {rowEditSession.kind === "regular"
                         ? " Regular: date/time change becomes Cancelled + Reschedule; room-only stays as override."
                         : rowEditSession.kind === "extra"
-                          ? " Extra: updates this extra lesson entry."
+                          ? " Extra: changing the date keeps L / tuition on the original month (Cancelled + Reschedule)."
                           : " Reschedule: updates the makeup slot (original from-date stays)."}
                     </p>
                   </div>

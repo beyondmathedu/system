@@ -298,9 +298,22 @@ function collectLegacyAttendedLessonDatesForMonth(params: {
       continue;
     }
     if (key.startsWith("extra:")) {
-      const ex = extraById.get(key.slice("extra:".length));
-      if (ex?.date?.startsWith(prefix) && !isDateInactive?.(ex.date)) {
-        slots.push({ dateIso: ex.date, display: isoYmdToMonthDay(ex.date) });
+      const ex = extraById.get(key.slice("extra:".length)) as
+        | { id: string; date: string; originDate?: string }
+        | undefined;
+      if (!ex?.date) continue;
+      const originDate = String(ex.originDate ?? "").trim();
+      const toDate = String(ex.date ?? "").trim();
+      if (originDate && originDate !== toDate) {
+        if (!originDate.startsWith(prefix) || isDateInactive?.(originDate)) continue;
+        slots.push({
+          dateIso: originDate,
+          display: formatRescheduleLColumnDisplay(originDate, toDate),
+        });
+        continue;
+      }
+      if (toDate.startsWith(prefix) && !isDateInactive?.(toDate)) {
+        slots.push({ dateIso: toDate, display: isoYmdToMonthDay(toDate) });
       }
       continue;
     }
@@ -344,7 +357,29 @@ function collectAttendedDatesFromScheduleRows(params: {
     });
   }
 
-  // Regular + extra: calendar date in this month.
+  // Moved Extra: bill attendance on origin month (same as regular reschedule).
+  for (const ex of state.extraEntries ?? []) {
+    const originDate = String(ex.originDate ?? "").trim();
+    const toDate = String(ex.date ?? "").trim();
+    if (!originDate || !toDate || originDate === toDate) continue;
+    if (!originDate.startsWith(prefix)) continue;
+    if (isDateInactive?.(originDate)) continue;
+    if (
+      !isScheduleAttendanceMarked(state.attendance, {
+        attendanceKey: `extra:${ex.id}`,
+        dateIso: toDate,
+        lessonType: "加堂",
+      })
+    ) {
+      continue;
+    }
+    slots.push({
+      dateIso: originDate,
+      display: formatRescheduleLColumnDisplay(originDate, toDate),
+    });
+  }
+
+  // Regular + unmoved extra: calendar date in this month.
   const rows = buildYearScheduleRowsForMonth(records, state, year, month1to12);
   for (const row of rows) {
     if (row.lessonType !== "恆常" && row.lessonType !== "加堂") continue;

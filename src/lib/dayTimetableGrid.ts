@@ -350,7 +350,9 @@ function buildFeePaymentToneByStudentId(
     const weekdays = getActiveWeekdaysForDate(records, dateIso);
     const extraCountByMonth = new Map<number, number>();
     for (const ex of state.extraEntries ?? []) {
-      const iso = String((ex as { date?: string | null }).date ?? "").trim();
+      const toDate = String((ex as { date?: string | null }).date ?? "").trim();
+      const originDate = String((ex as { originDate?: string | null }).originDate ?? "").trim();
+      const iso = originDate && originDate !== toDate ? originDate : toDate;
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
       if (!m) continue;
       const y = Number(m[1]);
@@ -425,7 +427,9 @@ function studentMayAppearOnTimetableDate(
 ): boolean {
   if (getActiveWeekdaysForDate(records, dateIso).includes(targetWeekday)) return true;
   for (const ex of state.extraEntries ?? []) {
-    if (String((ex as { date?: string | null }).date ?? "").trim() === dateIso) {
+    const toDate = String((ex as { date?: string | null }).date ?? "").trim();
+    const originDate = String((ex as { originDate?: string | null }).originDate ?? "").trim();
+    if (toDate === dateIso || (originDate && originDate === dateIso)) {
       return true;
     }
   }

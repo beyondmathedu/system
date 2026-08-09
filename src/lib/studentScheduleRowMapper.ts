@@ -132,27 +132,41 @@ function mapCoreRowToStudentRow(
   let pendingMakeupLabel: string | undefined;
 
   if (core.rowKind === "reschedule") {
-    rescheduleEntryId = core.rowId.slice("reschedule-".length);
-    const entry = state.rescheduleEntries.find((e) => e.id === rescheduleEntryId);
-    rescheduleFromDate = entry?.fromDate;
-    if (!rule && entry) {
-      baseTime = entry.time;
-      baseRoom = entry.room;
-    }
-  }
-
-  if (core.rowKind === "cancelled_original") {
-    const cancelledMatch = parseCancelledOriginalRowId(core.rowId);
-    if (cancelledMatch) {
-      rescheduleEntryId = cancelledMatch.entryId;
+    if (core.rowId.startsWith("extra-")) {
+      extraEntryId = core.rowId.slice("extra-".length);
+      const entry = state.extraEntries.find((e) => e.id === extraEntryId);
+      rescheduleFromDate = entry?.originDate;
+      if (!rule && entry) {
+        baseTime = entry.time;
+        baseRoom = entry.room;
+      }
+    } else {
+      rescheduleEntryId = core.rowId.slice("reschedule-".length);
       const entry = state.rescheduleEntries.find((e) => e.id === rescheduleEntryId);
-      if (entry?.pending) {
-        pendingMakeupLabel = formatPendingMakeupReminder(entry.fromDate, hkTodayYmd);
+      rescheduleFromDate = entry?.fromDate;
+      if (!rule && entry) {
+        baseTime = entry.time;
+        baseRoom = entry.room;
       }
     }
   }
 
-  if (core.lessonType === "加堂") {
+  if (core.rowKind === "cancelled_original") {
+    if (core.rowId.startsWith("extra-cancelled-")) {
+      extraEntryId = core.rowId.slice("extra-cancelled-".length);
+    } else {
+      const cancelledMatch = parseCancelledOriginalRowId(core.rowId);
+      if (cancelledMatch) {
+        rescheduleEntryId = cancelledMatch.entryId;
+        const entry = state.rescheduleEntries.find((e) => e.id === rescheduleEntryId);
+        if (entry?.pending) {
+          pendingMakeupLabel = formatPendingMakeupReminder(entry.fromDate, hkTodayYmd);
+        }
+      }
+    }
+  }
+
+  if (core.lessonType === "加堂" && !extraEntryId) {
     extraEntryId = core.rowId.slice("extra-".length);
   }
 

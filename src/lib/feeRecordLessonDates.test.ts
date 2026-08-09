@@ -201,6 +201,37 @@ describe("feeRecordLessonDates", () => {
     expect(dates.filter((d) => d === "10/5").length).toBe(2);
   });
 
+  it("bills moved Extra on origin month only", () => {
+    const state = emptyState();
+    state.extraEntries.push({
+      id: "ex-moved",
+      originDate: "2026-07-31",
+      date: "2026-08-29",
+      time: "02:30 PM",
+      room: "M前",
+      originTime: "03:00 PM",
+      originRoom: "B",
+    });
+
+    const july = collectBillableLessonDatesForMonth({
+      records: [],
+      state,
+      year: 2026,
+      month1to12: 7,
+      legacyWeekdays: [],
+    });
+    const august = collectBillableLessonDatesForMonth({
+      records: [],
+      state,
+      year: 2026,
+      month1to12: 8,
+      legacyWeekdays: [],
+    });
+
+    expect(july).toEqual(["31/7"]);
+    expect(august).toEqual([]);
+  });
+
   it("includes reschedule from-date (not to-date) when schedule records are empty", () => {
     const state = emptyState();
     state.rescheduleEntries.push({

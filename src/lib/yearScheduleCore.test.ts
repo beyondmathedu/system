@@ -291,6 +291,31 @@ describe("yearScheduleCore", () => {
 
       expect(hopeRows.some((r) => r.lessonType === "加堂" && r.date === "2026-05-10")).toBe(true);
     });
+
+    it("moved Extra emits cancelled on origin and reschedule on target", () => {
+      const state = emptyState();
+      state.extraEntries.push({
+        id: "ex-moved",
+        originDate: "2026-07-31",
+        date: "2026-08-29",
+        time: "03:00 PM",
+        room: "B",
+      });
+
+      const july = buildYearScheduleRowsForMonth([], state, YEAR, 7);
+      const august = buildYearScheduleRowsForMonth([], state, YEAR, 8);
+
+      expect(july.find((r) => r.date === "2026-07-31")).toMatchObject({
+        rowKind: "cancelled_original",
+        lessonType: "取消",
+        rowId: "extra-cancelled-ex-moved",
+      });
+      expect(august.find((r) => r.date === "2026-08-29")).toMatchObject({
+        rowKind: "reschedule",
+        lessonType: "補堂",
+        rowId: "extra-ex-moved",
+      });
+    });
   });
 
   it("uses room slot tutor rules when no per-date override", () => {

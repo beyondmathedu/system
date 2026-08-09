@@ -124,7 +124,16 @@ export type YearLessonState = {
   hiddenDates: Record<string, boolean>;
   overrides: Record<string, { time?: string; room?: string; tutor?: string; lessonSummary?: string }>;
   rescheduleEntries: YearLessonRescheduleEntry[];
-  extraEntries: Array<{ id: string; date: string; time: string; room: string }>;
+  extraEntries: Array<{
+    id: string;
+    date: string;
+    time: string;
+    room: string;
+    /** When set and different from `date`, Extra was moved (bill / L stay on origin month). */
+    originDate?: string;
+    originTime?: string;
+    originRoom?: string;
+  }>;
 };
 
 export type BuiltScheduleRow = {
@@ -420,6 +429,49 @@ function buildScheduleRows(
   }
 
   for (const ex of state.extraEntries) {
+    const originDate = String(ex.originDate ?? "").trim();
+    const moved = Boolean(originDate && originDate !== ex.date);
+
+    const pushIfVisible = (row: {
+      date: string;
+      time: string;
+      room: string;
+      rowKind: "normal" | "cancelled_original" | "reschedule";
+      rowId: string;
+      attendanceKey: string;
+      fromExtra: boolean;
+    }) => {
+      if (hasRange && rangeStart && rangeEnd && !isIsoInInclusiveRange(row.date, rangeStart, rangeEnd)) {
+        return;
+      }
+      rows.push({
+        ...row,
+        baseRule: null,
+      });
+    };
+
+    if (moved) {
+      pushIfVisible({
+        date: originDate,
+        time: String(ex.originTime ?? ex.time),
+        room: String(ex.originRoom ?? ex.room),
+        rowKind: "cancelled_original",
+        rowId: `extra-cancelled-${ex.id}`,
+        attendanceKey: `extra:${ex.id}`,
+        fromExtra: true,
+      });
+      pushIfVisible({
+        date: ex.date,
+        time: ex.time,
+        room: ex.room,
+        rowKind: "reschedule",
+        rowId: `extra-${ex.id}`,
+        attendanceKey: `extra:${ex.id}`,
+        fromExtra: true,
+      });
+      continue;
+    }
+
     if (hasRange && rangeStart && rangeEnd && !isIsoInInclusiveRange(ex.date, rangeStart, rangeEnd)) {
       continue;
     }

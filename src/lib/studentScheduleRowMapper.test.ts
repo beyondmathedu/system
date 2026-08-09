@@ -195,6 +195,35 @@ describe("studentScheduleRowMapper", () => {
     expect(augustRegular[0]?.lLabel).toBe("L1");
   });
 
+  it("cross-month Extra move keeps L on origin month; target is Reschedule with /", () => {
+    const records = [mondayRule({ weekday: "六", id: "rule-sat" })];
+    const state = emptyState();
+    state.extraEntries.push({
+      id: "ex-moved",
+      originDate: "2026-07-31",
+      date: "2026-08-29",
+      time: "03:00 PM",
+      room: "B",
+    });
+
+    const july = buildStudentScheduleRows(records, state, YEAR, "2026-07-15", { month: 7 });
+    const august = buildStudentScheduleRows(records, state, YEAR, "2026-08-01", { month: 8 });
+
+    const julyCancelled = july.find(
+      (r) => r.date === "2026-07-31" && r.rowKind === "cancelled_original",
+    );
+    const augustReschedule = august.find(
+      (r) => r.date === "2026-08-29" && r.lessonType === "Reschedule",
+    );
+
+    expect(julyCancelled?.lLabel).toMatch(/^L\d+$/);
+    expect(julyCancelled?.extraEntryId).toBe("ex-moved");
+    expect(augustReschedule?.lLabel).toBe("/");
+    expect(augustReschedule?.rescheduleFromDate).toBe("2026-07-31");
+    expect(augustReschedule?.extraEntryId).toBe("ex-moved");
+    expect(august.some((r) => r.date === "2026-08-29" && r.lessonType === "Extra")).toBe(false);
+  });
+
   it("base schedule rows ignore reschedule state (used for original-slot validation)", () => {
     const records = [mondayRule()];
     const state = emptyState();
