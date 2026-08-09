@@ -61,7 +61,10 @@ function coerceExtraEntriesFromDb(raw: unknown): unknown[] {
     const originDate = String(o.originDate ?? "").trim();
     const originTime = String(o.originTime ?? "").trim();
     const originRoom = String(o.originRoom ?? "").trim();
-    const { originDate: _od, originTime: _ot, originRoom: _or, ...rest } = o;
+    const rest = { ...o };
+    delete rest.originDate;
+    delete rest.originTime;
+    delete rest.originRoom;
     out.push({
       ...rest,
       id,

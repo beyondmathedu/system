@@ -32,7 +32,6 @@ import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings.s
 import {
   ROOM_GROUPS,
   hkTodayYmd,
-  normalizeScheduleRoom,
   parseDayParams,
   toDayIso,
   weekdayCnFromIsoDateHk,
@@ -70,7 +69,6 @@ export {
   type RoomGroup,
 };
 
-const FALLBACK_CELL_BG = "#f1f5f9";
 const DEFAULT_TUTOR_COLOR_HEX = "#1d76c2";
 const PERF_LOG_ENABLED = process.env.ENABLE_PERF_LOGS === "1";
 const EMPTY_RECORDS: YearLessonRecord[] = [];
@@ -426,6 +424,7 @@ function studentMayAppearOnTimetableDate(
   regularOnly: boolean,
 ): boolean {
   if (getActiveWeekdaysForDate(records, dateIso).includes(targetWeekday)) return true;
+  if (regularOnly) return false;
   for (const ex of state.extraEntries ?? []) {
     const toDate = String((ex as { date?: string | null }).date ?? "").trim();
     const originDate = String((ex as { originDate?: string | null }).originDate ?? "").trim();

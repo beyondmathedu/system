@@ -22,7 +22,6 @@ import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
 import {
   loadStudentFeeTierSettingsAdmin,
   resolveFeeTierSettingsForStudent,
-  type StudentFeeTierBundle,
 } from "@/lib/studentFeeTierSettings";
 import { gradeForFeePricing, sumSlotTuitionHkdByLessonCount } from "@/lib/studentFeePricingGrade";
 

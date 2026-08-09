@@ -27,6 +27,8 @@ export function useRoomDisplayRegistry(): RoomDisplayRegistry {
   }, []);
 
   useEffect(() => {
+    // Initial + event-driven refresh from classrooms table (external system).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch registry on mount / classroom updates
     void load();
     const onUpdate = () => {
       void load();

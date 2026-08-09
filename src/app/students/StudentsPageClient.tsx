@@ -265,14 +265,14 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
     [query, statusFilter, inactiveKind],
   );
 
-  async function reloadStudentsList() {
+  const reloadStudentsList = useCallback(async () => {
     await fetchStudentsPage({ page: showAllStudents ? 1 : currentPage, showAll: showAllStudents });
     try {
       setSuggestedNextId(await fetchNextStudentIdFromDb());
     } catch {
       /* keep previous suggestion */
     }
-  }
+  }, [fetchStudentsPage, showAllStudents, currentPage]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -388,7 +388,7 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
     } finally {
       setSavingForm(false);
     }
-  }, [pasteDraft, partialFieldsToForm]);
+  }, [pasteDraft, partialFieldsToForm, reloadStudentsList]);
 
   const saveStudent = () => {
     void saveStudentAsync();

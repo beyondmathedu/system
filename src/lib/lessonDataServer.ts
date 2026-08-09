@@ -19,7 +19,6 @@ import {
   studentIdsNeedingLegacyStateFallback,
 } from "@/lib/lessonYearStateLegacy";
 import {
-  FEE_RECORD_SELECT_BASE,
   FEE_RECORD_SELECT_WITH_SPLIT_REMARKS,
   FEE_RECORD_SELECT_WITH_SPLIT_REMARKS_LEGACY,
   FEE_RECORD_SELECT_LEGACY_NO_PAID_COUNT,

@@ -12,11 +12,8 @@ import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import type { StudentLessonsBootstrapPayload } from "@/lib/lessonDataServer";
 import { hasPendingLessonYearStateSaves } from "@/lib/queueSaveLessonYearState";
 import {
-  deleteTimetableDayRemark,
   loadTimetableDayRemarksForStudent,
-  upsertTimetableDayRemark,
 } from "@/lib/studentLessonStorage";
-import { dayTimetableTableStrings } from "@/lib/dayTimetableUiStrings";
 import { readYmdParts } from "@/lib/intlFormatParts";
 
 async function queueSaveLessonYearState(
@@ -761,14 +758,7 @@ export function StudentLessonsYearPage({
   >({});
   const lessonSummaryDraftByDateIsoRef = useRef<Record<string, string>>({});
   const lessonSummarySaveTimersRef = useRef<Map<string, number>>(new Map());
-  const [timetableRemarksByDateIso, setTimetableRemarksByDateIso] = useState<Record<string, string>>(
-    {},
-  );
   const timetableRemarksByDateIsoRef = useRef<Record<string, string>>({});
-  const timetableRemarksSaveTimersRef = useRef<Map<string, number>>(new Map());
-  const [savingTimetableRemarkDateIso, setSavingTimetableRemarkDateIso] = useState<string | null>(
-    null,
-  );
   const [rescheduleEntries, setRescheduleEntries] = useState<RescheduleEntry[]>([]);
   const RESCHEDULE_STORAGE_KEY = `reschedule:${studentId}:${targetYear}`;
   const [extraEntries, setExtraEntries] = useState<ExtraEntry[]>([]);
@@ -858,7 +848,6 @@ export function StudentLessonsYearPage({
   const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
   const yearMin = getLessonSystemStartIso(targetYear);
   const yearMax = `${targetYear}-12-31`;
-  const scheduleTableColSpan = canEditTimetableRemarks ? 12 : 11;
 
   function displayTutorInCell(raw: string): string {
     const t = raw.trim();
@@ -994,7 +983,6 @@ export function StudentLessonsYearPage({
 
   useEffect(() => {
     if (!studentId || !accessReady || !canEditTimetableRemarks) {
-      setTimetableRemarksByDateIso({});
       timetableRemarksByDateIsoRef.current = {};
       return;
     }
@@ -1003,12 +991,10 @@ export function StudentLessonsYearPage({
       try {
         const remarks = await loadTimetableDayRemarksForStudent(studentId, yearMin, yearMax);
         if (mounted) {
-          setTimetableRemarksByDateIso(remarks);
           timetableRemarksByDateIsoRef.current = remarks;
         }
       } catch {
         if (mounted) {
-          setTimetableRemarksByDateIso({});
           timetableRemarksByDateIsoRef.current = {};
         }
       }
@@ -1253,6 +1239,8 @@ export function StudentLessonsYearPage({
     return () => {
       mounted = false;
     };
+    // persistYearState reads latest refs; intentionally omit from deps to avoid reload loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap load once per student/year
   }, [studentId, targetYear, accessReady, ATTENDANCE_STORAGE_KEY, HIDDEN_DATES_STORAGE_KEY, OVERRIDES_STORAGE_KEY, RESCHEDULE_STORAGE_KEY, EXTRA_STORAGE_KEY, initialBootstrap]);
 
   useEffect(() => {
@@ -1533,16 +1521,6 @@ export function StudentLessonsYearPage({
   const rescheduleEntryById = useMemo(() => {
     const map = new Map<string, RescheduleEntry>();
     for (const e of rescheduleEntries) map.set(e.id, e);
-    return map;
-  }, [rescheduleEntries]);
-
-  const rescheduleIdsByFromDate = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const e of rescheduleEntries) {
-      const list = map.get(e.fromDate);
-      if (list) list.push(e.id);
-      else map.set(e.fromDate, [e.id]);
-    }
     return map;
   }, [rescheduleEntries]);
 
@@ -2197,12 +2175,10 @@ export function StudentLessonsYearPage({
         const originTime = String(e.originTime ?? "").trim() || prevTime;
         const originRoom = String(e.originRoom ?? "").trim() || prevRoom;
         const moved = Boolean(originDate && originDate !== newDate);
-        const {
-          originDate: _od,
-          originTime: _ot,
-          originRoom: _or,
-          ...rest
-        } = e;
+        const rest = { ...e };
+        delete rest.originDate;
+        delete rest.originTime;
+        delete rest.originRoom;
         return moved
           ? {
               ...rest,

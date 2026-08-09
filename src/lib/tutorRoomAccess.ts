@@ -68,7 +68,8 @@ export function buildRoomScheduleQueryForDate(viewer: ViewerContext, dateIso: st
 }
 
 /** 導師登入後／無權限時的預設落點 */
-export function getTutorLandingPath(_viewer: ViewerContext): string | null {
+export function getTutorLandingPath(_viewer?: ViewerContext): string | null {
+  void _viewer;
   return defaultDailyTimetablePath();
 }
 

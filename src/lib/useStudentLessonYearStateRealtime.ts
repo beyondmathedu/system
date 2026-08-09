@@ -12,7 +12,10 @@ export function useStudentLessonYearStateRealtime(
   onRemoteState: (state: StudentLesson2026State) => void,
 ) {
   const onRemoteRef = useRef(onRemoteState);
-  onRemoteRef.current = onRemoteState;
+
+  useEffect(() => {
+    onRemoteRef.current = onRemoteState;
+  }, [onRemoteState]);
 
   useEffect(() => {
     if (!studentId) return;

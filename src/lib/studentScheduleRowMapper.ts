@@ -172,8 +172,8 @@ function mapCoreRowToStudentRow(
 
   const overrideTutor = readLessonDayOverrideField(state.overrides, core.date, "tutor");
   const overrideSummary = readLessonDayOverrideField(state.overrides, core.date, "lessonSummary");
-  let tutor = overrideTutor || core.tutorDisplay;
-  let lessonSummary = overrideSummary || core.noteDisplay;
+  const tutor = overrideTutor || core.tutorDisplay;
+  const lessonSummary = overrideSummary || core.noteDisplay;
 
   return {
     date: core.date,

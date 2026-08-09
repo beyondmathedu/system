@@ -298,21 +298,6 @@ function lineItemLessonCountWithFallback(li: Record<string, unknown>, receiptNot
   return 0;
 }
 
-function allocateReceiptPaidAmounts(
-  receiptNet: number,
-  rows: Array<{ month: number; lessonCount: number; gross: number }>,
-): number[] {
-  if (!rows.length) return [];
-  const grossSum = rows.reduce((s, r) => s + r.gross, 0);
-  if (!Number.isFinite(receiptNet) || receiptNet <= 0) return rows.map(() => 0);
-  if (grossSum <= 0) {
-    if (rows.length === 1) return [Math.round(receiptNet * 100) / 100];
-    const each = Math.round((receiptNet / rows.length) * 100) / 100;
-    return rows.map(() => each);
-  }
-  return rows.map((r) => Math.round((r.gross / grossSum) * receiptNet * 100) / 100);
-}
-
 async function getZohoAccessToken(): Promise<string> {
   const clientId = process.env.ZOHO_CLIENT_ID ?? "";
   const clientSecret = process.env.ZOHO_CLIENT_SECRET ?? "";
@@ -765,7 +750,11 @@ export async function POST(request: Request) {
         .upsert(upserts, { onConflict: "student_id,year,month" });
       if (upErr && /submitted_lesson_count/i.test(upErr.message) && /column|schema cache/i.test(upErr.message)) {
         ({ error: upErr } = await admin.from("student_monthly_fee_records").upsert(
-          upserts.map(({ submitted_lesson_count: _lc, ...row }) => row),
+          upserts.map((row) => {
+            const next = { ...row };
+            delete (next as { submitted_lesson_count?: number }).submitted_lesson_count;
+            return next;
+          }),
           { onConflict: "student_id,year,month" },
         ));
       }

@@ -175,14 +175,6 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     );
   }, [query, teachers]);
 
-  const activeTutorNames = useMemo(() => {
-    return teachers
-      .filter((t) => t.status === "工作中" || t.status === "放假中")
-      .map((t) => t.nickname.trim() || t.name.trim())
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b, "zh-Hant"));
-  }, [teachers]);
-
   const teacherById = useMemo(() => new Map(teachers.map((t) => [t.id, t])), [teachers]);
 
   const nextTeacherId = useMemo(() => getSmallestMissingTeacherId(teachers), [teachers]);

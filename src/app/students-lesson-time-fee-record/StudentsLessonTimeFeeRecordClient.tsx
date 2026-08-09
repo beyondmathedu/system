@@ -24,7 +24,7 @@ import {
   upsertStudentMonthlyFeeRecord,
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
-import { readMonthPart, readYmdParts } from "@/lib/intlFormatParts";
+import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
@@ -63,7 +63,6 @@ import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
 import {
   isStudentHiddenForFeeSheetMonthFromPeriods,
   makeStudentInactiveDateCheckerFromPeriods,
-  type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import {
   availableLessonYears,
@@ -181,14 +180,6 @@ function getActiveWeekdaysForFeeRecord(records: LessonRecord[], dateIso: string)
   const weekdays = [...new Set(activeRules.map((r) => r.weekday).filter(Boolean))];
   weekdays.sort((a, b) => (WEEKDAY_ORDER[a] ?? 99) - (WEEKDAY_ORDER[b] ?? 99));
   return weekdays;
-}
-
-function hkMonthNow(): number {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    month: "numeric",
-  }).formatToParts(new Date());
-  return Number(readMonthPart(parts, "1")) || 1;
 }
 
 function formatPhoneNumberTwoLines(phone: string): string {
@@ -582,10 +573,6 @@ type LessonRecord = {
   effectiveDate?: string;
   weekday: string;
   createdAt: number;
-};
-
-type StudentVisibilityFeeContext = {
-  periods: StudentInactivePeriod[];
 };
 
 type SortDirection = "asc" | "desc";
@@ -2350,7 +2337,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
     },
     "full",
   );
-  const makeupDisplayN = makeupLiveCount;
+  const makeupDisplayN = makeupLiveCount > 0 ? makeupLiveCount : remedialCountDb;
 
   const paidLessonHintCount = tuitionPaidLessonHintCount({
     submitted: record.submitted,
