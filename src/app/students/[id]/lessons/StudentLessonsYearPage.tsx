@@ -744,6 +744,7 @@ export function StudentLessonsYearPage({
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [hiddenDates, setHiddenDates] = useState<Record<string, boolean>>({});
   const HIDDEN_DATES_STORAGE_KEY = `hidden_dates:${studentId}:${targetYear}`;
+  const [hiddenNoticeExpanded, setHiddenNoticeExpanded] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, DayOverride>>({});
   const OVERRIDES_STORAGE_KEY = `overrides:${studentId}:${targetYear}`;
   const overridesRef = useRef<Record<string, DayOverride>>({});
@@ -948,6 +949,7 @@ export function StudentLessonsYearPage({
 
   const onRemoteYearState = useCallback(
     (remote: StudentLesson2026State) => {
+      if (hasPendingLessonYearStateSaves()) return;
       applyYearStateToUi({
         attendance: remote.attendance,
         hiddenDates: remote.hiddenDates,
@@ -1652,6 +1654,7 @@ export function StudentLessonsYearPage({
     setHiddenDates(next);
     window.localStorage.setItem(HIDDEN_DATES_STORAGE_KEY, JSON.stringify(next));
     persistYearState({ hiddenDates: next });
+    setHiddenNoticeExpanded(false);
   }
 
   function persistScheduleRecords(next: ScheduleRecord[]) {
@@ -2622,6 +2625,11 @@ export function StudentLessonsYearPage({
     filteredScheduleRows,
   ]);
 
+  const hasScheduleDiagnosticIssue =
+    records.length === 0 ||
+    (records.length > 0 && monthDiagnostic.total === 0) ||
+    (monthDiagnostic.visible === 0 && !viewingInactiveMonthOnly);
+
   const activeDiagnosticVersionDate = useMemo(() => {
     if (records.length === 0) return null;
     const normalized = records.map((r) => ({
@@ -2951,16 +2959,34 @@ export function StudentLessonsYearPage({
                   );
                 }}
               />
-              {hiddenScheduleKeys.length > 0 ||
-              records.length === 0 ||
-              (records.length > 0 && monthDiagnostic.total === 0) ||
-              (monthDiagnostic.visible === 0 && !viewingInactiveMonthOnly) ? (
-                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-                  {hiddenScheduleKeys.length > 0 ? (
-                    <>
-                      <p className="font-semibold">
-                        已隱藏 {hiddenScheduleKeys.length} 項（Delete 寫入 hidden_dates，唔係刪課表設定）
-                      </p>
+              {(hiddenScheduleKeys.length > 0 || hasScheduleDiagnosticIssue) ? (
+                <div className="mt-3 space-y-2">
+                  {hiddenScheduleKeys.length > 0 && !hiddenNoticeExpanded ? (
+                    <p className="text-[11px] text-slate-500">
+                      已隱藏 {hiddenScheduleKeys.length} 項（Delete 隱藏，唔會刪課表設定）·{" "}
+                      <button
+                        type="button"
+                        onClick={() => setHiddenNoticeExpanded(true)}
+                        className="font-semibold text-[#1d76c2] hover:underline"
+                      >
+                        管理
+                      </button>
+                    </p>
+                  ) : null}
+                  {hiddenScheduleKeys.length > 0 && hiddenNoticeExpanded ? (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-semibold text-slate-800">
+                          已隱藏 {hiddenScheduleKeys.length} 項（Delete 隱藏，唔會刪課表設定）
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setHiddenNoticeExpanded(false)}
+                          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold hover:bg-slate-100"
+                        >
+                          知道了
+                        </button>
+                      </div>
                       <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto text-[11px]">
                         {hiddenScheduleKeys.map((key) => (
                           <li key={key} className="flex flex-wrap items-center justify-between gap-2">
@@ -2972,7 +2998,7 @@ export function StudentLessonsYearPage({
                                 delete next[key];
                                 persistHiddenDates(next);
                               }}
-                              className="shrink-0 rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold hover:bg-amber-100"
+                              className="shrink-0 rounded border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold hover:bg-slate-100"
                             >
                               恢復
                             </button>
@@ -2985,19 +3011,21 @@ export function StudentLessonsYearPage({
                           if (!window.confirm("Restore all hidden lessons for this student/year?")) return;
                           persistHiddenDates({});
                         }}
-                        className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold hover:bg-amber-100"
+                        className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold hover:bg-slate-100"
                       >
                         全部恢復顯示
                       </button>
-                    </>
+                    </div>
                   ) : null}
+                  {hasScheduleDiagnosticIssue ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
                   {records.length === 0 ? (
-                    <p className={`leading-snug${hiddenScheduleKeys.length > 0 ? " mt-2" : ""}`}>
+                    <p className="leading-snug">
                       課表設定（student_lesson_records）目前為<strong>空</strong>，所以{" "}
                       {diagnosticMonthLabel} 不會有任何 Regular 行。請到上一頁「Lesson Schedule Settings」重新加入星期／時間／房間。
                     </p>
                   ) : monthDiagnostic.total === 0 ? (
-                    <p className={`leading-snug${hiddenScheduleKeys.length > 0 ? " mt-2" : ""}`}>
+                    <p className="leading-snug">
                       有 {records.length} 條課表規則，但 {diagnosticMonthLabel} 仍無課堂行。{diagnosticMonthLabel}{" "}
                       使用版本 effective date：
                       <strong> {activeDiagnosticVersionDate ?? "—"}</strong>（共 {activeDiagnosticRuleCount}{" "}
@@ -3005,7 +3033,7 @@ export function StudentLessonsYearPage({
                       Record。
                     </p>
                   ) : monthDiagnostic.visible === 0 ? (
-                    <p className={`leading-snug${hiddenScheduleKeys.length > 0 ? " mt-2" : ""}`}>
+                    <p className="leading-snug">
                       {diagnosticMonthLabel} 共有 {monthDiagnostic.total} 堂，但被上方篩選（Month / Room / Tutor
                       等）濾走。請將 Month 改為 All 或 {diagnosticMonth}。
                     </p>
@@ -3016,6 +3044,8 @@ export function StudentLessonsYearPage({
                   >
                     → 前往 Lesson Schedule Settings 檢查課表
                   </Link>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </fieldset>
@@ -4638,9 +4668,14 @@ export function StudentLessonsYearPage({
                     .map((id) => scheduleRowById.get(id))
                     .filter((r): r is ScheduleRow => Boolean(r));
 
+                  const extraDeletes = selectedRows.filter((row) => Boolean(row.extraEntryId));
+                  const rescheduleDeletes = selectedRows.filter(
+                    (row) => Boolean(row.rescheduleEntryId) && !row.extraEntryId,
+                  );
                   const hideableDeletes = selectedRows.filter(
                     (row) =>
                       !row.extraEntryId &&
+                      !row.rescheduleEntryId &&
                       (row.rowKind === "normal" ||
                         row.rowKind === "cancelled_original" ||
                         row.lessonType === TYPE_PENDING),
@@ -4660,12 +4695,20 @@ export function StudentLessonsYearPage({
                     willHideRuleDates.add(`${parsed.dateIso} · rule ${parsed.ruleId}`);
                   }
                   const confirmLines = [
-                    "Hide selected lesson row(s) from this list?",
+                    extraDeletes.length > 0 || rescheduleDeletes.length > 0
+                      ? "Delete selected lesson row(s)?"
+                      : "Hide selected lesson row(s) from this list?",
+                    extraDeletes.length > 0
+                      ? `• Extra (permanently removed): ${extraDeletes.map((r) => r.date).join(", ")}`
+                      : "",
+                    rescheduleDeletes.length > 0
+                      ? `• Reschedule (permanently removed): ${rescheduleDeletes.map((r) => r.date).join(", ")}`
+                      : "",
                     willHideWholeDates.size > 0
-                      ? `• Whole dates (all lessons that day): ${[...willHideWholeDates].join(", ")}`
+                      ? `• Regular — hide whole dates: ${[...willHideWholeDates].join(", ")}`
                       : "",
                     willHideRuleDates.size > 0
-                      ? `• Selected date only: ${[...willHideRuleDates].join(", ")}`
+                      ? `• Regular — hide selected date only: ${[...willHideRuleDates].join(", ")}`
                       : "",
                   ].filter(Boolean);
                   if (!window.confirm(confirmLines.join("\n"))) return;
@@ -4674,10 +4717,10 @@ export function StudentLessonsYearPage({
                   const extraIdsToDelete = new Set<string>();
                   for (const row of selectedRows) {
                     if (row.rescheduleEntryId) {
-                      rescheduleIdsToDelete.add(row.rescheduleEntryId);
+                      rescheduleIdsToDelete.add(String(row.rescheduleEntryId));
                     }
                     if (row.extraEntryId) {
-                      extraIdsToDelete.add(row.extraEntryId);
+                      extraIdsToDelete.add(String(row.extraEntryId));
                     }
                   }
 
@@ -4697,8 +4740,11 @@ export function StudentLessonsYearPage({
                       removableRescheduleIds.push(id);
                     }
                     if (removableRescheduleIds.length > 0) {
-                      const removableSet = new Set(removableRescheduleIds);
-                      const nextEntries = rescheduleEntries.filter((e) => !removableSet.has(e.id));
+                      const removableSet = new Set(removableRescheduleIds.map(String));
+                      const nextEntries = rescheduleEntriesRef.current.filter(
+                        (e) => !removableSet.has(String(e.id)),
+                      );
+                      rescheduleEntriesRef.current = nextEntries;
                       setRescheduleEntries(nextEntries);
                       window.localStorage.setItem(
                         RESCHEDULE_STORAGE_KEY,
@@ -4709,17 +4755,29 @@ export function StudentLessonsYearPage({
                   }
 
                   if (extraIdsToDelete.size > 0) {
-                    const nextExtraEntries = extraEntries.filter(
-                      (e) => !extraIdsToDelete.has(e.id),
+                    const nextExtraEntries = extraEntriesRef.current.filter(
+                      (e) => !extraIdsToDelete.has(String(e.id)),
                     );
+                    extraEntriesRef.current = nextExtraEntries;
                     setExtraEntries(nextExtraEntries);
                     window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(nextExtraEntries));
                     persistYearState({ extraEntries: nextExtraEntries });
+
+                    const nextAttendance = { ...attendanceRef.current };
+                    for (const id of extraIdsToDelete) {
+                      delete nextAttendance[`extra:${id}`];
+                    }
+                    if (Object.keys(nextAttendance).length !== Object.keys(attendanceRef.current).length) {
+                      attendanceRef.current = nextAttendance;
+                      setAttendance(nextAttendance);
+                      window.localStorage.setItem(ATTENDANCE_STORAGE_KEY, JSON.stringify(nextAttendance));
+                      persistYearState({ attendance: nextAttendance });
+                    }
                   }
 
-                  const nextHidden = { ...hiddenDates };
+                  const nextHidden = { ...hiddenDatesRef.current };
                   for (const row of selectedRows) {
-                    if (row.extraEntryId) continue;
+                    if (row.extraEntryId || row.rescheduleEntryId) continue;
                     if (
                       row.rowKind !== "normal" &&
                       row.rowKind !== "cancelled_original" &&
@@ -4740,12 +4798,21 @@ export function StudentLessonsYearPage({
                     }
                     nextHidden[hiddenScheduleRuleDateStorageKey(parsed.ruleId, parsed.dateIso)] = true;
                   }
-                  persistHiddenDates(nextHidden);
+                  const hiddenChanged =
+                    JSON.stringify(nextHidden) !== JSON.stringify(hiddenDatesRef.current);
+                  if (hiddenChanged) {
+                    persistHiddenDates(nextHidden);
+                  }
                   setSelectedRowIds([]);
                   if (lockedPendingMessages.length > 0) {
                     setSelectionError(
                       `Hidden from this list and fee count. Pending makeup entry kept locked: ${lockedPendingMessages[0]}`,
                     );
+                  } else if (extraIdsToDelete.size > 0 && !hiddenChanged) {
+                    setSelectionError("Extra lesson deleted.");
+                    window.setTimeout(() => {
+                      setSelectionError((prev) => (prev === "Extra lesson deleted." ? "" : prev));
+                    }, 2000);
                   }
                 }}
                 className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
