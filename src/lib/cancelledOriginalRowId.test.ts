@@ -39,7 +39,7 @@ describe("cancelled original row ids", () => {
     );
   });
 
-  it("keeps unique cancelled rowIds when two lessons share a fromDate", () => {
+  it("keeps unique cancelled rowIds when two slotted lessons share a fromDate", () => {
     const records: YearLessonRecord[] = [
       {
         id: "rule-a",
@@ -59,13 +59,29 @@ describe("cancelled original row ids", () => {
       },
     ];
     const state = emptyState();
-    state.rescheduleEntries.push({
-      id: "1784534987445",
-      fromDate: "2026-07-04",
-      toDate: "2026-07-11",
-      time: "10:00 AM",
-      room: "B",
-    });
+    // Same calendar day with two regulars: each cancel needs its own from-slot.
+    state.rescheduleEntries.push(
+      {
+        id: "1784534987445",
+        fromDate: "2026-07-04",
+        toDate: "2026-07-11",
+        time: "10:00 AM",
+        room: "B",
+        fromScheduleRuleId: "rule-a",
+        fromTime: "10:00 AM",
+        fromRoom: "B",
+      },
+      {
+        id: "1784534987445-b",
+        fromDate: "2026-07-04",
+        toDate: "2026-07-18",
+        time: "11:30 AM",
+        room: "Hope",
+        fromScheduleRuleId: "rule-b",
+        fromTime: "11:30 AM",
+        fromRoom: "Hope",
+      },
+    );
 
     const rows = buildStudentScheduleRows(records, state, YEAR, "2026-07-15", { month: 7 });
     const cancelled = rows.filter(
@@ -74,6 +90,7 @@ describe("cancelled original row ids", () => {
     expect(cancelled).toHaveLength(2);
     const ids = cancelled.map((r) => r.rowId);
     expect(new Set(ids).size).toBe(2);
-    expect(ids.every((id) => id.startsWith("cancelled-1784534987445-2026-07-04-"))).toBe(true);
+    expect(ids.some((id) => id.startsWith("cancelled-1784534987445-2026-07-04-"))).toBe(true);
+    expect(ids.some((id) => id.startsWith("cancelled-1784534987445-b-2026-07-04-"))).toBe(true);
   });
 });
