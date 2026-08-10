@@ -89,6 +89,58 @@ describe("lesson2026Summary", () => {
     );
   });
 
+  it("counts pending makeup in prior month makeup window", () => {
+    const records = [mondayRule({ weekday: "六", id: "rule-sat", time: "2:30 PM" })];
+    const state = emptyState();
+    state.rescheduleEntries.push(
+      {
+        id: "pm-1",
+        fromDate: "2026-07-18",
+        toDate: "",
+        time: "",
+        room: "",
+        pending: true,
+        fromScheduleRuleId: "rule-sat",
+        fromTime: "2:30 PM",
+        fromRoom: "M前",
+      },
+      {
+        id: "pm-2",
+        fromDate: "2026-07-25",
+        toDate: "",
+        time: "",
+        room: "",
+        pending: true,
+        fromScheduleRuleId: "rule-sat",
+        fromTime: "2:30 PM",
+        fromRoom: "M前",
+      },
+    );
+    state.attendance["regular:rule-sat:2026-07-04"] = true;
+    state.attendance["regular:rule-sat:2026-07-11"] = true;
+
+    const metrics = getLessonUntickedMetrics(records, state, hkMs("2026-08-10"), YEAR);
+
+    expect(metrics.makeupCount).toBe(2);
+    expect(metrics.makeupDates).toEqual(["2026-07-18", "2026-07-25"]);
+  });
+
+  it("does not count completed reschedule cancelled originals in makeup window", () => {
+    const records = [mondayRule()];
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "rs-1",
+      fromDate: "2026-07-04",
+      toDate: "2026-08-01",
+      time: "4:00 PM",
+      room: "M前",
+    });
+
+    const metrics = getLessonUntickedMetrics(records, state, hkMs("2026-08-10"), YEAR);
+
+    expect(metrics.makeupDates).not.toContain("2026-07-04");
+  });
+
   it("counts reschedule to-date attendance via reschedule:id key", () => {
     const records = [mondayRule()];
     const state = emptyState();

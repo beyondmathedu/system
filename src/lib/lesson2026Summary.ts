@@ -1,4 +1,5 @@
 import { isOnOrAfterLessonSystemStart } from "@/lib/lessonSystemStart";
+import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
 import {
   buildYearScheduleRows,
@@ -34,8 +35,11 @@ function filterUntickedRowsInMakeupWindow(
   endIso: string,
 ) {
   return rows.filter((r) => {
-    if (r.rowKind === "cancelled_original") return false;
     if (r.date < startIso || r.date > endIso) return false;
+    if (r.rowKind === "cancelled_original") {
+      // Pending makeup = missed lesson not yet rescheduled; still counts as makeup owed.
+      return r.lessonType === PENDING_MAKEUP_TYPE_LABEL;
+    }
     return !isRowMarkedAttended(r, state);
   });
 }
