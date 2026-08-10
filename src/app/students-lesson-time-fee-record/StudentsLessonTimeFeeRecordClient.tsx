@@ -393,11 +393,20 @@ function FeeRecordRemarksField({
   );
 }
 
+function resolveMakeupDisplayCount(
+  liveCount: number,
+  remedialCountDb: number,
+  hasLessonPayload: boolean,
+): number {
+  return hasLessonPayload ? liveCount : remedialCountDb;
+}
+
 function makeupDialogTitle(
   studentId: string,
   students: StudentRow[],
   liveCount: number,
   remedialCountDb: number,
+  hasLessonPayload: boolean,
 ): string {
   const st = students.find((s) => s.id === studentId);
   const studentLabel = st
@@ -406,7 +415,7 @@ function makeupDialogTitle(
         "full",
       )
     : studentId;
-  const count = liveCount > 0 ? liveCount : remedialCountDb;
+  const count = resolveMakeupDisplayCount(liveCount, remedialCountDb, hasLessonPayload);
   return `📅 ${studentLabel} – ${priorMonthMakeupShortLabel()} (${count}堂)`;
 }
 
@@ -1148,8 +1157,9 @@ export default function StudentsLessonTimeFeeRecordPage({
   ]);
 
   /** Live Makeup count (prior calendar month unticked); matches Makeup column & filter. */
-  const makeupLiveCountByStudentId = useMemo(() => {
-    const out: Record<string, number> = {};
+  const { makeupLiveCountByStudentId, makeupHasLessonPayloadByStudentId } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    const hasPayloadById: Record<string, boolean> = {};
     for (const st of students) {
       const sid = st.id;
       const recs = (lessonRecordsByStudentId[sid] ?? []) as unknown as Lesson2026Record[];
@@ -1159,8 +1169,9 @@ export default function StudentsLessonTimeFeeRecordPage({
         ys != null ||
         Object.prototype.hasOwnProperty.call(lessonRecordsByStudentId, sid) ||
         Object.prototype.hasOwnProperty.call(lessonYearStateByStudentId, sid);
+      hasPayloadById[sid] = hasLessonPayload;
       if (!hasLessonPayload) {
-        out[sid] = remedialCountByStudentId[sid] ?? 0;
+        counts[sid] = remedialCountByStudentId[sid] ?? 0;
         continue;
       }
       const state: Lesson2026State = {
@@ -1170,9 +1181,12 @@ export default function StudentsLessonTimeFeeRecordPage({
         rescheduleEntries: (ys?.rescheduleEntries as Lesson2026State["rescheduleEntries"]) ?? [],
         extraEntries: (ys?.extraEntries as Lesson2026State["extraEntries"]) ?? [],
       };
-      out[sid] = getUpcomingUntickedDates(recs, state, Date.now(), sheetYear).length;
+      counts[sid] = getUpcomingUntickedDates(recs, state, Date.now(), sheetYear).length;
     }
-    return out;
+    return {
+      makeupLiveCountByStudentId: counts,
+      makeupHasLessonPayloadByStudentId: hasPayloadById,
+    };
   }, [
     students,
     lessonRecordsByStudentId,
@@ -1183,11 +1197,16 @@ export default function StudentsLessonTimeFeeRecordPage({
 
   const feeDialogMakeupDetail = useMemo(() => {
     if (!feeDetailDialog || feeDetailDialog.kind !== "makeup") {
-      return { dates: [] as string[], dbOnly: false, liveCount: 0 };
+      return { dates: [] as string[], dbOnly: false, liveCount: 0, hasLessonPayload: false };
     }
     const sid = feeDetailDialog.studentId;
     const recs = (lessonRecordsByStudentId[sid] ?? []) as unknown as Lesson2026Record[];
     const ys = lessonYearStateByStudentId[sid] ?? emptyLessonYearState();
+    const hasLessonPayload =
+      recs.length > 0 ||
+      ys != null ||
+      Object.prototype.hasOwnProperty.call(lessonRecordsByStudentId, sid) ||
+      Object.prototype.hasOwnProperty.call(lessonYearStateByStudentId, sid);
     const state: Lesson2026State = {
       attendance: ys.attendance,
       hiddenDates: ys.hiddenDates,
@@ -1195,12 +1214,15 @@ export default function StudentsLessonTimeFeeRecordPage({
       rescheduleEntries: (ys.rescheduleEntries as Lesson2026State["rescheduleEntries"]) ?? [],
       extraEntries: (ys.extraEntries as Lesson2026State["extraEntries"]) ?? [],
     };
-    const dates = getUpcomingUntickedDates(recs, state, Date.now(), sheetYear);
+    const dates = hasLessonPayload
+      ? getUpcomingUntickedDates(recs, state, Date.now(), sheetYear)
+      : [];
     const dbN = remedialCountByStudentId[sid] ?? 0;
     return {
       dates,
-      dbOnly: dates.length === 0 && dbN > 0,
+      dbOnly: !hasLessonPayload && dbN > 0,
       liveCount: dates.length,
+      hasLessonPayload,
     };
   }, [
     feeDetailDialog,
@@ -1962,6 +1984,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                               thisMonthDatedSlotCount={thisMonthDatedSlotCount}
                               makeupLiveCount={makeupLiveCountByStudentId[st.id] ?? 0}
                               remedialCountDb={remedialCountByStudentId[st.id] ?? 0}
+                              hasLessonPayload={makeupHasLessonPayloadByStudentId[st.id] ?? false}
                               showGradeSeparatorTop={showGradeSeparatorTop}
                               showOpeningEditor={sheetYear === OPENING_BALANCE_AS_OF_YEAR}
                               openingBalance={openingBalanceByStudentId[st.id] ?? 0}
@@ -2158,10 +2181,9 @@ export default function StudentsLessonTimeFeeRecordPage({
                   : makeupDialogTitle(
                       feeDetailDialog.studentId,
                       students,
-                      feeDialogMakeupDetail.liveCount > 0
-                        ? feeDialogMakeupDetail.liveCount
-                        : (remedialCountByStudentId[feeDetailDialog.studentId] ?? 0),
+                      feeDialogMakeupDetail.liveCount,
                       remedialCountByStudentId[feeDetailDialog.studentId] ?? 0,
+                      feeDialogMakeupDetail.hasLessonPayload,
                     )}
               </h2>
               <button
@@ -2226,6 +2248,7 @@ type StudentFeeRowProps = {
   lessonDatesSerialized: string;
   makeupLiveCount: number;
   remedialCountDb: number;
+  hasLessonPayload: boolean;
   /** Add a stronger top border when grade changes from previous row. */
   showGradeSeparatorTop: boolean;
   showOpeningEditor: boolean;
@@ -2309,6 +2332,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
   lessonDatesSerialized,
   makeupLiveCount,
   remedialCountDb,
+  hasLessonPayload,
   showGradeSeparatorTop,
   showOpeningEditor,
   openingBalance,
@@ -2337,7 +2361,11 @@ const StudentFeeRow = memo(function StudentFeeRow({
     },
     "full",
   );
-  const makeupDisplayN = makeupLiveCount > 0 ? makeupLiveCount : remedialCountDb;
+  const makeupDisplayN = resolveMakeupDisplayCount(
+    makeupLiveCount,
+    remedialCountDb,
+    hasLessonPayload,
+  );
 
   const paidLessonHintCount = tuitionPaidLessonHintCount({
     submitted: record.submitted,
