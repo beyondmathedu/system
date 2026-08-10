@@ -2,7 +2,7 @@ import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { defaultLessonYear, hkYmdNow } from "@/lib/lessonCalendar";
 import { loadFeeRecordBootstrapCached } from "@/lib/lessonDataServer";
-import StudentsLessonTimeFeeRecordPageClient from "./StudentsLessonTimeFeeRecordPageClient";
+import StudentsLessonTimeFeeRecordClient from "./StudentsLessonTimeFeeRecordClient";
 
 export default async function StudentsLessonTimeFeeRecordPage() {
   const { m } = hkYmdNow();
@@ -15,7 +15,7 @@ export default async function StudentsLessonTimeFeeRecordPage() {
   const navViewer = await buildAppTopNavViewer(viewer);
 
   return (
-    <StudentsLessonTimeFeeRecordPageClient
+    <StudentsLessonTimeFeeRecordClient
       initialBootstrap={initialBootstrap}
       initialYear={initialYear}
       initialMonth={initialMonth}

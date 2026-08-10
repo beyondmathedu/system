@@ -6,7 +6,7 @@ import { loadStudentLessonsBootstrap } from "@/lib/lessonDataServer";
 import { normalizeStudentId } from "@/lib/studentId";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
-import { StudentLessonsYearPage } from "../StudentLessonsYearPage";
+import { StudentLessonsYearPageEntry } from "../StudentLessonsYearPageEntry";
 
 type PageProps = { params: Promise<{ id: string; year: string }> };
 
@@ -39,7 +39,7 @@ export default async function StudentLessonsDynamicYearPage({ params }: PageProp
   const navViewer = await buildAppTopNavViewer(viewer);
 
   return (
-    <StudentLessonsYearPage
+    <StudentLessonsYearPageEntry
       targetYear={targetYear}
       initialBootstrap={initialBootstrap}
       initialReadOnly={initialReadOnly}
