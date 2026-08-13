@@ -12,9 +12,9 @@ import {
   saveLessonYearMetrics,
   updateStudentInactivePeriodEndDate,
 } from "@/lib/studentLessonStorage";
-import { getLessonUntickedMetrics, type Lesson2026State } from "@/lib/lesson2026Summary";
 import { availableLessonYears } from "@/lib/lessonCalendar";
 import type { StudentLessonsBootstrapPayload } from "@/lib/lessonDataServer";
+import type { StudentLessonHubMetrics } from "@/lib/studentLessonHubMetrics";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import AppTopNav from "@/components/AppTopNav";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
@@ -23,7 +23,6 @@ import ExamDateField from "./ExamDateField";
 import type { LessonScheduleRecord } from "./LessonScheduleGrid";
 import { formatGradeDisplay } from "@/lib/grade";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
-import { makeStudentInactiveDateCheckerFromPeriods } from "@/lib/studentVisibility";
 
 const LessonScheduleGrid = dynamic(() => import("./LessonScheduleGrid"), {
   ssr: false,
@@ -54,15 +53,15 @@ function dedupeInactivePeriodRows<
   return out;
 }
 
-function toLesson2026State(state: StudentLessonsBootstrapPayload["yearState"]): Lesson2026State {
-  return {
-    attendance: state.attendance as Record<string, boolean>,
-    hiddenDates: state.hiddenDates as Record<string, boolean>,
-    overrides: state.overrides as Lesson2026State["overrides"],
-    rescheduleEntries: state.rescheduleEntries as Lesson2026State["rescheduleEntries"],
-    extraEntries: state.extraEntries as Lesson2026State["extraEntries"],
-  };
-}
+type StudentSummary = {
+  id: string;
+  nameZh: string;
+  nameEn: string;
+  nicknameEn: string;
+  grade: string;
+  school: string;
+  textbookPublisher: string;
+};
 
 function mapBootstrapPeriods(
   periods: StudentLessonsBootstrapPayload["inactivePeriods"],
@@ -78,16 +77,6 @@ function mapBootstrapPeriods(
     })),
   );
 }
-
-type StudentSummary = {
-  id: string;
-  nameZh: string;
-  nameEn: string;
-  nicknameEn: string;
-  grade: string;
-  school: string;
-  textbookPublisher: string;
-};
 
 function summaryFromBootstrap(
   studentId: string,
@@ -119,42 +108,17 @@ export default function StudentLessonsHubClient({
   studentId,
   hubYear,
   initialBootstrap,
+  initialMetrics,
   initialReadOnly,
   navViewer = null,
 }: {
   studentId: string;
   hubYear: number;
   initialBootstrap: StudentLessonsBootstrapPayload;
+  initialMetrics: StudentLessonHubMetrics;
   initialReadOnly: boolean;
   navViewer?: AppTopNavViewer | null;
 }) {
-  const initialMetrics = useMemo(
-    () => {
-      const periods = mapBootstrapPeriods(initialBootstrap.inactivePeriods, studentId);
-      const isDateInactive = makeStudentInactiveDateCheckerFromPeriods({
-        studentId,
-        grade: initialBootstrap.student?.grade ?? "",
-        year: hubYear,
-        periods: periods.map((p) => ({
-          studentId,
-          startDate: p.start_date,
-          endDate: p.end_date,
-          note: p.note,
-        })),
-      });
-      return getLessonUntickedMetrics(
-        initialBootstrap.scheduleRecords as Parameters<typeof getLessonUntickedMetrics>[0],
-        toLesson2026State(initialBootstrap.yearState),
-        Date.now(),
-        hubYear,
-        { isDateInactive },
-      );
-    },
-    // Seed once from server props.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-
   const [studentSummary] = useState<StudentSummary>(() =>
     summaryFromBootstrap(studentId, initialBootstrap.student),
   );

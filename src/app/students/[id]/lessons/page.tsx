@@ -3,6 +3,7 @@ import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { defaultLessonYear } from "@/lib/lessonCalendar";
 import { loadStudentLessonsBootstrap } from "@/lib/lessonDataServer";
+import { computeStudentLessonHubMetrics } from "@/lib/studentLessonHubMetrics";
 import { normalizeStudentId } from "@/lib/studentId";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
@@ -37,6 +38,15 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
   const hubYear = defaultLessonYear();
   const supabase = await createSupabaseServerClient();
   const initialBootstrap = await loadStudentLessonsBootstrap(supabase, studentId, hubYear);
+  const initialMetrics = computeStudentLessonHubMetrics({
+    studentId,
+    hubYear,
+    grade: initialBootstrap.student?.grade,
+    scheduleRecords: initialBootstrap.scheduleRecords,
+    yearState: initialBootstrap.yearState,
+    inactivePeriods: initialBootstrap.inactivePeriods,
+    nowMs: Date.now(),
+  });
   const initialReadOnly =
     viewer.role === "tutor" ||
     viewer.role === "student" ||
@@ -48,6 +58,7 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
       studentId={studentId}
       hubYear={hubYear}
       initialBootstrap={initialBootstrap}
+      initialMetrics={initialMetrics}
       initialReadOnly={initialReadOnly}
       navViewer={navViewer}
     />
