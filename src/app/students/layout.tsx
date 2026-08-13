@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getViewerContext } from "@/lib/authz";
+import { redirectIfInactiveStudentPortalBlocked } from "@/lib/studentPortalAccess.server";
 import { isSharedIpadTutorViewer } from "@/lib/tutorRoomAccess";
 import { normalizeStudentId } from "@/lib/studentId";
 
@@ -14,6 +15,7 @@ export default async function StudentsSectionLayout({
   if (isSharedIpadTutorViewer(viewer)) return children;
   if (viewer.role === "student") {
     if (!normalizeStudentId(viewer.studentId ?? "")) redirect("/login");
+    await redirectIfInactiveStudentPortalBlocked(viewer);
     return children;
   }
   if (viewer.role === "tutor") return children;

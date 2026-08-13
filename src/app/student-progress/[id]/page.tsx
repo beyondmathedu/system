@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
+import { redirectIfInactiveStudentPortalBlocked } from "@/lib/studentPortalAccess.server";
 import { normalizeStudentId } from "@/lib/studentId";
 import StudentProgressByIdClient from "./StudentProgressByIdClient";
 
@@ -16,6 +17,7 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
   }
   redirectTutorAwayFromAdminPages(viewer);
   if (viewer.role === "student") {
+    await redirectIfInactiveStudentPortalBlocked(viewer);
     const ownId = normalizeStudentId(viewer.studentId ?? "");
     if (!ownId) redirect("/login");
     if (studentId !== ownId) redirect(`/student-progress/${encodeURIComponent(ownId)}`);

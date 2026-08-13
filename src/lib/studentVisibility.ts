@@ -134,6 +134,18 @@ export function isStudentInactiveOnDateFromPeriods(input: {
   return false;
 }
 
+/** First inactive period covering `dateIso`, if any. */
+export function getStudentInactivePeriodOnDate(
+  periods: readonly StudentInactivePeriod[],
+  dateIso: string,
+): StudentInactivePeriod | null {
+  const iso = String(dateIso ?? "").trim();
+  for (const p of periods) {
+    if (isStudentInactiveOnDateFromPeriods({ periods: [p], dateIso: iso })) return p;
+  }
+  return null;
+}
+
 /**
  * Temporary pause only: covering period today must have an Expected return (`endDate`).
  * Open-ended / graduated / F.6 auto-inactive (null end) are excluded.

@@ -24,17 +24,30 @@ function LoginFormFieldsFallback() {
   );
 }
 
+function inactiveStudentLoginMessage(reactivateDate: string | null): string {
+  if (reactivateDate) {
+    return `此學生目前為 Inactive，預計 ${reactivateDate} 復課後方可登入。如有疑問請聯絡 Beyond Math。`;
+  }
+  return "此學生目前為 Inactive，暫不可登入系統。如有疑問請聯絡 Beyond Math。";
+}
+
 function LoginForm() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next");
   const linkError = searchParams.get("error");
+  const reactivateDate = searchParams.get("reactivate");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const linkErrorMessage = linkError ? "登入連結無效，請再試一次。" : "";
+  const linkErrorMessage =
+    linkError === "student_inactive"
+      ? inactiveStudentLoginMessage(reactivateDate)
+      : linkError
+        ? "登入連結無效，請再試一次。"
+        : "";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -75,7 +88,22 @@ function LoginForm() {
         const role = String(me.role ?? "").toLowerCase();
         if (role === "student") {
           const sid = normalizeStudentId(String(me.studentId ?? ""));
-          if (sid) target = studentPostLoginPath(sid);
+          if (sid) {
+            const accessRes = await fetch("/api/student-portal/access", { credentials: "same-origin" });
+            if (accessRes.ok) {
+              const access = (await accessRes.json()) as {
+                allowed?: boolean;
+                reactivateDate?: string | null;
+              };
+              if (access.allowed === false) {
+                await supabaseBrowser.auth.signOut();
+                setLoading(false);
+                setError(inactiveStudentLoginMessage(access.reactivateDate ?? null));
+                return;
+              }
+            }
+            target = studentPostLoginPath(sid);
+          }
         } else if (role === "tutor") {
           target = defaultDailyTimetablePath();
         }

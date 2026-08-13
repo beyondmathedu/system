@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getViewerContext } from "@/lib/authz";
 import { defaultDailyTimetablePath, getTutorLandingPath, isTutorViewer } from "@/lib/tutorRoomAccess";
 import { studentPortalHomePath } from "@/lib/studentPortalAccess";
+import { redirectIfInactiveStudentPortalBlocked } from "@/lib/studentPortalAccess.server";
 import { normalizeStudentId } from "@/lib/studentId";
 
 export default async function HomePage() {
@@ -9,7 +10,10 @@ export default async function HomePage() {
   if (!viewer.userId) redirect("/login");
   if (viewer.role === "student") {
     const sid = normalizeStudentId(viewer.studentId ?? "");
-    if (sid) redirect(studentPortalHomePath(sid));
+    if (sid) {
+      await redirectIfInactiveStudentPortalBlocked(viewer);
+      redirect(studentPortalHomePath(sid));
+    }
     redirect("/login");
   }
   if (isTutorViewer(viewer)) {
