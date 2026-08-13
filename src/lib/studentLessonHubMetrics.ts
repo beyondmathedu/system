@@ -1,4 +1,6 @@
-import { getLessonUntickedMetrics, type Lesson2026Record, type Lesson2026State } from "@/lib/lesson2026Summary";
+import { getLessonUntickedMetrics, type Lesson2026Record } from "@/lib/lesson2026Summary";
+import { toYearLessonStateFromClient } from "@/lib/feeRecordLessonDates";
+import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
 import { makeStudentInactiveDateCheckerFromPeriods } from "@/lib/studentVisibility";
 
 export type StudentLessonHubMetrics = {
@@ -19,13 +21,7 @@ export function computeStudentLessonHubMetrics(input: {
   hubYear: number;
   grade?: string | null;
   scheduleRecords: unknown[];
-  yearState: {
-    attendance: Record<string, boolean>;
-    hiddenDates: Record<string, boolean>;
-    overrides: Lesson2026State["overrides"];
-    rescheduleEntries: Lesson2026State["rescheduleEntries"];
-    extraEntries: Lesson2026State["extraEntries"];
-  };
+  yearState: StudentLesson2026State;
   inactivePeriods: InactivePeriodRow[];
   nowMs: number;
 }): StudentLessonHubMetrics {
@@ -45,13 +41,7 @@ export function computeStudentLessonHubMetrics(input: {
     periods,
   });
 
-  const state: Lesson2026State = {
-    attendance: input.yearState.attendance ?? {},
-    hiddenDates: input.yearState.hiddenDates ?? {},
-    overrides: input.yearState.overrides ?? {},
-    rescheduleEntries: input.yearState.rescheduleEntries ?? [],
-    extraEntries: input.yearState.extraEntries ?? [],
-  };
+  const state = toYearLessonStateFromClient(input.yearState);
 
   const metrics = getLessonUntickedMetrics(
     input.scheduleRecords as Lesson2026Record[],
