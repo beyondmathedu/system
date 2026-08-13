@@ -95,7 +95,7 @@ describe("studentScheduleRowMapper", () => {
     expect(rows.some((r) => r.lessonType === "Reschedule")).toBe(false);
   });
 
-  it("hides pending makeup from admin UI after M+3", () => {
+  it("keeps overdue pending makeup visible after M+3 with deadline reminder", () => {
     const records = [mondayRule()];
     const state = emptyState();
     state.rescheduleEntries.push({
@@ -113,7 +113,9 @@ describe("studentScheduleRowMapper", () => {
     );
 
     const august = buildStudentScheduleRows(records, state, YEAR, "2026-08-01");
-    expect(august.some((r) => r.date === "2026-05-25")).toBe(false);
+    expect(august.find((r) => r.date === "2026-05-25")?.pendingMakeupLabel).toBe(
+      "Reschedule deadline passed",
+    );
   });
 
   it("expands only the requested month for base rows (regular lessons for bulk edit)", () => {

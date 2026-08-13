@@ -24,11 +24,12 @@ describe("pendingMakeup month window", () => {
     expect(getPendingMakeupPhase("2026-05-25", "2026-08-01")).toBe("hidden");
   });
 
-  it("editable / visible helpers", () => {
+  it("editable / visible helpers stay open after advisory deadline", () => {
     expect(isPendingMakeupEditable("2026-05-25", "2026-06-15")).toBe(true);
-    expect(isPendingMakeupEditable("2026-05-25", "2026-07-15")).toBe(false);
+    expect(isPendingMakeupEditable("2026-05-25", "2026-07-15")).toBe(true);
+    expect(isPendingMakeupEditable("2026-05-25", "2026-08-01")).toBe(true);
     expect(isPendingMakeupVisible("2026-05-25", "2026-07-15")).toBe(true);
-    expect(isPendingMakeupVisible("2026-05-25", "2026-08-01")).toBe(false);
+    expect(isPendingMakeupVisible("2026-05-25", "2026-08-01")).toBe(true);
   });
 
   it("labels: open vs locked", () => {

@@ -2,9 +2,11 @@
  * Pending makeup (leave / 補堂待定) policy — keyed by **original lesson month** (fromDate).
  *
  * Example: leave on any May lesson (fromDate in May)
- * - Through end of June (M+1): open — can arrange reschedule
- * - From 1 July (M+2): locked — no edits; still visible as overdue
- * - From 1 August (M+3): hidden from UI (DB entry kept)
+ * - Through end of June (M+1): open window (reminder: “Makeup until end of June”)
+ * - From 1 July (M+2): overdue reminder (“Reschedule deadline passed”) — **edits still allowed**
+ * - From 1 August (M+3): same overdue reminder; still visible & editable (flexibility for students)
+ *
+ * The 2‑month window is **advisory UI only**; admin can always reschedule / edit pending makeup.
  */
 
 export const PENDING_MAKEUP_BUTTON_LABEL = "Leave / pending makeup";
@@ -13,9 +15,9 @@ export const PENDING_MAKEUP_BUTTON_LABEL_ZH = "請假／補堂待定";
 /** Badge in lesson-type column */
 export const PENDING_MAKEUP_TYPE_LABEL = "Pending makeup";
 
-/** Months after original-lesson month when reschedule/edits stop (M+2 → July for May). */
+/** Months after original-lesson month when reminder switches to overdue (M+2 → July for May). */
 export const PENDING_MAKEUP_LOCK_AFTER_MONTHS = 2;
-/** Months after original-lesson month when admin/UI hide the row (M+3 → August for May). */
+/** Months after original-lesson month used for overdue phase label (M+3 → August for May). Kept for messaging; rows stay visible. */
 export const PENDING_MAKEUP_HIDE_AFTER_MONTHS = 3;
 
 export type RescheduleEntryLike = {
@@ -96,7 +98,7 @@ export function pendingMakeupOpenUntilEndIso(fromDate: string): string | null {
   return toIsoYmd(end.year, end.month, lastDayOfMonth(end.year, end.month));
 }
 
-/** First day of M+2 — edits locked. */
+/** First day of M+2 — overdue reminder starts (edits still allowed). */
 export function pendingMakeupLockStartIso(fromDate: string): string | null {
   const ym = parseIsoYearMonth(fromDate);
   if (!ym) return null;
@@ -104,7 +106,7 @@ export function pendingMakeupLockStartIso(fromDate: string): string | null {
   return toIsoYmd(lock.year, lock.month, 1);
 }
 
-/** First day of M+3 — hidden from UI. */
+/** First day of M+3 — historical “hide” boundary (kept for phase labels; UI no longer hides). */
 export function pendingMakeupHideStartIso(fromDate: string): string | null {
   const ym = parseIsoYearMonth(fromDate);
   if (!ym) return null;
@@ -124,12 +126,14 @@ export function getPendingMakeupPhase(
   return "open";
 }
 
-export function isPendingMakeupEditable(fromDate: string, todayYmd: string): boolean {
-  return getPendingMakeupPhase(fromDate, todayYmd) === "open";
+/** Always editable — 2‑month window is advisory only. */
+export function isPendingMakeupEditable(_fromDate: string, _todayYmd: string): boolean {
+  return true;
 }
 
-export function isPendingMakeupVisible(fromDate: string, todayYmd: string): boolean {
-  return getPendingMakeupPhase(fromDate, todayYmd) !== "hidden";
+/** Always visible so overdue pending makeup can still be rescheduled. */
+export function isPendingMakeupVisible(_fromDate: string, _todayYmd: string): boolean {
+  return true;
 }
 
 /** e.g. "Makeup until end of June", "Reschedule deadline passed" */
@@ -162,5 +166,5 @@ export function pendingMakeupLockedMessage(fromDate: string): string {
   const until = pendingMakeupOpenUntilEndIso(fromDate);
   const ym = until ? parseIsoYearMonth(until) : null;
   const untilLabel = ym ? `end of ${EN_MONTH[ym.month]}` : "the makeup deadline";
-  return `Reschedule deadline passed (makeup was allowed until ${untilLabel}). Record kept; no further changes.`;
+  return `Reschedule deadline passed (makeup window was until ${untilLabel}). You can still arrange a makeup for flexibility.`;
 }
