@@ -23,6 +23,7 @@ import ExamDateField from "./ExamDateField";
 import type { LessonScheduleRecord } from "./LessonScheduleGrid";
 import { formatGradeDisplay } from "@/lib/grade";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { makeStudentInactiveDateCheckerFromPeriods } from "@/lib/studentVisibility";
 
 const LessonScheduleGrid = dynamic(() => import("./LessonScheduleGrid"), {
   ssr: false,
@@ -128,13 +129,27 @@ export default function StudentLessonsHubClient({
   navViewer?: AppTopNavViewer | null;
 }) {
   const initialMetrics = useMemo(
-    () =>
-      getLessonUntickedMetrics(
+    () => {
+      const periods = mapBootstrapPeriods(initialBootstrap.inactivePeriods, studentId);
+      const isDateInactive = makeStudentInactiveDateCheckerFromPeriods({
+        studentId,
+        grade: initialBootstrap.student?.grade ?? "",
+        year: hubYear,
+        periods: periods.map((p) => ({
+          studentId,
+          startDate: p.start_date,
+          endDate: p.end_date,
+          note: p.note,
+        })),
+      });
+      return getLessonUntickedMetrics(
         initialBootstrap.scheduleRecords as Parameters<typeof getLessonUntickedMetrics>[0],
         toLesson2026State(initialBootstrap.yearState),
         Date.now(),
         hubYear,
-      ),
+        { isDateInactive },
+      );
+    },
     // Seed once from server props.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],

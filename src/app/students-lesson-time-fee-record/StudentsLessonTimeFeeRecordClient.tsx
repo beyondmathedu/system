@@ -1181,7 +1181,9 @@ export default function StudentsLessonTimeFeeRecordPage({
         rescheduleEntries: (ys?.rescheduleEntries as Lesson2026State["rescheduleEntries"]) ?? [],
         extraEntries: (ys?.extraEntries as Lesson2026State["extraEntries"]) ?? [],
       };
-      counts[sid] = getUpcomingUntickedDates(recs, state, Date.now(), sheetYear).length;
+      counts[sid] = getUpcomingUntickedDates(recs, state, Date.now(), sheetYear, {
+        isDateInactive: inactiveDateCheckerByStudentId[sid],
+      }).length;
     }
     return {
       makeupLiveCountByStudentId: counts,
@@ -1193,6 +1195,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     lessonYearStateByStudentId,
     sheetYear,
     remedialCountByStudentId,
+    inactiveDateCheckerByStudentId,
   ]);
 
   const feeDialogMakeupDetail = useMemo(() => {
@@ -1215,7 +1218,9 @@ export default function StudentsLessonTimeFeeRecordPage({
       extraEntries: (ys.extraEntries as Lesson2026State["extraEntries"]) ?? [],
     };
     const dates = hasLessonPayload
-      ? getUpcomingUntickedDates(recs, state, Date.now(), sheetYear)
+      ? getUpcomingUntickedDates(recs, state, Date.now(), sheetYear, {
+          isDateInactive: inactiveDateCheckerByStudentId[sid],
+        })
       : [];
     const dbN = remedialCountByStudentId[sid] ?? 0;
     return {
@@ -1230,6 +1235,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     lessonYearStateByStudentId,
     sheetYear,
     remedialCountByStudentId,
+    inactiveDateCheckerByStudentId,
   ]);
 
   const currentMonthExpectedTuitionByStudentId = useMemo(() => {
@@ -1916,7 +1922,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                           <th
                             className="sticky top-0 z-30 bg-slate-50 px-2 py-3 text-left"
                             style={{ minWidth: MAKEUP_COL_WIDTH }}
-                            title="與課表 Makeup Count 相同；只計上一個曆月未打勾補堂（例：5 月只計 4 月）"
+                            title="與課表 Makeup Count 相同；只計上一個曆月未打勾補堂（例：5 月只計 4 月）。Inactive／放假期間唔計。"
                           >
                             <span className="block text-xs font-bold tracking-wider text-slate-700">Makeup</span>
                             <span className="block text-[10px] font-semibold leading-tight text-slate-500">

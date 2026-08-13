@@ -160,4 +160,21 @@ describe("lesson2026Summary", () => {
       getUpcomingUntickedDates(records, state, hkMs("2026-06-10"), YEAR).includes("2026-06-03"),
     ).toBe(false);
   });
+
+  it("excludes inactive holiday dates from prior-month makeup count", () => {
+    const records = [mondayRule()];
+    const state = emptyState();
+    const isDateInactive = (iso: string) => iso >= "2026-07-01" && iso < "2026-09-01";
+
+    const withoutInactive = getLessonUntickedMetrics(records, state, hkMs("2026-08-10"), YEAR);
+    const withInactive = getLessonUntickedMetrics(records, state, hkMs("2026-08-10"), YEAR, {
+      isDateInactive,
+    });
+
+    expect(withoutInactive.makeupCount).toBeGreaterThan(0);
+    expect(withInactive.makeupCount).toBe(0);
+    expect(
+      getUpcomingUntickedDates(records, state, hkMs("2026-08-10"), YEAR, { isDateInactive }),
+    ).toEqual([]);
+  });
 });

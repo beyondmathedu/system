@@ -28,14 +28,21 @@ function isRowMarkedAttended(r: BuiltScheduleRow, state: Lesson2026State): boole
   });
 }
 
+export type LessonUntickedOptions = {
+  /** Inactive / holiday pause days are not owed makeup (same as fee-record billable exclusion). */
+  isDateInactive?: (dateIso: string) => boolean;
+};
+
 function filterUntickedRowsInMakeupWindow(
   rows: BuiltScheduleRow[],
   state: Lesson2026State,
   startIso: string,
   endIso: string,
+  isDateInactive?: (dateIso: string) => boolean,
 ) {
   return rows.filter((r) => {
     if (r.date < startIso || r.date > endIso) return false;
+    if (isDateInactive?.(r.date)) return false;
     if (r.rowKind === "cancelled_original") {
       // Pending makeup = missed lesson not yet rescheduled; still counts as makeup owed.
       return r.lessonType === PENDING_MAKEUP_TYPE_LABEL;
@@ -56,15 +63,23 @@ export function getLessonUntickedMetrics(
   state: Lesson2026State,
   nowMs = Date.now(),
   calendarYear = 2026,
+  options?: LessonUntickedOptions,
 ): LessonUntickedMetrics {
   const rows = buildYearScheduleRows(records, state, calendarYear);
   const { startIso, endIso } = getPriorMonthMakeupWindow(nowMs, calendarYear);
-  const makeupRows = filterUntickedRowsInMakeupWindow(rows, state, startIso, endIso);
+  const makeupRows = filterUntickedRowsInMakeupWindow(
+    rows,
+    state,
+    startIso,
+    endIso,
+    options?.isDateInactive,
+  );
   const now = new Date(nowMs);
   const month = now.getMonth() + 1;
   const currentMonthUntickedCount = rows.filter((r) => {
     if (r.rowKind === "cancelled_original") return false;
     if (!isOnOrAfterLessonSystemStart(r.date, calendarYear)) return false;
+    if (options?.isDateInactive?.(r.date)) return false;
     const rowMonth = Number(r.date.slice(5, 7));
     if (rowMonth !== month) return false;
     return !isRowMarkedAttended(r, state);
@@ -81,8 +96,9 @@ export function getUpcomingUntickedCount(
   state: Lesson2026State,
   nowMs = Date.now(),
   calendarYear = 2026,
+  options?: LessonUntickedOptions,
 ) {
-  return getLessonUntickedMetrics(records, state, nowMs, calendarYear).makeupCount;
+  return getLessonUntickedMetrics(records, state, nowMs, calendarYear, options).makeupCount;
 }
 
 export function getCurrentMonthUntickedCount(
@@ -90,8 +106,10 @@ export function getCurrentMonthUntickedCount(
   state: Lesson2026State,
   nowMs = Date.now(),
   calendarYear = 2026,
+  options?: LessonUntickedOptions,
 ) {
-  return getLessonUntickedMetrics(records, state, nowMs, calendarYear).currentMonthUntickedCount;
+  return getLessonUntickedMetrics(records, state, nowMs, calendarYear, options)
+    .currentMonthUntickedCount;
 }
 
 /** ISO dates (YYYY-MM-DD) of unticked lessons in the prior calendar month (same window as Makeup Count). */
@@ -100,10 +118,11 @@ export function getUpcomingUntickedDates(
   state: Lesson2026State,
   nowMs = Date.now(),
   calendarYear = 2026,
+  options?: LessonUntickedOptions,
 ): string[] {
   const { startIso, endIso } = getPriorMonthMakeupWindow(nowMs, calendarYear);
   const rows = buildYearScheduleRowsForDateRange(records, state, calendarYear, startIso, endIso);
-  return filterUntickedRowsInMakeupWindow(rows, state, startIso, endIso)
+  return filterUntickedRowsInMakeupWindow(rows, state, startIso, endIso, options?.isDateInactive)
     .map((r) => r.date)
     .sort();
 }
