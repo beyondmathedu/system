@@ -8,6 +8,11 @@ export function studentPortalHomePath(studentId: string): string {
   return `/students/${encodeURIComponent(sid)}/lessons`;
 }
 
+/** After login, students always land on the lessons hub (not a year deep link). */
+export function studentPostLoginPath(studentId: string): string {
+  return studentPortalHomePath(studentId);
+}
+
 /** Students only see their own lesson pages — not admin home / fee record. */
 export function redirectStudentAwayFromAdminPages(viewer: ViewerContext): void {
   if (viewer.role !== "student") return;

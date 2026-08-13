@@ -60,6 +60,7 @@ import {
   hkYmdNow,
   studentLessonsYearPath,
 } from "@/lib/lessonCalendar";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { lessonYearStateFieldsFromPatch } from "@/lib/lessonYearStateShared";
 import {
   getLessonSystemStartIso,
@@ -705,7 +706,7 @@ export function StudentLessonsYearPage({
       const role = String(profileRow?.role ?? "").toLowerCase();
       const ownStudentId = normalizeStudentId(String(profileRow?.student_id ?? ""));
       if (role === "student" && ownStudentId && ownStudentId !== studentId) {
-        router.replace(studentLessonsYearPath(ownStudentId));
+        router.replace(studentPortalHomePath(ownStudentId));
         return;
       }
       if (isSharedByEmail || forceReadOnlyFromNext) {

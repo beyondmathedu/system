@@ -4,7 +4,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
-import { studentPortalHomePath } from "@/lib/studentPortalAccess";
+import { studentPostLoginPath } from "@/lib/studentPortalAccess";
 import { normalizeStudentId } from "@/lib/studentId";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
@@ -62,29 +62,31 @@ function LoginForm() {
       setError(sessionError?.message || "登入成功但未能建立工作階段，請再試一次");
       return;
     }
-    let target = next && next.startsWith("/") ? next : "";
-    if (target === "/") target = "";
-    if (!target) {
-      try {
-        const meRes = await fetch("/api/me", { credentials: "same-origin" });
-        if (meRes.ok) {
-          const me = (await meRes.json()) as {
-            role?: string;
-            studentId?: string | null;
-            allowedRoomSlugs?: string[];
-            isSharedIpadTutor?: boolean;
-          };
-          const role = String(me.role ?? "").toLowerCase();
-          if (role === "tutor") {
-            target = defaultDailyTimetablePath();
-          } else if (role === "student") {
-            const sid = normalizeStudentId(String(me.studentId ?? ""));
-            if (sid) target = studentPortalHomePath(sid);
-          }
+    let target = "";
+    try {
+      const meRes = await fetch("/api/me", { credentials: "same-origin" });
+      if (meRes.ok) {
+        const me = (await meRes.json()) as {
+          role?: string;
+          studentId?: string | null;
+          allowedRoomSlugs?: string[];
+          isSharedIpadTutor?: boolean;
+        };
+        const role = String(me.role ?? "").toLowerCase();
+        if (role === "student") {
+          const sid = normalizeStudentId(String(me.studentId ?? ""));
+          if (sid) target = studentPostLoginPath(sid);
+        } else if (role === "tutor") {
+          target = defaultDailyTimetablePath();
         }
-      } catch {
-        /* use default */
       }
+    } catch {
+      /* use next / default below */
+    }
+    if (!target) {
+      const next = searchParams.get("next");
+      target = next && next.startsWith("/") ? next : "";
+      if (target === "/") target = "";
     }
     if (!target) target = "/home";
     window.location.assign(target);

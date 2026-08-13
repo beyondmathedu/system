@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
-import { studentLessonsYearPath } from "@/lib/lessonCalendar";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { loadStudentLessonsBootstrap } from "@/lib/lessonDataServer";
 import { normalizeStudentId } from "@/lib/studentId";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
@@ -25,7 +25,7 @@ export default async function StudentLessons2026Page({ params }: PageProps) {
   if (viewer.role === "student") {
     const ownId = normalizeStudentId(String(viewer.studentId ?? ""));
     if (ownId && ownId !== studentId) {
-      redirect(studentLessonsYearPath(ownId));
+      redirect(studentPortalHomePath(ownId));
     }
   }
 
