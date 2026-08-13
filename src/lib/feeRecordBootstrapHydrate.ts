@@ -202,7 +202,8 @@ export function hydrateFeeRecordBootstrap(
   if (sheetYear === FEE_OPENING_BALANCE_AS_OF_YEAR) {
     const openingResult = body.openingResult ?? { balances: {} };
     const local = mergeLocal && typeof window !== "undefined" ? readFeeOpeningBalancesFromLocal() : {};
-    openingBalanceByStudentId = { ...local, ...openingResult.balances };
+    // DB first, then local backup when cloud write failed or page reloaded before save finished.
+    openingBalanceByStudentId = { ...openingResult.balances, ...local };
     openingBalanceTableMissing = Boolean(openingResult.tableMissing);
     if (openingResult.error) {
       openingBalanceSaveMsg = openingResult.tableMissing

@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
 import {
+  deleteStudentInactivePeriod,
   loadStudentInactivePeriods,
   loadStudentVisibilityMode,
   saveStudentVisibilityMode,
@@ -171,6 +172,7 @@ export default function StudentLessonsHubClient({
     ),
   );
   const [returnSavingPeriodId, setReturnSavingPeriodId] = useState<number | null>(null);
+  const [deletingPeriodId, setDeletingPeriodId] = useState<number | null>(null);
   const [returnEditError, setReturnEditError] = useState("");
   const [scheduleRecords, setScheduleRecords] = useState<LessonScheduleRecord[] | null>(
     () => (initialBootstrap.scheduleRecords as LessonScheduleRecord[]) ?? [],
@@ -245,6 +247,32 @@ export default function StudentLessonsHubClient({
       setReturnEditError(err instanceof Error ? err.message : "Failed to save return date.");
     } finally {
       setReturnSavingPeriodId(null);
+    }
+  }
+
+  async function deleteHistoryPeriod(period: {
+    id?: number;
+    start_date: string;
+    end_date: string | null;
+  }) {
+    const id = Number(period.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      setReturnEditError("This history row has no id and cannot be deleted.");
+      return;
+    }
+    const label = period.end_date
+      ? `${period.start_date} → ${period.end_date}`
+      : `${period.start_date} → open`;
+    if (!window.confirm(`Delete this inactive history?\n${label}`)) return;
+    setDeletingPeriodId(id);
+    setReturnEditError("");
+    try {
+      await deleteStudentInactivePeriod({ id });
+      await refreshInactivePeriodsAndMode();
+    } catch (err) {
+      setReturnEditError(err instanceof Error ? err.message : "Failed to delete inactive history.");
+    } finally {
+      setDeletingPeriodId(null);
     }
   }
 
@@ -443,6 +471,7 @@ export default function StudentLessonsHubClient({
                                 <th className="px-3 py-2 text-left">From</th>
                                 <th className="px-3 py-2 text-left">Return</th>
                                 <th className="px-3 py-2 text-left">Note</th>
+                                <th className="px-3 py-2 text-left"> </th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -458,6 +487,7 @@ export default function StudentLessonsHubClient({
                                   const hasReturn = Boolean(p.end_date);
                                   const dirty = canEdit && draft !== (p.end_date ?? "");
                                   const saving = returnSavingPeriodId === periodId;
+                                  const deleting = deletingPeriodId === periodId;
                                   return (
                                     <tr
                                       key={p.id ?? `${p.start_date}-${p.end_date ?? "open"}-${p.note}`}
@@ -490,7 +520,7 @@ export default function StudentLessonsHubClient({
                                             />
                                             <button
                                               type="button"
-                                              disabled={saving || !dirty}
+                                              disabled={saving || deleting || !dirty}
                                               onClick={() => void saveHistoryReturnDate(p)}
                                               className="rounded-md bg-[#1d76c2] px-2.5 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                                             >
@@ -502,6 +532,20 @@ export default function StudentLessonsHubClient({
                                         )}
                                       </td>
                                       <td className="px-3 py-2 text-slate-600">{p.note || ""}</td>
+                                      <td className="px-3 py-2">
+                                        {canEdit ? (
+                                          <button
+                                            type="button"
+                                            disabled={saving || deleting}
+                                            onClick={() => void deleteHistoryPeriod(p)}
+                                            className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                          >
+                                            {deleting ? "Deleting…" : "Delete"}
+                                          </button>
+                                        ) : (
+                                          <span className="text-xs text-slate-400">—</span>
+                                        )}
+                                      </td>
                                     </tr>
                                   );
                                 })}
@@ -514,7 +558,7 @@ export default function StudentLessonsHubClient({
                           ) : null}
                           <p className="border-t border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
                             Return = first day back at lessons. Clear the date and Save to mark as open-ended
-                            (graduated).
+                            (graduated). Delete removes the whole inactive period.
                           </p>
                         </div>
                       ) : null}

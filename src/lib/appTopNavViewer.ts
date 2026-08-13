@@ -11,6 +11,7 @@ import { unstable_cache } from "next/cache";
 /** Serializable nav seed — skip client `/api/me` when provided by RSC. */
 export type AppTopNavViewer = {
   role: string | null;
+  studentId?: string | null;
   roomNavLinks: RoomNavItem[];
   roomScheduleQuery: string | null;
 };
@@ -44,6 +45,14 @@ export async function buildAppTopNavViewer(viewer: ViewerContext): Promise<AppTo
       role: "tutor",
       roomNavLinks: buildTutorRoomNavLinks(viewer.allowedRoomSlugs),
       roomScheduleQuery: defaultRoomScheduleSearch(viewer),
+    };
+  }
+  if (viewer.role === "student") {
+    return {
+      role: "student",
+      studentId: viewer.studentId,
+      roomNavLinks: FALLBACK_ROOM_NAV_LINKS,
+      roomScheduleQuery: null,
     };
   }
   if (viewer.role === "admin") {

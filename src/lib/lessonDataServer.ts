@@ -612,6 +612,8 @@ async function loadFeeRecordBootstrapUncached(sheetYear: number, sheetMonth: num
   return loadFeeRecordBootstrap(getSupabaseAdmin(), { sheetYear, sheetMonth });
 }
 
+type FeeRecordBootstrapCachedCore = Omit<FeeRecordBootstrapPayload, "openingResult">;
+
 /** Cached fee-sheet bootstrap (students + schedules + fee rows + tiers). */
 export async function loadFeeRecordBootstrapCached(
   sheetYear: number,
@@ -619,11 +621,44 @@ export async function loadFeeRecordBootstrapCached(
 ): Promise<FeeRecordBootstrapPayload> {
   const y = Math.floor(sheetYear);
   const m = Math.floor(sheetMonth);
-  return unstable_cache(
-    () => loadFeeRecordBootstrapUncached(y, m),
-    ["fee-record-bootstrap-v1", String(y), String(m)],
+  const cached = await unstable_cache(
+    async (): Promise<FeeRecordBootstrapCachedCore> => {
+      const payload = await loadFeeRecordBootstrapUncached(y, m);
+      const { openingResult: _omit, ...rest } = payload;
+      return rest;
+    },
+    ["fee-record-bootstrap-v2", String(y), String(m)],
     { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
   )();
+
+  const ids = cached.students.map((s) => s.id);
+  const openingResult =
+    y === FEE_OPENING_BALANCE_AS_OF_YEAR
+      ? await loadStudentFeeOpeningBalancesServer(getSupabaseAdmin(), ids)
+      : { balances: {} as Record<string, number> };
+
+  return { ...cached, openingResult };
+}
+
+export async function upsertStudentFeeOpeningBalanceAdmin(
+  studentId: string,
+  openingBalance: number,
+): Promise<{ ok: boolean; error?: string; tableMissing?: boolean }> {
+  const value = Number(openingBalance) || 0;
+  const { error } = await getSupabaseAdmin().from("student_fee_opening_balances").upsert(
+    {
+      student_id: studentId,
+      as_of_year: FEE_OPENING_BALANCE_AS_OF_YEAR,
+      as_of_month: FEE_OPENING_BALANCE_AS_OF_MONTH,
+      opening_balance: value,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "student_id,as_of_year,as_of_month" },
+  );
+  if (error) {
+    return { ok: false, error: error.message, tableMissing: isMissingOpeningBalanceTableError(error.message) };
+  }
+  return { ok: true };
 }
 
 export type StudentLessonsBootstrapStudent = {

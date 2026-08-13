@@ -39,6 +39,7 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
   const initialBootstrap = await loadStudentLessonsBootstrap(supabase, studentId, hubYear);
   const initialReadOnly =
     viewer.role === "tutor" ||
+    viewer.role === "student" ||
     String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
   const navViewer = await buildAppTopNavViewer(viewer);
 

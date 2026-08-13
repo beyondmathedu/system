@@ -47,6 +47,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const readOnly =
       isSharedIpad ||
       role === "tutor" ||
+      role === "student" ||
       String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
 
     return NextResponse.json({

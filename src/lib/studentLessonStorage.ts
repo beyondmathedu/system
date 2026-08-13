@@ -855,6 +855,17 @@ export async function updateStudentInactivePeriodEndDate(input: {
   notifyScheduleCachesStale();
 }
 
+/** Delete one inactive-history row (student_visibility_periods). */
+export async function deleteStudentInactivePeriod(input: { id: number }) {
+  const id = Number(input.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error("Missing inactive period id");
+  }
+  const { error } = await supabase.from("student_visibility_periods").delete().eq("id", id);
+  if (error) throw error;
+  notifyScheduleCachesStale();
+}
+
 export async function loadStudentVisibilityMode(studentId: string): Promise<StudentVisibilityMode> {
   // Prefer new periods model; fall back to legacy single-row mode.
   try {

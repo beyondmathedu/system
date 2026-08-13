@@ -63,7 +63,7 @@ const loadParsedSheetsCached = unstable_cache(
     }
     return out;
   },
-  ["student-progress-workbook-parsed-v1"],
+  ["student-progress-workbook-parsed-v3"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 

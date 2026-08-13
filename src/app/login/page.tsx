@@ -4,6 +4,8 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
+import { normalizeStudentId } from "@/lib/studentId";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
 function LoginFormFieldsFallback() {
@@ -68,11 +70,16 @@ function LoginForm() {
         if (meRes.ok) {
           const me = (await meRes.json()) as {
             role?: string;
+            studentId?: string | null;
             allowedRoomSlugs?: string[];
             isSharedIpadTutor?: boolean;
           };
-          if (String(me.role ?? "").toLowerCase() === "tutor") {
+          const role = String(me.role ?? "").toLowerCase();
+          if (role === "tutor") {
             target = defaultDailyTimetablePath();
+          } else if (role === "student") {
+            const sid = normalizeStudentId(String(me.studentId ?? ""));
+            if (sid) target = studentPortalHomePath(sid);
           }
         }
       } catch {

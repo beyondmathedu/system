@@ -8,6 +8,7 @@ import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import { supabase } from "@/lib/supabase";
 import { loadExamInfo } from "@/lib/studentLessonStorage";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
 import {
@@ -16,6 +17,10 @@ import {
   visibleExamDateIso,
 } from "@/lib/examDateVisibility";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import {
+  buildProgressSheetColumns,
+  type ProgressSheetColumn,
+} from "@/lib/studentProgressTextbookColumns";
 import {
   CUT_OFF_SHEET,
   DEFAULT_YEAR_GRADE_THRESHOLDS,
@@ -57,9 +62,7 @@ const SELECTABLE_HEADERS = new Set([
   "paper 2",
 ]);
 
-type SheetColumn =
-  | { kind: "normal"; header: string; colIndex: number }
-  | { kind: "textbookCombined"; headerEn: string; headerZh: string; colIndexEn: number; colIndexZh: number };
+type SheetColumn = ProgressSheetColumn;
 
 function normalizeHeaderName(input: string): string {
   return input
@@ -68,29 +71,6 @@ function normalizeHeaderName(input: string): string {
     .replace(/\s*\(\s*/g, "(")
     .replace(/\s*\)\s*/g, ")")
     .trim();
-}
-
-function buildSheetColumns(headers: string[]): SheetColumn[] {
-  const cols: SheetColumn[] = [];
-  for (let i = 0; i < headers.length; i += 1) {
-    const cur = headers[i] ?? "";
-    const next = headers[i + 1] ?? "";
-    const curNorm = normalizeHeaderName(cur);
-    const nextNorm = normalizeHeaderName(next);
-    if (curNorm === "textbook:" && nextNorm === "textbook:") {
-      cols.push({
-        kind: "textbookCombined",
-        headerEn: cur || "Textbook:",
-        headerZh: next || "課本：",
-        colIndexEn: i,
-        colIndexZh: i + 1,
-      });
-      i += 1;
-      continue;
-    }
-    cols.push({ kind: "normal", header: cur, colIndex: i });
-  }
-  return cols;
 }
 
 function getSelectionStorageKey(studentId: string): string {
@@ -477,7 +457,13 @@ function isF6ByYearsFrozenDse(sheetName: string, headerName: string): boolean {
   return isF6ByYearsSheet(sheetName) && headerName === "dse";
 }
 
-export default function StudentProgressByIdClient({ navViewer = null }: { navViewer?: AppTopNavViewer | null }) {
+export default function StudentProgressByIdClient({
+  navViewer = null,
+  readOnly = false,
+}: {
+  navViewer?: AppTopNavViewer | null;
+  readOnly?: boolean;
+}) {
   const params = useParams<{ id: string }>();
   const studentId = normalizeStudentId(String(params?.id || ""));
   const [studentSummary, setStudentSummary] = useState<StudentSummary>({
@@ -520,6 +506,7 @@ export default function StudentProgressByIdClient({ navViewer = null }: { navVie
   const activeLegendEntries = activeDisplaySheet ? extractLegendEntries(activeDisplaySheet.rows) : [];
 
   const commitCutOffSheet = (next: ProgressSheet) => {
+    if (readOnly) return;
     const trimmed = trimCutOffSheet(next);
     setCutOffSheet(trimmed);
     setProgressSheets((prev) =>
@@ -624,6 +611,10 @@ export default function StudentProgressByIdClient({ navViewer = null }: { navVie
       setProgressSelections({});
       return;
     }
+    if (readOnly) {
+      setProgressSelections({});
+      return;
+    }
     try {
       const raw = window.localStorage.getItem(getSelectionStorageKey(studentId));
       if (!raw) {
@@ -639,12 +630,12 @@ export default function StudentProgressByIdClient({ navViewer = null }: { navVie
     } catch {
       setProgressSelections({});
     }
-  }, [studentId]);
+  }, [studentId, readOnly]);
 
   useEffect(() => {
-    if (!studentId) return;
+    if (!studentId || readOnly) return;
     window.localStorage.setItem(getSelectionStorageKey(studentId), JSON.stringify(progressSelections));
-  }, [studentId, progressSelections]);
+  }, [studentId, progressSelections, readOnly]);
 
   useEffect(() => {
     const level = gradeLevel;
@@ -727,14 +718,21 @@ export default function StudentProgressByIdClient({ navViewer = null }: { navVie
           >
             <div className="flex items-center gap-3">
               <Link
-                href={`/students/${encodeURIComponent(studentId)}/lessons`}
+                href={
+                  readOnly
+                    ? studentPortalHomePath(studentId)
+                    : `/students/${encodeURIComponent(studentId)}/lessons`
+                }
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
-                aria-label="Back to student lesson record"
+                aria-label={readOnly ? "Back to my lessons" : "Back to student lesson record"}
               >
                 ←
               </Link>
               <h1 className="text-2xl font-bold tracking-tight">Student Lesson Record</h1>
             </div>
+            {readOnly ? (
+              <p className="mt-2 text-xs font-medium text-blue-100/95">檢視模式（學生帳號不可修改進度表）</p>
+            ) : null}
             <p className="mt-1 text-sm text-blue-100">
               Student ID: {studentId || "—"} | Student:{" "}
               {formatStudentDisplayNameOrEmpty(
@@ -835,6 +833,10 @@ export default function StudentProgressByIdClient({ navViewer = null }: { navVie
 
             {activeProgressSheet ? (
               <div className="mt-4 flex flex-col rounded-xl border border-slate-200 bg-white">
+                <fieldset
+                  disabled={readOnly}
+                  className="min-w-0 border-0 p-0 m-0 disabled:opacity-100 disabled:[&_input]:cursor-default disabled:[&_input:not([readonly])]:bg-slate-100 disabled:[&_select]:cursor-default disabled:[&_select]:bg-slate-100 disabled:[&_textarea]:cursor-default disabled:[&_textarea]:bg-slate-100"
+                >
                 <div
                   className={`max-h-[70vh] min-h-0 rounded-t-xl ${
                     activeProgressSheet.name === CUT_OFF_SHEET
@@ -846,7 +848,10 @@ export default function StudentProgressByIdClient({ navViewer = null }: { navVie
                     const sheet = activeProgressSheet;
                     const isCutOffSheet = sheet.name === CUT_OFF_SHEET;
                     const activeSheet = isCutOffSheet && cutOffSheet ? cutOffSheet : sheet;
-                    const columns = buildSheetColumns(activeSheet.headers);
+                    const columns = buildProgressSheetColumns(activeSheet.headers, {
+                      textbookPublisher: studentSummary.textbookPublisher,
+                      grade: studentSummary.grade,
+                    });
                     const cutOffDisplay = isCutOffSheet ? buildCutOffDisplayModel(activeSheet) : null;
                     return (
                       <>
@@ -925,7 +930,9 @@ export default function StudentProgressByIdClient({ navViewer = null }: { navVie
                                   key={`${sheet.name}-head-textbook-${col.colIndexEn}`}
                                   className="sticky left-0 z-30 min-w-[270px] whitespace-nowrap bg-slate-100 px-3 py-2 text-left font-semibold text-slate-700 shadow-[inset_-1px_0_0_rgba(226,232,240,1),inset_0_-1px_0_0_rgba(226,232,240,1)]"
                                 >
-                                  <span className="block leading-5">Textbook</span>
+                                  <span className="inline-block rounded bg-[#ffff00] px-2 py-0.5 text-xs font-bold leading-5 text-slate-900">
+                                    {col.displayLabel}
+                                  </span>
                                 </th>
                               );
                             }
@@ -1241,6 +1248,7 @@ export default function StudentProgressByIdClient({ navViewer = null }: { navVie
                     </div>
                   </div>
                 ) : null}
+                </fieldset>
 
                 <div className="sticky bottom-0 z-40 flex shrink-0 overflow-x-auto rounded-b-xl border-t border-slate-300 bg-[#eef2f6] shadow-[0_-4px_12px_rgba(15,23,42,0.08)]">
                   {progressSheets.map((tabSheet) => {

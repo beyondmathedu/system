@@ -13,6 +13,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     role: viewer.role,
+    studentId: viewer.studentId,
     isSharedIpadTutor: viewer.isSharedIpadTutor,
     allowedRoomSlugs: viewer.allowedRoomSlugs,
     roomNavLinks,

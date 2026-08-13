@@ -714,6 +714,14 @@ export function StudentLessonsYearPage({
         }
         return;
       }
+      if (role === "student") {
+        if (mounted) {
+          setIsReadOnlyViewer(true);
+          setCanEditTimetableRemarks(false);
+          setAccessReady(true);
+        }
+        return;
+      }
       if (role === "tutor") {
         if (mounted) {
           setIsReadOnlyViewer(true);

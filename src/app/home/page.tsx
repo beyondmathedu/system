@@ -6,6 +6,7 @@ import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
+import { redirectStudentAwayFromAdminPages } from "@/lib/studentPortalAccess";
 import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
 import { PENDING_MAKEUP_BUTTON_LABEL_ZH } from "@/lib/pendingMakeup";
 import HomeReminderPanel from "./HomeReminderPanel";
@@ -142,6 +143,7 @@ export default async function HomeLandingPage() {
   const viewer = await getViewerContext();
   if (!viewer.userId) redirect("/login");
   redirectTutorAwayFromAdminPages(viewer);
+  redirectStudentAwayFromAdminPages(viewer);
   const navViewer = await buildAppTopNavViewer(viewer);
   const ymdToday = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Hong_Kong",

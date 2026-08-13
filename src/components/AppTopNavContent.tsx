@@ -8,6 +8,8 @@ import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import { FALLBACK_ROOM_NAV_LINKS, type RoomNavItem } from "@/lib/roomConstants";
 import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
+import { normalizeStudentId } from "@/lib/studentId";
 import { supabase } from "@/lib/supabase";
 
 export type HighlightKey =
@@ -23,6 +25,7 @@ export type HighlightKey =
 type MeNavResponse = {
   ok?: boolean;
   role?: string | null;
+  studentId?: string | null;
   isSharedIpadTutor?: boolean;
   roomNavLinks?: RoomNavItem[] | null;
   roomScheduleQuery?: string | null;
@@ -42,10 +45,14 @@ export default function AppTopNavContent({
     () => String(viewer?.roomScheduleQuery ?? "").trim(),
   );
   const [viewerRole, setViewerRole] = useState<string | null>(() => viewer?.role ?? null);
+  const [studentPortalId, setStudentPortalId] = useState<string | null>(() =>
+    normalizeStudentId(String(viewer?.studentId ?? "")) || null,
+  );
   const [loggingOut, setLoggingOut] = useState(false);
   const pathname = usePathname();
   const isAdminNav = viewerRole === "admin";
   const isTutorRole = viewerRole === "tutor";
+  const isStudentRole = viewerRole === "student";
   const showTutorMenu = isTutorRole;
   const hasServerViewer = Boolean(viewer?.role);
 
@@ -90,6 +97,7 @@ export default function AppTopNavContent({
           if (!mounted) return;
           const role = String(body.role ?? "").toLowerCase() || null;
           setViewerRole(role);
+          setStudentPortalId(normalizeStudentId(String(body.studentId ?? "")) || null);
           setRoomScheduleQuery(String(body.roomScheduleQuery ?? "").trim());
           if (role === "tutor" && body.roomNavLinks?.length) {
             setRoomLinks(body.roomNavLinks);
@@ -160,9 +168,17 @@ export default function AppTopNavContent({
             <div className="flex items-center gap-2 px-3 py-2 text-white sm:gap-3 sm:px-5 sm:py-2.5">
               <div className="flex min-w-0 shrink-0 items-center gap-2">
                 <Link
-                  href={isTutorRole ? defaultDailyTimetablePath() : "/home"}
+                  href={
+                    isStudentRole && studentPortalId
+                      ? studentPortalHomePath(studentPortalId)
+                      : isTutorRole
+                        ? defaultDailyTimetablePath()
+                        : "/home"
+                  }
                   className="inline-flex shrink-0 items-center hover:opacity-90"
-                  aria-label={isTutorRole ? "Go to daily timetable" : "Go to home"}
+                  aria-label={
+                    isStudentRole ? "Go to my lessons" : isTutorRole ? "Go to daily timetable" : "Go to home"
+                  }
                 >
                   <Image
                     src="/logo.png"
@@ -222,6 +238,13 @@ export default function AppTopNavContent({
                       </Link>
                     ))}
                   </>
+                ) : isStudentRole && studentPortalId ? (
+                  <Link
+                    href={studentPortalHomePath(studentPortalId)}
+                    className={`${base} ${isActive("students") ? active : idle}`}
+                  >
+                    我的課表
+                  </Link>
                 ) : null}
                 {isAdminNav ? (
                   <div className="relative z-[70] shrink-0 group">

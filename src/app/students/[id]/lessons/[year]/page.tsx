@@ -34,6 +34,7 @@ export default async function StudentLessonsDynamicYearPage({ params }: PageProp
   const initialReadOnly =
     viewer.isSharedIpadTutor ||
     viewer.role === "tutor" ||
+    viewer.role === "student" ||
     String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
 
   const navViewer = await buildAppTopNavViewer(viewer);

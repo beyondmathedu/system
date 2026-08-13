@@ -82,10 +82,7 @@ export async function loadStudentFeeOpeningBalances(studentIds: string[]): Promi
     fromDb[sid] = Number((row as { opening_balance?: number | null }).opening_balance ?? 0) || 0;
   }
 
-  const merged = { ...local };
-  for (const sid of studentIds) {
-    if (sid in fromDb) merged[sid] = fromDb[sid];
-  }
+  const merged = { ...fromDb, ...local };
   return { balances: merged };
 }
 
@@ -94,18 +91,26 @@ export async function upsertStudentFeeOpeningBalance(
   openingBalance: number,
 ): Promise<{ ok: boolean; error?: string; tableMissing?: boolean }> {
   const value = Number(openingBalance) || 0;
-  const { error } = await supabase.from("student_fee_opening_balances").upsert(
-    {
-      student_id: studentId,
-      as_of_year: FEE_OPENING_BALANCE_AS_OF_YEAR,
-      as_of_month: FEE_OPENING_BALANCE_AS_OF_MONTH,
-      opening_balance: value,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id,as_of_year,as_of_month" },
-  );
-  if (error) {
-    return { ok: false, error: error.message, tableMissing: isMissingTableError(error.message) };
+  try {
+    const res = await fetch("/api/students-lesson-fee-record/opening-balance", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studentId, openingBalance: value }),
+    });
+    const body = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      tableMissing?: boolean;
+    };
+    if (body.ok) return { ok: true };
+    return {
+      ok: false,
+      error: body.error ?? `HTTP ${res.status}`,
+      tableMissing: Boolean(body.tableMissing),
+    };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Network error";
+    return { ok: false, error: message, tableMissing: isMissingTableError(message) };
   }
-  return { ok: true };
 }

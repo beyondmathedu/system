@@ -1,32 +1,22 @@
 import { redirect } from "next/navigation";
 import { getViewerContext } from "@/lib/authz";
-import { studentLessonsYearPath } from "@/lib/lessonCalendar";
-import { isSharedIpadTutorViewer, defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
+import { isSharedIpadTutorViewer } from "@/lib/tutorRoomAccess";
 import { normalizeStudentId } from "@/lib/studentId";
 
+/** Auth gate for all /students routes. Student id scoping lives in [id]/layout.tsx. */
 export default async function StudentsSectionLayout({
   children,
-  params,
 }: {
   children: React.ReactNode;
-  params: Promise<{ id?: string }>;
 }) {
   const viewer = await getViewerContext();
-  const routeParams = await params;
   if (!viewer.userId) redirect("/login?next=/students");
   if (isSharedIpadTutorViewer(viewer)) return children;
   if (viewer.role === "student") {
-    const ownStudentId = normalizeStudentId(viewer.studentId ?? "");
-    if (!ownStudentId) redirect("/login");
-    const pathStudentId = normalizeStudentId(String(routeParams?.id ?? ""));
-    if (pathStudentId && pathStudentId === ownStudentId) return children;
-    redirect(studentLessonsYearPath(ownStudentId));
-  }
-  if (viewer.role === "tutor") {
-    const pathStudentId = normalizeStudentId(String(routeParams?.id ?? ""));
-    if (!pathStudentId) redirect(defaultDailyTimetablePath());
+    if (!normalizeStudentId(viewer.studentId ?? "")) redirect("/login");
     return children;
   }
+  if (viewer.role === "tutor") return children;
   if (viewer.role !== "admin") redirect("/login");
   return children;
 }

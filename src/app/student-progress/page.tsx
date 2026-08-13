@@ -4,11 +4,18 @@ import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
+import { normalizeStudentId } from "@/lib/studentId";
 
 export default async function StudentProgressPage() {
   const viewer = await getViewerContext();
   if (!viewer.userId) redirect("/login?next=/student-progress");
   redirectTutorAwayFromAdminPages(viewer);
+  if (viewer.role === "student") {
+    const sid = normalizeStudentId(viewer.studentId ?? "");
+    if (sid) redirect(`/student-progress/${encodeURIComponent(sid)}`);
+    redirect(studentPortalHomePath(sid || "00000"));
+  }
   const navViewer = await buildAppTopNavViewer(viewer);
 
   return (
