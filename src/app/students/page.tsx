@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
-import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { normalizeStudentId } from "@/lib/studentId";
 import StudentsPageEntry from "./StudentsPageEntry";
 
@@ -12,7 +12,7 @@ export default async function StudentsPage() {
   redirectTutorAwayFromAdminPages(viewer);
   if (viewer.role === "student") {
     const sid = normalizeStudentId(viewer.studentId ?? "");
-    if (sid) redirect(studentLessonsYearPath(sid));
+    if (sid) redirect(studentPortalHomePath(sid));
     redirect("/login");
   }
   const navViewer = await buildAppTopNavViewer(viewer);

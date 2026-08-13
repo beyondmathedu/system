@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import type { ViewerContext } from "@/lib/authz";
-import { studentLessonsYearPath } from "@/lib/lessonCalendar";
 import { normalizeStudentId } from "@/lib/studentId";
 
-export function studentPortalHomePath(studentId: string, year?: number): string {
-  return studentLessonsYearPath(normalizeStudentId(studentId), year);
+/** Student portal home: lessons hub (not a specific year page). */
+export function studentPortalHomePath(studentId: string): string {
+  const sid = normalizeStudentId(studentId);
+  return `/students/${encodeURIComponent(sid)}/lessons`;
 }
 
 /** Students only see their own lesson pages — not admin home / fee record. */

@@ -157,6 +157,7 @@ export default function StudentLessonsHubClient({
     () => (initialBootstrap.scheduleRecords as LessonScheduleRecord[]) ?? [],
   );
   const [isTutorReadOnly] = useState(initialReadOnly);
+  const isStudentPortal = String(navViewer?.role ?? "").toLowerCase() === "student";
   const [examDateInitial] = useState(() => initialBootstrap.examInfo?.examDate ?? "");
   const availableYears = useMemo(() => availableLessonYears(), []);
   const metricsSavedRef = useRef(false);
@@ -258,17 +259,22 @@ export default function StudentLessonsHubClient({
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight={isTutorReadOnly ? "daily-timetable" : "students"} viewer={navViewer} />
+        <AppTopNav
+          highlight={isStudentPortal ? "students" : isTutorReadOnly ? "daily-timetable" : "students"}
+          viewer={navViewer}
+        />
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <div className="flex items-center gap-3">
-              <Link
-                href={isTutorReadOnly ? defaultDailyTimetablePath() : "/students"}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
-                aria-label={isTutorReadOnly ? "Back to daily timetable" : "Back to students list"}
-              >
-                ←
-              </Link>
+              {!isStudentPortal ? (
+                <Link
+                  href={isTutorReadOnly ? defaultDailyTimetablePath() : "/students"}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
+                  aria-label={isTutorReadOnly ? "Back to daily timetable" : "Back to students list"}
+                >
+                  ←
+                </Link>
+              ) : null}
               <h1 className="text-2xl font-bold tracking-tight">Student Lesson Record</h1>
             </div>
             <p className="mt-1 text-sm text-blue-100">
@@ -565,6 +571,24 @@ export default function StudentLessonsHubClient({
                   </div>
                 </div>
               </div>
+              ) : isStudentPortal ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <ExamDateField studentId={studentId} initialValue={examDateInitial} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex whitespace-nowrap rounded-md bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800">
+                      Makeup Count {upcomingUntickedCount}
+                    </span>
+                    <span className="inline-flex rounded-md bg-sky-100 px-3 py-2 text-sm font-bold text-sky-800">
+                      Unattended This Month {currentMonthUntickedCount}
+                    </span>
+                    <Link
+                      href={`/student-progress/${encodeURIComponent(studentId)}`}
+                      className="inline-flex items-center rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90"
+                    >
+                      Student Progress
+                    </Link>
+                  </div>
+                </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex whitespace-nowrap rounded-md bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800">

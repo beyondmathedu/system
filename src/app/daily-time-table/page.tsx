@@ -11,7 +11,7 @@ import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { buildRoomScheduleQueryForDate, isTutorViewer } from "@/lib/tutorRoomAccess";
 import { redactDayTimetableRemarks } from "@/lib/dayTimetableShared";
-import { studentLessonsYearPath } from "@/lib/lessonCalendar";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { fetchDayTimetablePayload, parseDayParams } from "@/lib/dayTimetableGrid";
 import { normalizeStudentId } from "@/lib/studentId";
 import type { RoomGroup } from "@/lib/dayTimetableShared";
@@ -37,7 +37,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
   ]);
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
-    redirect(studentLessonsYearPath(normalizeStudentId(viewer.studentId)));
+    redirect(studentPortalHomePath(normalizeStudentId(viewer.studentId)));
   }
   if (viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");

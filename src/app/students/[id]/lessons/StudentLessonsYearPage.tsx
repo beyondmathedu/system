@@ -671,6 +671,8 @@ export function StudentLessonsYearPage({
   );
   const forceReadOnlyFromNext = (searchParams.get("next") || "").startsWith("/rooms/");
   const readOnly = isReadOnlyViewer;
+  const isStudentPortal = String(navViewer?.role ?? "").toLowerCase() === "student";
+  const lessonTableColCount = isStudentPortal ? 7 : 11;
   const skipInitialBootstrapFetchRef = useRef(Boolean(initialBootstrap));
 
   const [records, setRecords] = useState<ScheduleRecord[]>([]);
@@ -2592,7 +2594,7 @@ export function StudentLessonsYearPage({
     const range = formatInactiveGapMonthRange(gap.months);
     return (
       <tr key={key} className="divide-x divide-slate-100 bg-slate-100">
-        <td colSpan={11} className="px-4 py-4 text-center text-sm text-slate-700">
+        <td colSpan={lessonTableColCount} className="px-4 py-4 text-center text-sm text-slate-700">
           <span className="mr-2 inline-flex items-center rounded-md bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
             Status: Inactive
           </span>
@@ -2854,7 +2856,7 @@ export function StudentLessonsYearPage({
                 "—",
               )}
             </p>
-            {isReadOnlyViewer ? (
+            {isReadOnlyViewer && !isStudentPortal ? (
               <p className="mt-2 inline-flex rounded-md bg-white/20 px-2.5 py-1 text-xs font-semibold text-white">
                 Read-only mode
               </p>
@@ -2922,7 +2924,7 @@ export function StudentLessonsYearPage({
             </div>
           </div>
 
-          <div className="p-6 pb-28">
+          <div className={`p-6 ${isStudentPortal ? "pb-6" : "pb-28"}`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-bold text-slate-900">{targetYear} Lesson Records</h2>
               <Link
@@ -2950,24 +2952,26 @@ export function StudentLessonsYearPage({
                   。Regular 課堂會隱藏；Extra / Reschedule 仍會顯示於此頁、Room 及 Daily Timetable。學費表繼續隱藏 inactive 月份。
                 </p>
               ) : null}
-              <ScheduleDuplicateRulesBanner
-                records={records.map((r) => ({
-                  ...r,
-                  effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
-                }))}
-                weekdayLabel={(wd) => WEEKDAY_LABEL[wd] ?? wd}
-                formatRoom={formatRoom}
-                onMerged={(next) => {
-                  const removed = records.length - next.length;
-                  persistScheduleRecords(next as ScheduleRecord[]);
-                  setSelectionError(
-                    removed > 0
-                      ? `已合併重複課表（刪除 ${removed} 條），並已寫入雲端。`
-                      : "已合併重複課表並寫入雲端。",
-                  );
-                }}
-              />
-              {(hiddenScheduleKeys.length > 0 || hasScheduleDiagnosticIssue) ? (
+              {!isStudentPortal ? (
+                <ScheduleDuplicateRulesBanner
+                  records={records.map((r) => ({
+                    ...r,
+                    effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
+                  }))}
+                  weekdayLabel={(wd) => WEEKDAY_LABEL[wd] ?? wd}
+                  formatRoom={formatRoom}
+                  onMerged={(next) => {
+                    const removed = records.length - next.length;
+                    persistScheduleRecords(next as ScheduleRecord[]);
+                    setSelectionError(
+                      removed > 0
+                        ? `已合併重複課表（刪除 ${removed} 條），並已寫入雲端。`
+                        : "已合併重複課表並寫入雲端。",
+                    );
+                  }}
+                />
+              ) : null}
+              {!isStudentPortal && (hiddenScheduleKeys.length > 0 || hasScheduleDiagnosticIssue) ? (
                 <div className="mt-3 space-y-2">
                   {hiddenScheduleKeys.length > 0 && !hiddenNoticeExpanded ? (
                     <p className="text-[11px] text-slate-500">
@@ -3058,6 +3062,7 @@ export function StudentLessonsYearPage({
               ) : null}
             </fieldset>
 
+            {!isStudentPortal ? (
             <div ref={reschedulePanelRef} className="scroll-mt-4 scroll-mb-32">
             {showBulkEditPanel && (
               <div className="mt-4 rounded-xl border border-[#1d76c2]/30 bg-white p-4 shadow-sm">
@@ -3889,7 +3894,6 @@ export function StudentLessonsYearPage({
 
               </div>
             )}
-            </div>
 
             {showExtraPanel && (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -4106,9 +4110,12 @@ export function StudentLessonsYearPage({
               </div>
             )}
 
+            </div>
+            ) : null}
+
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
               <div className="overflow-x-auto">
-                <div className="flex min-w-[1500px] items-end gap-3">
+                <div className={`flex items-end gap-3 ${isStudentPortal ? "min-w-[980px]" : "min-w-[1500px]"}`}>
                 <label className="w-40 shrink-0">
                   <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Month</span>
                   <select
@@ -4161,6 +4168,7 @@ export function StudentLessonsYearPage({
                   />
                 </label>
 
+                {!isStudentPortal ? (
                 <label className="w-36 shrink-0">
                   <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Room</span>
                   <select
@@ -4176,7 +4184,9 @@ export function StudentLessonsYearPage({
                     ))}
                   </select>
                 </label>
+                ) : null}
 
+                {!isStudentPortal ? (
                 <label className="w-40 shrink-0">
                   <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Tutor</span>
                   <select
@@ -4192,6 +4202,7 @@ export function StudentLessonsYearPage({
                     ))}
                   </select>
                 </label>
+                ) : null}
 
                 <label className="w-36 shrink-0">
                   <span className="mb-1 block text-xs font-semibold tracking-wider text-slate-600">Type</span>
@@ -4243,9 +4254,12 @@ export function StudentLessonsYearPage({
             <fieldset disabled={readOnly} className="mt-4 disabled:opacity-95">
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
               <div ref={lessonTableScrollRef} className="max-h-[70vh] overflow-auto">
-                <table className="w-full min-w-[1180px] divide-y divide-slate-200">
+                <table
+                  className={`w-full divide-y divide-slate-200 ${isStudentPortal ? "min-w-[680px]" : "min-w-[1180px]"}`}
+                >
                   <thead className="bg-slate-50">
                     <tr className="divide-x divide-slate-200">
+                      {!isStudentPortal ? (
                       <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
                         <input
                           type="checkbox"
@@ -4261,19 +4275,24 @@ export function StudentLessonsYearPage({
                           aria-label="Select all"
                         />
                       </th>
+                      ) : null}
                       <LessonSortableHeader
                         label="Month"
                         columnKey="month"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
-                        thClassName="whitespace-nowrap"
+                        thClassName={lessonCompactHeaderClass(isStudentPortal, "month")}
+                        compact={isStudentPortal}
                       />
                       <LessonSortableHeader
                         label="L"
                         columnKey="lLabel"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
+                        thClassName={lessonCompactHeaderClass(isStudentPortal, "l")}
+                        compact={isStudentPortal}
                       />
+                      {!isStudentPortal ? (
                       <LessonSortableHeader
                         label="Attendance"
                         columnKey="attendance"
@@ -4281,25 +4300,32 @@ export function StudentLessonsYearPage({
                         setSortConfig={setSortConfig}
                         thClassName="w-20 whitespace-nowrap"
                       />
+                      ) : null}
                       <LessonSortableHeader
                         label="Date"
                         columnKey="date"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
+                        thClassName={lessonCompactHeaderClass(isStudentPortal, "date")}
+                        compact={isStudentPortal}
                       />
                       <LessonSortableHeader
                         label="Day"
                         columnKey="weekday"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
-                        thClassName="w-20 whitespace-nowrap"
+                        thClassName={lessonCompactHeaderClass(isStudentPortal, "day")}
+                        compact={isStudentPortal}
                       />
                       <LessonSortableHeader
                         label="Time"
                         columnKey="time"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
+                        thClassName={lessonCompactHeaderClass(isStudentPortal, "time")}
+                        compact={isStudentPortal}
                       />
+                      {!isStudentPortal ? (
                       <LessonSortableHeader
                         label="Room"
                         columnKey="room"
@@ -4307,12 +4333,15 @@ export function StudentLessonsYearPage({
                         setSortConfig={setSortConfig}
                         thClassName="w-20 whitespace-nowrap"
                       />
+                      ) : null}
+                      {!isStudentPortal ? (
                       <LessonSortableHeader
                         label="Tutor"
                         columnKey="tutor"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
                       />
+                      ) : null}
                       <LessonSortableHeader
                         label="Lesson Summary"
                         columnKey="lessonSummary"
@@ -4332,13 +4361,13 @@ export function StudentLessonsYearPage({
                   <tbody className="divide-y divide-slate-100">
                     {scheduleRows.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
+                        <td colSpan={lessonTableColCount} className="px-4 py-8 text-center text-sm text-slate-500">
                           No records in lesson schedule settings yet.
                         </td>
                       </tr>
                     ) : lessonTableEntries.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
+                        <td colSpan={lessonTableColCount} className="px-4 py-8 text-center text-sm text-slate-500">
                           {viewingInactiveMonthOnly && selectedInactiveMonthGap ? (
                             <>
                               {formatInactiveGapMonthRange(selectedInactiveMonthGap.months)} — 此段因 Inactive
@@ -4355,7 +4384,7 @@ export function StudentLessonsYearPage({
                       </tr>
                     ) : (
                       <>
-                        <VirtualTableSpacerRow height={lessonPadTop} colSpan={11} />
+                        <VirtualTableSpacerRow height={lessonPadTop} colSpan={lessonTableColCount} />
                         {lessonVirtualRows.map((virtualRow) => {
                           const idx = virtualRow.index;
                           const entry = lessonTableEntries[idx];
@@ -4387,6 +4416,7 @@ export function StudentLessonsYearPage({
                             .filter(Boolean)
                             .join(" ")}
                         >
+                          {!isStudentPortal ? (
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                             <input
                               type="checkbox"
@@ -4404,12 +4434,16 @@ export function StudentLessonsYearPage({
                               aria-label={`${r.date} select row`}
                             />
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
+                          ) : null}
+                          <td className={lessonCompactDataCellClass(isStudentPortal, "month")}>
                             {MONTH_LABEL[r.month] ?? r.month}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm font-semibold text-slate-900">
+                          <td
+                            className={`${lessonCompactDataCellClass(isStudentPortal, "l")} font-semibold text-slate-900`}
+                          >
                             {r.lLabel}
                           </td>
+                          {!isStudentPortal ? (
                           <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
                             {r.rowKind === "cancelled_original" ? (
                               <span className="font-semibold text-slate-500">/</span>
@@ -4429,7 +4463,8 @@ export function StudentLessonsYearPage({
                               </span>
                             )}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
+                          ) : null}
+                          <td className={lessonCompactDataCellClass(isStudentPortal, "date")}>
                             {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
                               <RescheduleChangeCell
                                 before={r.rescheduleFromDate}
@@ -4439,7 +4474,7 @@ export function StudentLessonsYearPage({
                               r.date
                             )}
                           </td>
-                          <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
+                          <td className={lessonCompactDataCellClass(isStudentPortal, "day")}>
                             {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
                               <RescheduleChangeCell
                                 before={
@@ -4452,13 +4487,14 @@ export function StudentLessonsYearPage({
                               WEEKDAY_LABEL[r.weekday] ?? r.weekday
                             )}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
+                          <td className={lessonCompactDataCellClass(isStudentPortal, "time")}>
                             {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
                               <RescheduleChangeCell before={r.baseTime} after={r.time} />
                             ) : (
                               r.time
                             )}
                           </td>
+                          {!isStudentPortal ? (
                           <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
                             {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
                               <RescheduleChangeCell
@@ -4477,9 +4513,12 @@ export function StudentLessonsYearPage({
                               formatRoom(r.room)
                             )}
                           </td>
+                          ) : null}
+                          {!isStudentPortal ? (
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
                             {displayTutorInCell(r.tutor)}
                           </td>
+                          ) : null}
                           <td className="w-[20%] min-w-[220px] px-4 py-3 text-sm text-slate-700 align-top break-words whitespace-normal">
                             <textarea
                               rows={3}
@@ -4526,7 +4565,7 @@ export function StudentLessonsYearPage({
                         </tr>
                           );
                         })}
-                        <VirtualTableSpacerRow height={lessonPadBottom} colSpan={11} />
+                        <VirtualTableSpacerRow height={lessonPadBottom} colSpan={lessonTableColCount} />
                       </>
                     )}
                   </tbody>
@@ -4537,6 +4576,7 @@ export function StudentLessonsYearPage({
           </div>
         </div>
 
+        {!isStudentPortal ? (
         <div
           className={`fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 shadow-[0_-8px_30px_rgba(15,23,42,0.1)] backdrop-blur-md${readOnly ? " pointer-events-none opacity-60" : ""}`}
           role="toolbar"
@@ -4838,6 +4878,7 @@ export function StudentLessonsYearPage({
             </div>
           ) : null}
         </div>
+        ) : null}
       </div>
 
       {rowEditConfirm ? (
@@ -4930,7 +4971,42 @@ export function StudentLessonsYearPage({
 }
 
 const LESSON_TH_BASE =
-  "sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-3 py-3 text-left text-xs font-bold tracking-wider text-slate-700";
+  "sticky top-0 z-20 whitespace-nowrap bg-slate-50 text-left text-xs font-bold tracking-wider text-slate-700";
+
+function lessonCompactDataCellClass(
+  isStudentPortal: boolean,
+  column: "month" | "l" | "date" | "day" | "time",
+): string {
+  if (!isStudentPortal) return "whitespace-nowrap px-4 py-3 text-sm text-slate-700";
+  const widthByColumn: Record<typeof column, string> = {
+    month: "w-[3.25rem] max-w-[3.25rem]",
+    l: "w-8 max-w-8",
+    date: "w-[5.25rem] max-w-[5.25rem]",
+    day: "w-9 max-w-9",
+    time: "w-[5.25rem] max-w-[5.25rem]",
+  };
+  return `whitespace-nowrap px-1.5 py-2 text-xs text-slate-700 ${widthByColumn[column]}`;
+}
+
+function lessonCompactHeaderClass(
+  isStudentPortal: boolean,
+  column: "month" | "l" | "date" | "day" | "time",
+): string {
+  if (!isStudentPortal) {
+    const defaults: Partial<Record<typeof column, string>> = {
+      day: "w-20 whitespace-nowrap",
+    };
+    return defaults[column] ?? "whitespace-nowrap";
+  }
+  const widthByColumn: Record<typeof column, string> = {
+    month: "w-[3.25rem] max-w-[3.25rem] px-1.5",
+    l: "w-8 max-w-8 px-1",
+    date: "w-[5.25rem] max-w-[5.25rem] px-1.5",
+    day: "w-9 max-w-9 px-1",
+    time: "w-[5.25rem] max-w-[5.25rem] px-1.5",
+  };
+  return widthByColumn[column];
+}
 
 type LessonSortableHeaderProps = {
   label: string;
@@ -4939,6 +5015,7 @@ type LessonSortableHeaderProps = {
   setSortConfig: (config: ScheduleSortConfig) => void;
   /** 額外 th class，例如寬度；預設為 whitespace-nowrap */
   thClassName?: string;
+  compact?: boolean;
 };
 
 function LessonSortableHeader({
@@ -4947,16 +5024,17 @@ function LessonSortableHeader({
   sortConfig,
   setSortConfig,
   thClassName,
+  compact = false,
 }: LessonSortableHeaderProps) {
   const selectedDirection =
     sortConfig?.key === columnKey ? sortConfig.direction : "";
 
   return (
     <th
-      className={`${LESSON_TH_BASE} ${thClassName ?? "whitespace-nowrap"}`}
+      className={`${LESSON_TH_BASE} ${compact ? "px-1.5 py-2" : "px-3 py-3"} ${thClassName ?? "whitespace-nowrap"}`}
     >
-      <div className="flex items-center gap-1.5">
-        <span className="whitespace-nowrap">{label}</span>
+      <div className={`flex items-center ${compact ? "gap-0.5" : "gap-1.5"}`}>
+        <span className={`whitespace-nowrap ${compact ? "text-[11px]" : ""}`}>{label}</span>
         <select
           aria-label={`Sort ${label}`}
           value={selectedDirection}
@@ -4968,7 +5046,11 @@ function LessonSortableHeader({
             }
             setSortConfig({ key: columnKey, direction });
           }}
-          className="h-6 min-w-10 shrink-0 rounded border border-slate-300 bg-white px-1 py-0.5 text-[11px] text-slate-700"
+          className={
+            compact
+              ? "h-5 min-w-7 shrink-0 rounded border border-slate-300 bg-white px-0.5 py-0 text-[10px] text-slate-700"
+              : "h-6 min-w-10 shrink-0 rounded border border-slate-300 bg-white px-1 py-0.5 text-[11px] text-slate-700"
+          }
         >
           <option value="">▽</option>
           <option value="asc">↑</option>

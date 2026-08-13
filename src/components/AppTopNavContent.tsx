@@ -177,7 +177,7 @@ export default function AppTopNavContent({
                   }
                   className="inline-flex shrink-0 items-center hover:opacity-90"
                   aria-label={
-                    isStudentRole ? "Go to my lessons" : isTutorRole ? "Go to daily timetable" : "Go to home"
+                    isStudentRole ? "Go to Lesson Record" : isTutorRole ? "Go to daily timetable" : "Go to home"
                   }
                 >
                   <Image
@@ -243,7 +243,7 @@ export default function AppTopNavContent({
                     href={studentPortalHomePath(studentPortalId)}
                     className={`${base} ${isActive("students") ? active : idle}`}
                   >
-                    我的課表
+                    Lesson Record
                   </Link>
                 ) : null}
                 {isAdminNav ? (

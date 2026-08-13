@@ -7,9 +7,10 @@ import { fetchClassroomMeta } from "@/lib/classroomsRegistry";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
-import { defaultLessonYear, parseLessonYear, studentLessonsYearPath } from "@/lib/lessonCalendar";
+import { defaultLessonYear, parseLessonYear } from "@/lib/lessonCalendar";
 import { readMonthPart, readYmdParts } from "@/lib/intlFormatParts";
 import { normalizeStudentId } from "@/lib/studentId";
+import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { fetchRoomScheduleAggregate } from "@/lib/roomScheduleAggregate";
 import { defaultDailyTimetablePath, getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
 import RoomScheduleTable from "./RoomScheduleTable";
@@ -116,7 +117,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
     (hasCustomRange ? `&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}` : "");
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
-    redirect(studentLessonsYearPath(normalizeStudentId(viewer.studentId)));
+    redirect(studentPortalHomePath(normalizeStudentId(viewer.studentId)));
   }
   if (!viewer.isSharedIpadTutor && viewer.role !== "admin" && viewer.role !== "tutor") {
     redirect("/login");
