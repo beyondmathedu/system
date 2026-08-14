@@ -687,6 +687,26 @@ export function StudentLessonsYearPage({
         router.replace(`/students/${encodeURIComponent(normalizeStudentId(rawId))}/lessons/${targetYear}`);
         return;
       }
+      const seededRole = String(navViewer?.role ?? "").toLowerCase();
+      if (initialBootstrap && seededRole) {
+        if (seededRole === "student") {
+          const ownStudentId = normalizeStudentId(String(navViewer?.studentId ?? ""));
+          if (ownStudentId && ownStudentId !== studentId) {
+            router.replace(studentPortalHomePath(ownStudentId));
+            return;
+          }
+        }
+        if (!mounted) return;
+        const readOnly =
+          Boolean(initialReadOnly) ||
+          forceReadOnlyFromNext ||
+          seededRole === "student" ||
+          seededRole === "tutor";
+        setIsReadOnlyViewer(readOnly);
+        setCanEditTimetableRemarks(seededRole === "admin" && !forceReadOnlyFromNext);
+        setAccessReady(true);
+        return;
+      }
       const nextPath = `/students/${encodeURIComponent(studentId)}/lessons/${targetYear}`;
       const { data: auth } = await supabase.auth.getUser();
       const user = auth.user;
@@ -750,7 +770,16 @@ export function StudentLessonsYearPage({
     return () => {
       mounted = false;
     };
-  }, [rawId, studentId, targetYear, router, forceReadOnlyFromNext]);
+  }, [
+    rawId,
+    studentId,
+    targetYear,
+    router,
+    forceReadOnlyFromNext,
+    initialBootstrap,
+    initialReadOnly,
+    navViewer,
+  ]);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [hiddenDates, setHiddenDates] = useState<Record<string, boolean>>({});
   const HIDDEN_DATES_STORAGE_KEY = `hidden_dates:${studentId}:${targetYear}`;

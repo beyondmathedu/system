@@ -108,23 +108,18 @@ function LoginForm() {
           studentId?: string | null;
           allowedRoomSlugs?: string[];
           isSharedIpadTutor?: boolean;
+          studentPortalAllowed?: boolean;
+          studentPortalReactivateDate?: string | null;
         };
         const role = String(me.role ?? "").toLowerCase();
         if (role === "student") {
           const sid = normalizeStudentId(String(me.studentId ?? ""));
           if (sid) {
-            const accessRes = await fetch("/api/student-portal/access", { credentials: "same-origin" });
-            if (accessRes.ok) {
-              const access = (await accessRes.json()) as {
-                allowed?: boolean;
-                reactivateDate?: string | null;
-              };
-              if (access.allowed === false) {
-                await supabaseBrowser.auth.signOut();
-                setLoading(false);
-                setError(inactiveStudentLoginMessage(access.reactivateDate ?? null));
-                return;
-              }
+            if (me.studentPortalAllowed === false) {
+              await supabaseBrowser.auth.signOut();
+              setLoading(false);
+              setError(inactiveStudentLoginMessage(me.studentPortalReactivateDate ?? null));
+              return;
             }
             target = studentPostLoginPath(sid);
           }

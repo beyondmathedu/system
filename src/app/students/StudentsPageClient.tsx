@@ -62,6 +62,12 @@ type StudentPortalStatus = {
   studentIdLoginOnly?: boolean;
 };
 
+export type StudentsPageInitialList = {
+  students: StudentRow[];
+  total: number;
+  portalStatusById: Record<string, StudentPortalStatus>;
+};
+
 type StudentForm = Omit<Student, "id" | "birthTs" | "searchBlob">;
 
 const emptyForm: StudentForm = {
@@ -100,8 +106,16 @@ function buildStudentSearchBlob(student: {
     .toLowerCase();
 }
 
-export default function StudentsPageClient({ navViewer = null }: { navViewer?: AppTopNavViewer | null }) {
-  const [students, setStudents] = useState<Student[]>([]);
+export default function StudentsPageClient({
+  navViewer = null,
+  initialList = null,
+}: {
+  navViewer?: AppTopNavViewer | null;
+  initialList?: StudentsPageInitialList | null;
+}) {
+  const [students, setStudents] = useState<Student[]>(() =>
+    (initialList?.students ?? []).map(mapRowToStudent),
+  );
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<StudentForm>(emptyForm);
   const [formError, setFormError] = useState("");
@@ -118,9 +132,9 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
     mode: "add" | "provision";
     provisionStudentId?: string;
   } | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !initialList);
   const [pageLoading, setPageLoading] = useState(false);
-  const [listTotal, setListTotal] = useState(0);
+  const [listTotal, setListTotal] = useState(() => initialList?.total ?? 0);
   const [currentPage, setCurrentPage] = useState(1);
   const [showAllStudents, setShowAllStudents] = useState(false);
   const [suggestedNextId, setSuggestedNextId] = useState("00001");
@@ -131,11 +145,14 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
   const [pasteDraft, setPasteDraft] = useState("");
   const [pasteNotice, setPasteNotice] = useState("");
   const [pasteWarnings, setPasteWarnings] = useState<string[]>([]);
-  const [portalStatusById, setPortalStatusById] = useState<Record<string, StudentPortalStatus>>({});
+  const [portalStatusById, setPortalStatusById] = useState<Record<string, StudentPortalStatus>>(
+    () => initialList?.portalStatusById ?? {},
+  );
   const [portalBusyId, setPortalBusyId] = useState<string | null>(null);
   const [portalNotice, setPortalNotice] = useState("");
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const skipInitialListRef = useRef(Boolean(initialList));
   const isAdmin = navViewer?.role === "admin";
 
   const sortedStudents = useMemo(() => {
@@ -247,6 +264,7 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
             students?: StudentRow[];
             total?: number;
             hasMore?: boolean;
+            portalStatusById?: Record<string, StudentPortalStatus>;
           };
           if (!res.ok || !body.ok) {
             throw new Error(body.error ?? "Failed to load student records.");
@@ -256,6 +274,7 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
 
         if (showAll) {
           const merged: Student[] = [];
+          const mergedPortal: Record<string, StudentPortalStatus> = {};
           let offset = 0;
           let total = 0;
           let hasMore = true;
@@ -263,12 +282,14 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
             const body = await fetchBatch(offset, 200);
             const mapped = (body.students ?? []).map(mapRowToStudent);
             merged.push(...mapped);
+            Object.assign(mergedPortal, body.portalStatusById ?? {});
             total = body.total ?? merged.length;
             hasMore = Boolean(body.hasMore) && mapped.length > 0;
             offset += mapped.length;
             if (!mapped.length) break;
           }
           setStudents(merged);
+          setPortalStatusById(mergedPortal);
           setSelectedIds((prev) => prev.filter((id) => merged.some((s) => s.id === id)));
           setListTotal(total || merged.length);
           return;
@@ -277,6 +298,7 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
         const body = await fetchBatch((page - 1) * STUDENTS_PAGE_SIZE, STUDENTS_PAGE_SIZE);
         const mapped = (body.students ?? []).map(mapRowToStudent);
         setStudents(mapped);
+        setPortalStatusById(body.portalStatusById ?? {});
         setSelectedIds((prev) => prev.filter((id) => mapped.some((s) => s.id === id)));
         setListTotal(body.total ?? mapped.length);
       } catch (e) {
@@ -290,30 +312,6 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
     },
     [query, statusFilter, inactiveKind],
   );
-
-  const fetchPortalStatus = useCallback(async (studentIds: string[]) => {
-    if (!isAdmin || !studentIds.length) {
-      setPortalStatusById({});
-      return;
-    }
-    try {
-      const params = new URLSearchParams({ ids: studentIds.join(",") });
-      const res = await fetch(`/api/students/portal-status?${params.toString()}`, {
-        credentials: "same-origin",
-      });
-      const body = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        statusById?: Record<string, StudentPortalStatus>;
-      };
-      if (!res.ok || !body.ok) {
-        throw new Error(body.error ?? "Failed to load portal status.");
-      }
-      setPortalStatusById(body.statusById ?? {});
-    } catch (e) {
-      setPortalNotice(e instanceof Error ? e.message : "Failed to load portal status.");
-    }
-  }, [isAdmin]);
 
   const runPortalAction = useCallback(
     async (
@@ -382,15 +380,15 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
   }, [fetchStudentsPage, showAllStudents, currentPage]);
 
   useEffect(() => {
+    if (skipInitialListRef.current) {
+      skipInitialListRef.current = false;
+      return;
+    }
     const timer = window.setTimeout(() => {
       void fetchStudentsPage({ page: 1, showAll: false });
     }, STUDENTS_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [fetchStudentsPage, query, statusFilter, inactiveKind]);
-
-  useEffect(() => {
-    void fetchPortalStatus(students.map((s) => normalizeStudentId(s.id)));
-  }, [students, fetchPortalStatus]);
 
   const onFieldChange = (field: keyof StudentForm, value: string) => {
     setForm((prev) => {

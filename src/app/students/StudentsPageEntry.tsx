@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
+import type { StudentsPageInitialList } from "./StudentsPageClient";
 
 function StudentsPageSkeleton() {
   return (
@@ -24,8 +25,10 @@ const StudentsPageClient = dynamic(() => import("./StudentsPageClient"), {
 
 export default function StudentsPageEntry({
   navViewer = null,
+  initialList = null,
 }: {
   navViewer?: AppTopNavViewer | null;
+  initialList?: StudentsPageInitialList | null;
 }) {
-  return <StudentsPageClient navViewer={navViewer} />;
+  return <StudentsPageClient navViewer={navViewer} initialList={initialList} />;
 }
