@@ -58,7 +58,6 @@ import { makeStudentInactiveDateCheckerFromPeriods, getInactiveMonthGapsInYearFr
 import {
   defaultLessonYear,
   hkYmdNow,
-  studentLessonsYearPath,
 } from "@/lib/lessonCalendar";
 import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { lessonYearStateFieldsFromPatch } from "@/lib/lessonYearStateShared";

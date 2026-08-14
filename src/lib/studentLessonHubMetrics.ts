@@ -23,7 +23,7 @@ export function computeStudentLessonHubMetrics(input: {
   scheduleRecords: unknown[];
   yearState: StudentLesson2026State;
   inactivePeriods: InactivePeriodRow[];
-  nowMs: number;
+  nowMs?: number;
 }): StudentLessonHubMetrics {
   const periods = (input.inactivePeriods ?? [])
     .map((p) => ({
@@ -46,7 +46,7 @@ export function computeStudentLessonHubMetrics(input: {
   const metrics = getLessonUntickedMetrics(
     input.scheduleRecords as Lesson2026Record[],
     state,
-    input.nowMs,
+    input.nowMs ?? Date.now(),
     input.hubYear,
     { isDateInactive },
   );

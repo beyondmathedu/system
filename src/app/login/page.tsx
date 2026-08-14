@@ -33,7 +33,6 @@ function inactiveStudentLoginMessage(reactivateDate: string | null): string {
 
 function LoginForm() {
   const searchParams = useSearchParams();
-  const next = searchParams.get("next");
   const linkError = searchParams.get("error");
   const reactivateDate = searchParams.get("reactivate");
   const [loginId, setLoginId] = useState("");
