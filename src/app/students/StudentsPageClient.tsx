@@ -11,6 +11,10 @@ import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 import { gradeToTextbookBand, resolveTextbookSelection } from "@/lib/textbookPublisherCatalog";
 import { parseStudentPasteBatch } from "@/lib/parseStudentPasteText";
+import {
+  validateStudentContactPhone,
+  validateStudentEmailFormat,
+} from "@/lib/studentPortalCredentials";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 
 type Student = {
@@ -46,6 +50,17 @@ type StudentRow = {
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const STUDENTS_PAGE_SIZE = 80;
 const STUDENTS_SEARCH_DEBOUNCE_MS = 300;
+
+type StudentPortalStatus = {
+  studentId: string;
+  hasAccount: boolean;
+  authEmail: string | null;
+  loginAllowed: boolean;
+  reactivateDate: string | null;
+  ready: boolean;
+  readyReason: string | null;
+  studentIdLoginOnly?: boolean;
+};
 
 type StudentForm = Omit<Student, "id" | "birthTs" | "searchBlob">;
 
@@ -96,6 +111,13 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [duplicateEmailPrompt, setDuplicateEmailPrompt] = useState<{
+    otherStudentId: string;
+    email: string;
+    /** pending add after user confirms student-id-only portal */
+    mode: "add" | "provision";
+    provisionStudentId?: string;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pageLoading, setPageLoading] = useState(false);
   const [listTotal, setListTotal] = useState(0);
@@ -109,8 +131,12 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
   const [pasteDraft, setPasteDraft] = useState("");
   const [pasteNotice, setPasteNotice] = useState("");
   const [pasteWarnings, setPasteWarnings] = useState<string[]>([]);
+  const [portalStatusById, setPortalStatusById] = useState<Record<string, StudentPortalStatus>>({});
+  const [portalBusyId, setPortalBusyId] = useState<string | null>(null);
+  const [portalNotice, setPortalNotice] = useState("");
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const isAdmin = navViewer?.role === "admin";
 
   const sortedStudents = useMemo(() => {
     const copied = [...students];
@@ -265,6 +291,87 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
     [query, statusFilter, inactiveKind],
   );
 
+  const fetchPortalStatus = useCallback(async (studentIds: string[]) => {
+    if (!isAdmin || !studentIds.length) {
+      setPortalStatusById({});
+      return;
+    }
+    try {
+      const params = new URLSearchParams({ ids: studentIds.join(",") });
+      const res = await fetch(`/api/students/portal-status?${params.toString()}`, {
+        credentials: "same-origin",
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        statusById?: Record<string, StudentPortalStatus>;
+      };
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error ?? "Failed to load portal status.");
+      }
+      setPortalStatusById(body.statusById ?? {});
+    } catch (e) {
+      setPortalNotice(e instanceof Error ? e.message : "Failed to load portal status.");
+    }
+  }, [isAdmin]);
+
+  const runPortalAction = useCallback(
+    async (
+      studentId: string,
+      action: "provision" | "reset-password" | "sync-email",
+      options?: { studentIdLoginOnly?: boolean },
+    ) => {
+      setPortalBusyId(studentId);
+      setPortalNotice("");
+      try {
+        const res = await fetch(`/api/students/${encodeURIComponent(studentId)}/portal-account`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            studentIdLoginOnly: options?.studentIdLoginOnly === true,
+          }),
+        });
+        const body = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          result?: { message?: string };
+          status?: StudentPortalStatus | null;
+        };
+        if (!res.ok || !body.ok) {
+          const err = body.error ?? "Portal action failed.";
+          if (
+            action === "provision" &&
+            !options?.studentIdLoginOnly &&
+            /already used by another student/i.test(err)
+          ) {
+            const student = students.find((s) => normalizeStudentId(s.id) === studentId);
+            const email = (student?.email ?? "").trim().toLowerCase();
+            const otherMatch = /student\s+(\d+)/i.exec(err);
+            setDuplicateEmailPrompt({
+              otherStudentId: otherMatch?.[1] ? normalizeStudentId(otherMatch[1]) : "?",
+              email: email || "(shared email)",
+              mode: "provision",
+              provisionStudentId: studentId,
+            });
+            return;
+          }
+          throw new Error(err);
+        }
+        if (body.status) {
+          setPortalStatusById((prev) => ({ ...prev, [studentId]: body.status! }));
+        }
+        setPortalNotice(body.result?.message ?? "Done.");
+      } catch (e) {
+        setPortalNotice(e instanceof Error ? e.message : "Portal action failed.");
+      } finally {
+        setPortalBusyId(null);
+      }
+    },
+    [students],
+  );
+
   const reloadStudentsList = useCallback(async () => {
     await fetchStudentsPage({ page: showAllStudents ? 1 : currentPage, showAll: showAllStudents });
     try {
@@ -280,6 +387,10 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
     }, STUDENTS_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [fetchStudentsPage, query, statusFilter, inactiveKind]);
+
+  useEffect(() => {
+    void fetchPortalStatus(students.map((s) => normalizeStudentId(s.id)));
+  }, [students, fetchPortalStatus]);
 
   const onFieldChange = (field: keyof StudentForm, value: string) => {
     setForm((prev) => {
@@ -341,14 +452,41 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
     setPasteNotice("");
     const addedIds: string[] = [];
     const failures: string[] = [];
+    const portalNotes: string[] = [];
 
     try {
       for (let i = 0; i < batch.students.length; i += 1) {
         const row = batch.students[i]!;
         const formRow = partialFieldsToForm(row.fields);
+        const label = formRow.nameEn || formRow.nameZh || formRow.nicknameEn || "student";
+
+        const check = await validateStudentCredentialsForSave(formRow);
+        if (!check.ok && !check.duplicateEmail) {
+          failures.push(`Row ${i + 1} (${label}): ${check.error}`);
+          continue;
+        }
+
+        let studentIdLoginOnly = false;
+        if (!check.ok && check.duplicateEmail) {
+          const useStudentId = window.confirm(
+            `Row ${i + 1} (${label}): Email ${check.email} is already used by student ${check.otherStudentId}.\n\n` +
+              `Use student ID only for Portal login?\n` +
+              `(Password = contact number. Email login will not work for this student.)\n\n` +
+              `Click OK = yes, Cancel = skip this row.`,
+          );
+          if (!useStudentId) {
+            failures.push(
+              `Row ${i + 1} (${label}): skipped — shared email with ${check.otherStudentId}, did not choose student-ID Portal.`,
+            );
+            continue;
+          }
+          studentIdLoginOnly = true;
+        }
+
         let inserted = false;
+        let candidateId = "";
         for (let attempt = 0; attempt < 5; attempt += 1) {
-          const candidateId = await fetchNextStudentIdFromDb();
+          candidateId = await fetchNextStudentIdFromDb();
           const { error } = await supabase
             .from("students")
             .insert([{ id: candidateId, ...mapFormToRow(formRow) }]);
@@ -358,15 +496,22 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
             break;
           }
           if (!isDuplicateStudentIdError(error)) {
-            failures.push(
-              `Row ${i + 1} (${formRow.nameEn || formRow.nameZh || formRow.nicknameEn || "student"}): ${error.message}`,
-            );
+            failures.push(`Row ${i + 1} (${label}): ${error.message}`);
             inserted = true; // stop retrying this row
             break;
           }
         }
         if (!inserted) {
           failures.push(`Row ${i + 1}: could not allocate student ID.`);
+          continue;
+        }
+        if (candidateId && addedIds.includes(candidateId)) {
+          const portal = await provisionPortalAfterCreate(candidateId, { studentIdLoginOnly });
+          if (!portal.ok) {
+            portalNotes.push(`${candidateId}: student saved, portal not opened — ${portal.message}`);
+          } else if (studentIdLoginOnly) {
+            portalNotes.push(`${candidateId}: Portal opened — login with student ID only.`);
+          }
         }
       }
 
@@ -381,7 +526,7 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
             : `Added ${addedIds.length} students (IDs ${addedIds[0]}–${addedIds[addedIds.length - 1]}).`,
         );
       }
-      setPasteWarnings([...batch.warnings, ...failures]);
+      setPasteWarnings([...batch.warnings, ...failures, ...portalNotes]);
       if (addedIds.length === 0 && failures.length > 0) {
         setFormError(failures[0] ?? "Failed to add students.");
       }
@@ -389,6 +534,44 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
       setSavingForm(false);
     }
   }, [pasteDraft, partialFieldsToForm, reloadStudentsList]);
+
+  const insertNewStudentAndProvision = useCallback(
+    async (studentIdLoginOnly: boolean) => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const candidateId = await fetchNextStudentIdFromDb();
+        const { error } = await supabase
+          .from("students")
+          .insert([{ id: candidateId, ...mapFormToRow(form) }]);
+
+        if (!error) {
+          const portal = await provisionPortalAfterCreate(candidateId, { studentIdLoginOnly });
+          await reloadStudentsList();
+          setForm(emptyForm);
+          if (portal.ok) {
+            setFormNotice(
+              studentIdLoginOnly
+                ? `Student record added (ID ${candidateId}). Portal opened — login with student ID + contact number (not email).`
+                : `Student record added (ID ${candidateId}). Portal account opened — login with email + contact number.`,
+            );
+          } else {
+            setFormNotice(`Student record added (ID ${candidateId}).`);
+            setFormError(`Portal account was not opened: ${portal.message}`);
+          }
+          return;
+        }
+
+        if (!isDuplicateStudentIdError(error)) {
+          setFormError(`Failed to add student: ${error.message}`);
+          return;
+        }
+      }
+
+      setFormError(
+        "Failed to add student: could not allocate a new student ID (duplicate). Please refresh the page and try again.",
+      );
+    },
+    [form, reloadStudentsList],
+  );
 
   const saveStudent = () => {
     void saveStudentAsync();
@@ -400,7 +583,20 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
     setSavingForm(true);
 
     try {
+      const check = await validateStudentCredentialsForSave(form, editingId ?? undefined);
+      if (!check.ok && !check.duplicateEmail) {
+        setFormError(check.error);
+        return;
+      }
+
       if (editingId) {
+        if (!check.ok && check.duplicateEmail) {
+          setFormError(
+            `Email is already used by student ${check.otherStudentId}. Change to a unique email, or keep the current email.`,
+          );
+          return;
+        }
+
         const { error } = await supabase
           .from("students")
           .update(mapFormToRow(form))
@@ -419,31 +615,31 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
         return;
       }
 
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const candidateId = await fetchNextStudentIdFromDb();
-        const { error } = await supabase
-          .from("students")
-          .insert([{ id: candidateId, ...mapFormToRow(form) }]);
-
-        if (!error) {
-          await reloadStudentsList();
-          setForm(emptyForm);
-          setFormNotice(`Student record added successfully (ID ${candidateId}).`);
-          return;
-        }
-
-        if (!isDuplicateStudentIdError(error)) {
-          setFormError(`Failed to add student: ${error.message}`);
-          return;
-        }
+      if (!check.ok && check.duplicateEmail) {
+        setDuplicateEmailPrompt({
+          otherStudentId: check.otherStudentId,
+          email: check.email,
+          mode: "add",
+        });
+        return;
       }
 
-      setFormError(
-        "Failed to add student: could not allocate a new student ID (duplicate). Please refresh the page and try again.",
-      );
+      await insertNewStudentAndProvision(false);
     } finally {
       setSavingForm(false);
     }
+  };
+
+  const confirmDuplicateEmailStudentIdPortal = () => {
+    const prompt = duplicateEmailPrompt;
+    setDuplicateEmailPrompt(null);
+    if (!prompt) return;
+    if (prompt.mode === "provision" && prompt.provisionStudentId) {
+      void runPortalAction(prompt.provisionStudentId, "provision", { studentIdLoginOnly: true });
+      return;
+    }
+    setSavingForm(true);
+    void insertNewStudentAndProvision(true).finally(() => setSavingForm(false));
   };
 
   const startEditSelected = () => {
@@ -518,7 +714,8 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">All Student Information</h1>
             <p className="mt-1 text-sm text-blue-100">
-              Fill in the form below to add a student (single entry).
+              Fill in the form below to add a student. A Portal account is opened automatically when
+              email and contact number pass validation.
             </p>
             <p className="mt-1 text-xs text-blue-100/90">
               System ID: {editingId ?? suggestedNextId} (auto-numbered, starting from 00001)
@@ -552,12 +749,14 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
                 label="Contact number"
                 value={form.studentPhone}
                 onChange={(v) => onFieldChange("studentPhone", v)}
+                hint="Exactly 8 digits, no spaces (also used as Portal password)."
               />
               <InputField
                 label="Email"
                 type="email"
                 value={form.email}
                 onChange={(v) => onFieldChange("email", v)}
+                hint="Must include @ and be unique (used as Portal login)."
               />
               <InputField
                 label="School"
@@ -848,6 +1047,9 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
                   </button>
                   </div>
                 </div>
+                {portalNotice ? (
+                  <p className="mt-2 text-xs font-medium text-[#1d76c2]">{portalNotice}</p>
+                ) : null}
                 {selectionError && (
                   <p className="mt-2 text-xs font-medium text-red-600">{selectionError}</p>
                 )}
@@ -867,7 +1069,7 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
               className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
               <ClientOnlyAfterMount fallback={<StudentsTableSkeleton />}>
-              <table className="min-w-[1500px] divide-y divide-slate-200">
+              <table className={`divide-y divide-slate-200 ${isAdmin ? "min-w-[1780px]" : "min-w-[1500px]"}`}>
                 <thead className="bg-slate-50">
                   <tr className="divide-x divide-slate-200">
                     <th className="sticky left-0 top-0 z-50 w-[64px] whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
@@ -920,11 +1122,23 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
                     <SortableHeader label="Textbook publisher" columnKey="textbookPublisher" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                     <SortableHeader label="Grade" columnKey="grade" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                     <SortableHeader label="Maths instruction" columnKey="mathLanguage" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    {isAdmin ? (
+                      <th className="sticky top-0 z-30 min-w-[220px] whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                        Portal
+                      </th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {sortedStudents.map((student) => {
                     const studentIdDisplay = normalizeStudentId(student.id);
+                    const portalStatus = portalStatusById[studentIdDisplay];
+                    const portalBusy = portalBusyId === studentIdDisplay;
+                    const emailMismatch =
+                      portalStatus?.hasAccount &&
+                      !portalStatus.studentIdLoginOnly &&
+                      portalStatus.authEmail &&
+                      portalStatus.authEmail !== student.email.trim().toLowerCase();
                     return (
                       <tr
                         key={student.id}
@@ -988,6 +1202,71 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
                         <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
                           {student.mathLanguage}
                         </td>
+                        {isAdmin ? (
+                          <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-700">
+                            {!portalStatus ? (
+                              <span className="text-slate-400">…</span>
+                            ) : portalStatus.hasAccount ? (
+                              <div className="flex flex-col gap-1.5">
+                                <span
+                                  className={
+                                    portalStatus.loginAllowed
+                                      ? "font-semibold text-emerald-700"
+                                      : "font-semibold text-amber-700"
+                                  }
+                                >
+                                  {portalStatus.loginAllowed ? "已開通" : "已開通（停用）"}
+                                </span>
+                                {!portalStatus.loginAllowed && portalStatus.reactivateDate ? (
+                                  <span className="text-[11px] text-slate-500">
+                                    可再開：{portalStatus.reactivateDate}
+                                  </span>
+                                ) : null}
+                                {portalStatus.studentIdLoginOnly ? (
+                                  <span className="text-[11px] text-slate-500">請用學生號碼登入</span>
+                                ) : null}
+                                {emailMismatch ? (
+                                  <span className="text-[11px] text-amber-700">登入電郵不同步</span>
+                                ) : null}
+                                <div className="flex flex-wrap gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={portalBusy}
+                                    onClick={() => void runPortalAction(studentIdDisplay, "reset-password")}
+                                    className="rounded border border-slate-300 bg-white px-2 py-0.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                  >
+                                    重設密碼
+                                  </button>
+                                  {emailMismatch ? (
+                                    <button
+                                      type="button"
+                                      disabled={portalBusy}
+                                      onClick={() => void runPortalAction(studentIdDisplay, "sync-email")}
+                                      className="rounded border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                                    >
+                                      同步電郵
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col gap-1.5">
+                                <span className="font-semibold text-slate-500">未開通</span>
+                                {!portalStatus.ready && portalStatus.readyReason ? (
+                                  <span className="text-[11px] text-red-600">{portalStatus.readyReason}</span>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  disabled={portalBusy || !portalStatus.ready}
+                                  onClick={() => void runPortalAction(studentIdDisplay, "provision")}
+                                  className="rounded border border-[#1d76c2]/30 bg-[#1d76c2]/5 px-2 py-0.5 font-semibold text-[#1d76c2] hover:bg-[#1d76c2]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  開 Portal 帳號
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        ) : null}
                       </tr>
                     );
                   })}
@@ -1149,6 +1428,46 @@ export default function StudentsPageClient({ navViewer = null }: { navViewer?: A
           </div>
         </div>
       )}
+
+      {duplicateEmailPrompt ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-bold text-slate-900">共用 Email — 只用學生號碼登入？</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Email <span className="font-semibold text-slate-900">{duplicateEmailPrompt.email}</span>{" "}
+              已被學生{" "}
+              <span className="font-semibold text-slate-900">{duplicateEmailPrompt.otherStudentId}</span>{" "}
+              使用。
+            </p>
+            <p className="mt-2 text-sm text-slate-600">
+              是否為此學生開 Portal，並<strong>只用學生號碼</strong>登入（密碼仍為聯絡電話；不能用此
+              Email 登入）？
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDuplicateEmailPrompt(null);
+                  setFormError(
+                    `Cancelled — email is shared with student ${duplicateEmailPrompt.otherStudentId}. Use a unique email, or confirm student-ID Portal login.`,
+                  );
+                }}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={savingForm || portalBusyId !== null}
+                onClick={confirmDuplicateEmailStudentIdPortal}
+                className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#165f9d] disabled:opacity-60"
+              >
+                是，只用學生號碼
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1186,6 +1505,7 @@ type InputFieldProps = {
   onChange: (value: string) => void;
   type?: "text" | "date" | "email" | "select";
   options?: string[];
+  hint?: string;
 };
 
 function InputFieldControlFallback({ label }: { label: string }) {
@@ -1200,8 +1520,16 @@ function InputFieldControlFallback({ label }: { label: string }) {
   );
 }
 
-function InputField({ label, value, onChange, type = "text", options = [] }: InputFieldProps) {
+function InputField({
+  label,
+  value,
+  onChange,
+  type = "text",
+  options = [],
+  hint,
+}: InputFieldProps) {
   const controlFallback = <InputFieldControlFallback label={label} />;
+  const hintEl = hint ? <p className="mt-1 text-[11px] leading-4 text-slate-500">{hint}</p> : null;
 
   if (type === "select") {
     return (
@@ -1221,6 +1549,7 @@ function InputField({ label, value, onChange, type = "text", options = [] }: Inp
                 </option>
               ))}
             </select>
+            {hintEl}
           </>
         </ClientOnlyAfterMount>
       </label>
@@ -1238,6 +1567,7 @@ function InputField({ label, value, onChange, type = "text", options = [] }: Inp
             onChange={(event) => onChange(event.target.value)}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
           />
+          {hintEl}
         </>
       </ClientOnlyAfterMount>
     </label>
@@ -1292,6 +1622,100 @@ function isDuplicateStudentIdError(error: { code?: string; message?: string }): 
   return code === "23505" || message.includes("duplicate key") || message.includes("students_pkey");
 }
 
+type CredentialCheckResult =
+  | { ok: true }
+  | { ok: false; duplicateEmail: false; error: string }
+  | {
+      ok: false;
+      duplicateEmail: true;
+      otherStudentId: string;
+      email: string;
+      error: string;
+    };
+
+async function validateStudentCredentialsForSave(
+  form: StudentForm,
+  excludeStudentId?: string,
+): Promise<CredentialCheckResult> {
+  const phone = validateStudentContactPhone(form.studentPhone);
+  if (!phone.ok) return { ok: false, duplicateEmail: false, error: phone.error };
+  const email = validateStudentEmailFormat(form.email);
+  if (!email.ok) return { ok: false, duplicateEmail: false, error: email.error };
+
+  // Editing: keep legacy shared emails if unchanged (special sibling cases).
+  if (excludeStudentId) {
+    const { data: current, error: currentError } = await supabase
+      .from("students")
+      .select("email")
+      .eq("id", excludeStudentId)
+      .maybeSingle();
+    if (currentError) {
+      return {
+        ok: false,
+        duplicateEmail: false,
+        error: `Failed to check email uniqueness: ${currentError.message}`,
+      };
+    }
+    const currentEmail = String(current?.email ?? "")
+      .trim()
+      .toLowerCase();
+    if (currentEmail && currentEmail === email.value) {
+      return { ok: true };
+    }
+  }
+
+  let query = supabase.from("students").select("id").ilike("email", email.value).limit(1);
+  if (excludeStudentId) {
+    query = query.neq("id", excludeStudentId);
+  }
+  const { data, error } = await query;
+  if (error) {
+    return {
+      ok: false,
+      duplicateEmail: false,
+      error: `Failed to check email uniqueness: ${error.message}`,
+    };
+  }
+  if (data?.length) {
+    const otherId = normalizeStudentId(String(data[0]?.id ?? ""));
+    return {
+      ok: false,
+      duplicateEmail: true,
+      otherStudentId: otherId || "?",
+      email: email.value,
+      error: `Email is already used by student ${otherId || "(another record)"}.`,
+    };
+  }
+  return { ok: true };
+}
+
+async function provisionPortalAfterCreate(
+  studentId: string,
+  options?: { studentIdLoginOnly?: boolean },
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const res = await fetch(`/api/students/${encodeURIComponent(studentId)}/portal-account`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "provision",
+        studentIdLoginOnly: options?.studentIdLoginOnly === true,
+      }),
+    });
+    const body = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      result?: { message?: string };
+    };
+    if (!res.ok || !body.ok) {
+      return { ok: false, message: body.error ?? "Failed to open portal account." };
+    }
+    return { ok: true, message: body.result?.message ?? "Portal account opened." };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Failed to open portal account." };
+  }
+}
 
 async function fetchNextStudentIdFromDb(): Promise<string> {
   const res = await fetch("/api/students/next-id", { credentials: "same-origin" });
