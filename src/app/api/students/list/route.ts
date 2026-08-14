@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getViewerContext } from "@/lib/authz";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { getStudentPortalStatusBatch } from "@/lib/studentPortalProvision.server";
 import { listStudentsForPage } from "@/lib/studentsListServer";
 
 export const dynamic = "force-dynamic";
@@ -35,10 +36,17 @@ export async function GET(request: NextRequest) {
       status,
       inactiveKind: status === "inactive" ? inactiveKind : "all",
     });
+    let portalStatusById = {};
+    try {
+      portalStatusById = await getStudentPortalStatusBatch(result.rows.map((r) => r.id));
+    } catch {
+      portalStatusById = {};
+    }
     return NextResponse.json({
       ok: true,
       students: result.rows,
       visibility: result.manualInactiveEffectiveById,
+      portalStatusById,
       offset,
       limit,
       total: result.total,

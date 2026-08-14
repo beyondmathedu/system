@@ -1,14 +1,18 @@
 import "server-only";
 
 import type { SupabaseClient, User } from "@supabase/supabase-js";
-import { getStudentPortalAccessState } from "@/lib/studentPortalAccess.server";
+import { computeStudentPortalAccessState } from "@/lib/studentPortalAccess.server";
 import {
   passwordFromContactNumber,
   validateStudentContactPhone,
   validateStudentEmailFormat,
 } from "@/lib/studentPortalCredentials";
+import { defaultLessonYear } from "@/lib/lessonCalendar";
+import { hkTodayIso } from "@/lib/examDateVisibility";
+import { loadStudentInactivePeriodsBatchServer } from "@/lib/lessonDataServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeStudentId } from "@/lib/studentId";
+import { buildStudentInactivePeriodsById } from "@/lib/studentVisibility";
 
 export type StudentPortalStatusRow = {
   studentId: string;
@@ -44,6 +48,7 @@ type StudentRecord = {
   id: string;
   email: string | null;
   student_phone: string | null;
+  grade?: string | null;
 };
 
 /** Contact number as login password — exactly 8 digits, no spaces. */
@@ -53,18 +58,56 @@ function normalizeEmail(raw: string | null | undefined): string {
   return String(raw ?? "").trim().toLowerCase();
 }
 
-async function listAllAuthUsers(sb: SupabaseClient): Promise<User[]> {
-  const users: User[] = [];
-  let page = 1;
-  const perPage = 1000;
-  for (;;) {
-    const { data, error } = await sb.auth.admin.listUsers({ page, perPage });
-    if (error) throw new Error(error.message);
-    users.push(...(data.users ?? []));
-    if ((data.users ?? []).length < perPage) break;
-    page += 1;
+async function getAuthUsersByIds(
+  sb: SupabaseClient,
+  userIds: string[],
+): Promise<Map<string, User>> {
+  const unique = [...new Set(userIds.filter(Boolean))];
+  const out = new Map<string, User>();
+  if (!unique.length) return out;
+
+  const concurrency = 8;
+  let idx = 0;
+  async function worker() {
+    while (idx < unique.length) {
+      const i = idx;
+      idx += 1;
+      const id = unique[i]!;
+      const { data, error } = await sb.auth.admin.getUserById(id);
+      if (error || !data.user) continue;
+      out.set(id, data.user);
+    }
   }
-  return users;
+  await Promise.all(Array.from({ length: Math.min(concurrency, unique.length) }, () => worker()));
+  return out;
+}
+
+/** Look up one Auth user by email without listing the whole user directory. */
+async function findAuthUserByEmail(email: string): Promise<User | undefined> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
+  }
+  const target = normalizeEmail(email);
+  if (!target) return undefined;
+
+  const res = await fetch(
+    `${url}/auth/v1/admin/users?page=1&per_page=50&filter=${encodeURIComponent(target)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Auth email lookup failed (${res.status})`);
+  }
+  const body = (await res.json()) as { users?: User[] };
+  return (body.users ?? []).find((u) => normalizeEmail(u.email) === target);
 }
 
 async function loadStudentRecord(sb: SupabaseClient, studentId: string): Promise<StudentRecord | null> {
@@ -114,10 +157,11 @@ export async function getStudentPortalStatusBatch(
   if (!ids.length) return out;
 
   const sb = getSupabaseAdmin();
-  const [{ data: studentsRaw, error: studentsError }, { data: profilesRaw, error: profilesError }] =
+  const [{ data: studentsRaw, error: studentsError }, { data: profilesRaw, error: profilesError }, periodRows] =
     await Promise.all([
-      sb.from("students").select("id, email, student_phone").in("id", ids),
+      sb.from("students").select("id, email, student_phone, grade").in("id", ids),
       sb.from("user_profiles").select("user_id, role, student_id").in("student_id", ids),
+      loadStudentInactivePeriodsBatchServer(sb, ids),
     ]);
   if (studentsError) throw new Error(studentsError.message);
   if (profilesError) throw new Error(profilesError.message);
@@ -138,45 +182,54 @@ export async function getStudentPortalStatusBatch(
     });
   }
 
-  const authUsers = await listAllAuthUsers(sb);
-  const authById = new Map(authUsers.map((u) => [u.id, u]));
+  const linkedUserIds = [...profileByStudentId.values()]
+    .filter((p) => p.role === "student" && p.user_id)
+    .map((p) => p.user_id);
+  const authById = await getAuthUsersByIds(sb, linkedUserIds);
+  const periodsById = buildStudentInactivePeriodsById(periodRows);
+  const todayIso = hkTodayIso();
+  const year = defaultLessonYear();
 
-  await Promise.all(
-    ids.map(async (sid) => {
-      const student = studentsById.get(sid);
-      if (!student) {
-        out[sid] = {
-          studentId: sid,
-          hasAccount: false,
-          authEmail: null,
-          loginAllowed: false,
-          reactivateDate: null,
-          ready: false,
-          readyReason: "Student not found",
-          studentIdLoginOnly: false,
-        };
-        return;
-      }
-
-      const { ready, readyReason } = readiness(student);
-      const profile = profileByStudentId.get(sid);
-      const hasAccount = profile?.role === "student" && Boolean(profile.user_id);
-      const authUser = hasAccount ? authById.get(profile!.user_id) : undefined;
-      const authEmail = authUser?.email ? normalizeEmail(authUser.email) : null;
-      const access = await getStudentPortalAccessState(sid);
-
+  for (const sid of ids) {
+    const student = studentsById.get(sid);
+    if (!student) {
       out[sid] = {
         studentId: sid,
-        hasAccount,
-        authEmail,
-        loginAllowed: access.allowed,
-        reactivateDate: access.reactivateDate,
-        ready,
-        readyReason,
-        studentIdLoginOnly: isStudentIdOnlyAuthEmail(authEmail),
+        hasAccount: false,
+        authEmail: null,
+        loginAllowed: false,
+        reactivateDate: null,
+        ready: false,
+        readyReason: "Student not found",
+        studentIdLoginOnly: false,
       };
-    }),
-  );
+      continue;
+    }
+
+    const { ready, readyReason } = readiness(student);
+    const profile = profileByStudentId.get(sid);
+    const hasAccount = profile?.role === "student" && Boolean(profile.user_id);
+    const authUser = hasAccount ? authById.get(profile!.user_id) : undefined;
+    const authEmail = authUser?.email ? normalizeEmail(authUser.email) : null;
+    const access = computeStudentPortalAccessState({
+      studentId: sid,
+      grade: student.grade,
+      periods: periodsById[sid] ?? [],
+      todayIso,
+      year,
+    });
+
+    out[sid] = {
+      studentId: sid,
+      hasAccount,
+      authEmail,
+      loginAllowed: access.allowed,
+      reactivateDate: access.reactivateDate,
+      ready,
+      readyReason,
+      studentIdLoginOnly: isStudentIdOnlyAuthEmail(authEmail),
+    };
+  }
 
   return out;
 }
@@ -210,8 +263,7 @@ export async function provisionStudentPortalAccount(
     throw new Error("Password must be at least 6 characters");
   }
 
-  const authUsers = await listAllAuthUsers(sb);
-  let authUser = authUsers.find((u) => normalizeEmail(u.email) === normalizeEmail(authEmail));
+  let authUser = await findAuthUserByEmail(authEmail);
 
   const existingProfile = await sb
     .from("user_profiles")

@@ -19,6 +19,34 @@ export type StudentPortalAccessState = {
   reactivateDate: string | null;
 };
 
+/** Same inactive-today rule as login, from already-loaded grade + periods. */
+export function computeStudentPortalAccessState(input: {
+  studentId: string;
+  grade: string | null | undefined;
+  periods: import("@/lib/studentVisibility").StudentInactivePeriod[];
+  todayIso?: string;
+  year?: number;
+}): StudentPortalAccessState {
+  const sid = normalizeStudentId(input.studentId);
+  if (!sid) return { allowed: false, reactivateDate: null };
+
+  const todayIso = input.todayIso ?? hkTodayIso();
+  const year = input.year ?? defaultLessonYear();
+  const periods = withAutoF6InactivePeriod({
+    periods: input.periods ?? [],
+    studentId: sid,
+    grade: String(input.grade ?? ""),
+    year,
+  });
+
+  if (!isStudentInactiveOnDateFromPeriods({ periods, dateIso: todayIso })) {
+    return { allowed: true, reactivateDate: null };
+  }
+
+  const covering = getStudentInactivePeriodOnDate(periods, todayIso);
+  return { allowed: false, reactivateDate: covering?.endDate ?? null };
+}
+
 export async function getStudentPortalAccessState(
   studentId: string,
 ): Promise<StudentPortalAccessState> {
@@ -31,23 +59,12 @@ export async function getStudentPortalAccessState(
     loadStudentInactivePeriodsBatchServer(supabase, [sid]),
   ]);
 
-  const grade = String((studentRow as { grade?: string | null } | null)?.grade ?? "");
   const byId = buildStudentInactivePeriodsById(periodRows);
-  const todayIso = hkTodayIso();
-  const year = defaultLessonYear();
-  const periods = withAutoF6InactivePeriod({
-    periods: byId[sid] ?? [],
+  return computeStudentPortalAccessState({
     studentId: sid,
-    grade,
-    year,
+    grade: String((studentRow as { grade?: string | null } | null)?.grade ?? ""),
+    periods: byId[sid] ?? [],
   });
-
-  if (!isStudentInactiveOnDateFromPeriods({ periods, dateIso: todayIso })) {
-    return { allowed: true, reactivateDate: null };
-  }
-
-  const covering = getStudentInactivePeriodOnDate(periods, todayIso);
-  return { allowed: false, reactivateDate: covering?.endDate ?? null };
 }
 
 export function inactiveStudentPortalSignOutPath(reactivateDate?: string | null): string {
