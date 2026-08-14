@@ -33,10 +33,9 @@ function inactiveStudentLoginMessage(reactivateDate: string | null): string {
 
 function LoginForm() {
   const searchParams = useSearchParams();
-  const next = searchParams.get("next");
   const linkError = searchParams.get("error");
   const reactivateDate = searchParams.get("reactivate");
-  const [email, setEmail] = useState("");
+  const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -53,8 +52,33 @@ function LoginForm() {
     e.preventDefault();
     setLoading(true);
     setError("");
+
+    let email = loginId.trim();
+    try {
+      const resolveRes = await fetch("/api/auth/resolve-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: email }),
+      });
+      const resolveBody = (await resolveRes.json()) as {
+        ok?: boolean;
+        error?: string;
+        email?: string;
+      };
+      if (!resolveRes.ok || !resolveBody.ok || !resolveBody.email) {
+        setLoading(false);
+        setError(resolveBody.error ?? "無法辨識登入帳號");
+        return;
+      }
+      email = resolveBody.email;
+    } catch {
+      setLoading(false);
+      setError("無法辨識登入帳號，請再試一次。");
+      return;
+    }
+
     const { error: signInError } = await supabaseBrowser.auth.signInWithPassword({
-      email: email.trim(),
+      email,
       password,
     });
     if (signInError) {
@@ -62,7 +86,7 @@ function LoginForm() {
       const msg = signInError.message || "登入失敗";
       if (/invalid login credentials/i.test(msg)) {
         setError(
-          "Email 或密碼不正確。若剛重設密碼，請用郵件裡設定的新密碼；或到 Supabase → Authentication → Users 確認此 Email 已建立並已 Auto Confirm。",
+          "帳號或密碼不正確。學生可用 Email 或學生號碼登入，密碼為聯絡電話。職員請用 Email。",
         );
       } else {
         setError(msg);
@@ -128,19 +152,22 @@ function LoginForm() {
         </p>
         <h1 className="text-xl font-bold text-slate-900">登入</h1>
         <p className="mt-1 text-sm text-slate-600">
-          用於課堂排課、學生課堂記錄、房間使用與 Tutor Monthly Record 管理。
+          學生可用 Email 或學生號碼登入（密碼為聯絡電話）；職員請用 Email。
         </p>
         <ClientOnlyAfterMount fallback={<LoginFormFieldsFallback />}>
           <form className="mt-5 space-y-4" onSubmit={onSubmit}>
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Email 或學生號碼
+              </label>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text"
+                value={loginId}
+                onChange={(e) => setLoginId(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
                 required
-                autoComplete="email"
+                autoComplete="username"
+                placeholder="例如 email@… 或 00145"
               />
             </div>
           <div>

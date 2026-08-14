@@ -127,12 +127,16 @@ export function getPendingMakeupPhase(
 }
 
 /** Always editable — 2‑month window is advisory only. */
-export function isPendingMakeupEditable(_fromDate: string, _todayYmd: string): boolean {
+export function isPendingMakeupEditable(fromDate: string, todayYmd: string): boolean {
+  void fromDate;
+  void todayYmd;
   return true;
 }
 
 /** Always visible so overdue pending makeup can still be rescheduled. */
-export function isPendingMakeupVisible(_fromDate: string, _todayYmd: string): boolean {
+export function isPendingMakeupVisible(fromDate: string, todayYmd: string): boolean {
+  void fromDate;
+  void todayYmd;
   return true;
 }
 

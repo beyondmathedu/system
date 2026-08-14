@@ -45,7 +45,6 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
     scheduleRecords: initialBootstrap.scheduleRecords,
     yearState: initialBootstrap.yearState,
     inactivePeriods: initialBootstrap.inactivePeriods,
-    nowMs: Date.now(),
   });
   const initialReadOnly =
     viewer.role === "tutor" ||

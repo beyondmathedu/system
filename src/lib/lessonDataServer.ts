@@ -624,7 +624,8 @@ export async function loadFeeRecordBootstrapCached(
   const cached = await unstable_cache(
     async (): Promise<FeeRecordBootstrapCachedCore> => {
       const payload = await loadFeeRecordBootstrapUncached(y, m);
-      const { openingResult: _omit, ...rest } = payload;
+      const { openingResult, ...rest } = payload;
+      void openingResult;
       return rest;
     },
     ["fee-record-bootstrap-v2", String(y), String(m)],
