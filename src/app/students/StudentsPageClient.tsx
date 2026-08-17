@@ -1066,7 +1066,10 @@ export default function StudentsPageClient({
               id={tableScrollId}
               className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
-              <ClientOnlyAfterMount fallback={<StudentsTableSkeleton />}>
+              <ClientOnlyAfterMount
+                fallback={<StudentsTableSkeleton />}
+                disabled={Boolean(initialList)}
+              >
               <table className={`divide-y divide-slate-200 ${isAdmin ? "min-w-[1780px]" : "min-w-[1500px]"}`}>
                 <thead className="bg-slate-50">
                   <tr className="divide-x divide-slate-200">

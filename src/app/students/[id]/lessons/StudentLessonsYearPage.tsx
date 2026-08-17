@@ -10,6 +10,7 @@ import { VirtualTableSpacerRow } from "@/components/VirtualTableSpacerRow";
 import { supabase } from "@/lib/supabase";
 import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import type { StudentLessonsBootstrapPayload } from "@/lib/lessonDataServer";
+import { hydrateLessonYearFromBootstrap } from "@/lib/studentLessonsBootstrapHydrate";
 import { hasPendingLessonYearStateSaves } from "@/lib/queueSaveLessonYearState";
 import {
   loadTimetableDayRemarksForStudent,
@@ -644,26 +645,39 @@ export function StudentLessonsYearPage({
   const searchParams = useSearchParams();
   const rawId = String(params?.id || "");
   const studentId = normalizeStudentId(rawId);
+  const [initialHydrated] = useState(() =>
+    initialBootstrap ? hydrateLessonYearFromBootstrap(initialBootstrap, studentId, targetYear) : null,
+  );
+  const seededBootstrapRef = useRef(Boolean(initialHydrated));
   const { formatRoom, pickerLabel, pickerToStorage, registry } = useRoomDisplayLabels();
-  const [studentSummary, setStudentSummary] = useState<StudentSummary>({
-    id: studentId,
-    nameZh: "",
-    nameEn: "",
-    nicknameEn: "",
-    grade: "",
-    school: "",
-    textbookPublisher: "",
-  });
-  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>({
-    examDate: "",
-    examContent: "",
-  });
-  const [studentLoaded, setStudentLoaded] = useState(false);
-  const [studentNotFound, setStudentNotFound] = useState(false);
-  const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">("active");
-  const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
-  const [visibilityReactivateDate, setVisibilityReactivateDate] = useState<string | null>(null);
-  const [inactivePeriods, setInactivePeriods] = useState<StudentInactivePeriodRow[]>([]);
+  const [studentSummary, setStudentSummary] = useState<StudentSummary>(() =>
+    initialHydrated?.studentSummary ?? {
+      id: studentId,
+      nameZh: "",
+      nameEn: "",
+      nicknameEn: "",
+      grade: "",
+      school: "",
+      textbookPublisher: "",
+    },
+  );
+  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>(() =>
+    initialHydrated?.examInfo ?? { examDate: "", examContent: "" },
+  );
+  const [studentLoaded, setStudentLoaded] = useState(() => initialHydrated?.studentLoaded ?? false);
+  const [studentNotFound, setStudentNotFound] = useState(() => initialHydrated?.studentNotFound ?? false);
+  const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">(
+    () => initialHydrated?.visibilityMode ?? "active",
+  );
+  const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState(
+    () => initialHydrated?.visibilityEffectiveDate ?? "",
+  );
+  const [visibilityReactivateDate, setVisibilityReactivateDate] = useState<string | null>(
+    () => initialHydrated?.visibilityReactivateDate ?? null,
+  );
+  const [inactivePeriods, setInactivePeriods] = useState<StudentInactivePeriodRow[]>(
+    () => initialHydrated?.inactivePeriods ?? [],
+  );
   const [accessReady, setAccessReady] = useState(() => Boolean(initialBootstrap));
   const [isReadOnlyViewer, setIsReadOnlyViewer] = useState(Boolean(initialReadOnly));
   const [canEditTimetableRemarks, setCanEditTimetableRemarks] = useState(
@@ -675,9 +689,13 @@ export function StudentLessonsYearPage({
   const lessonTableColCount = isStudentPortal ? 8 : 11;
   const skipInitialBootstrapFetchRef = useRef(Boolean(initialBootstrap));
 
-  const [records, setRecords] = useState<ScheduleRecord[]>([]);
-  const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>([]);
-  const [attendance, setAttendance] = useState<Record<string, boolean>>({});
+  const [records, setRecords] = useState<ScheduleRecord[]>(() => initialHydrated?.records ?? []);
+  const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>(
+    () => initialHydrated?.roomSlotTutorRules ?? [],
+  );
+  const [attendance, setAttendance] = useState<Record<string, boolean>>(
+    () => initialHydrated?.attendance ?? {},
+  );
   const ATTENDANCE_STORAGE_KEY = `attendance:${studentId}:${targetYear}`;
 
   useEffect(() => {
@@ -781,10 +799,14 @@ export function StudentLessonsYearPage({
     navViewer,
   ]);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
-  const [hiddenDates, setHiddenDates] = useState<Record<string, boolean>>({});
+  const [hiddenDates, setHiddenDates] = useState<Record<string, boolean>>(
+    () => initialHydrated?.hiddenDates ?? {},
+  );
   const HIDDEN_DATES_STORAGE_KEY = `hidden_dates:${studentId}:${targetYear}`;
   const [hiddenNoticeExpanded, setHiddenNoticeExpanded] = useState(false);
-  const [overrides, setOverrides] = useState<Record<string, DayOverride>>({});
+  const [overrides, setOverrides] = useState<Record<string, DayOverride>>(
+    () => initialHydrated?.overrides ?? {},
+  );
   const OVERRIDES_STORAGE_KEY = `overrides:${studentId}:${targetYear}`;
   const overridesRef = useRef<Record<string, DayOverride>>({});
   const attendanceRef = useRef<Record<string, boolean>>({});
@@ -799,9 +821,13 @@ export function StudentLessonsYearPage({
   const lessonSummaryDraftByDateIsoRef = useRef<Record<string, string>>({});
   const lessonSummarySaveTimersRef = useRef<Map<string, number>>(new Map());
   const timetableRemarksByDateIsoRef = useRef<Record<string, string>>({});
-  const [rescheduleEntries, setRescheduleEntries] = useState<RescheduleEntry[]>([]);
+  const [rescheduleEntries, setRescheduleEntries] = useState<RescheduleEntry[]>(
+    () => initialHydrated?.rescheduleEntries ?? [],
+  );
   const RESCHEDULE_STORAGE_KEY = `reschedule:${studentId}:${targetYear}`;
-  const [extraEntries, setExtraEntries] = useState<ExtraEntry[]>([]);
+  const [extraEntries, setExtraEntries] = useState<ExtraEntry[]>(
+    () => initialHydrated?.extraEntries ?? [],
+  );
   const EXTRA_STORAGE_KEY = `extra_lessons:${studentId}:${targetYear}`;
   const [editingRescheduleId, setEditingRescheduleId] = useState<string | null>(null);
   const [fromLessonDate, setFromLessonDate] = useState<string>("");
@@ -1047,6 +1073,39 @@ export function StudentLessonsYearPage({
 
   useEffect(() => {
     if (!studentId || !accessReady) return;
+    if (seededBootstrapRef.current) {
+      seededBootstrapRef.current = false;
+      skipInitialBootstrapFetchRef.current = false;
+      if (typeof window !== "undefined" && initialHydrated) {
+        const scheduleKey = `lesson_schedule_records:${studentId}`;
+        try {
+          window.localStorage.setItem(scheduleKey, JSON.stringify(initialHydrated.records));
+          window.localStorage.setItem(
+            ATTENDANCE_STORAGE_KEY,
+            JSON.stringify(initialHydrated.attendance),
+          );
+          window.localStorage.setItem(
+            HIDDEN_DATES_STORAGE_KEY,
+            JSON.stringify(initialHydrated.hiddenDates),
+          );
+          window.localStorage.setItem(
+            OVERRIDES_STORAGE_KEY,
+            JSON.stringify(initialHydrated.overrides),
+          );
+          window.localStorage.setItem(
+            RESCHEDULE_STORAGE_KEY,
+            JSON.stringify(initialHydrated.rescheduleEntries),
+          );
+          window.localStorage.setItem(
+            EXTRA_STORAGE_KEY,
+            JSON.stringify(initialHydrated.extraEntries),
+          );
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
     const scheduleKey = `lesson_schedule_records:${studentId}`;
     let mounted = true;
     setStudentLoaded(false);
