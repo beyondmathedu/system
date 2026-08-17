@@ -57,6 +57,81 @@ function escapeIlikePattern(raw: string): string {
   return raw.replace(/[%_,]/g, "");
 }
 
+function isMissingStudentsListRpcError(error: { message?: string; code?: string } | null): boolean {
+  const msg = String(error?.message ?? "").toLowerCase();
+  const code = String(error?.code ?? "");
+  return (
+    code === "42883" ||
+    code === "PGRST202" ||
+    msg.includes("list_students_for_page") ||
+    msg.includes("could not find the function")
+  );
+}
+
+function isMissingNextStudentIdRpcError(error: { message?: string; code?: string } | null): boolean {
+  const msg = String(error?.message ?? "").toLowerCase();
+  const code = String(error?.code ?? "");
+  return (
+    code === "42883" ||
+    code === "PGRST202" ||
+    msg.includes("next_student_id") ||
+    msg.includes("could not find the function")
+  );
+}
+
+type StudentsListRpcRow = StudentsListRow & { total_count: number | string | null };
+
+async function listStudentsForPageViaRpc(
+  supabase: SupabaseClient,
+  params: StudentsListParams,
+  todayHkIso: string,
+  year: number,
+): Promise<StudentsListResult | null> {
+  const offset = Math.max(0, Math.floor(params.offset));
+  const limit = Math.min(200, Math.max(1, Math.floor(params.limit)));
+  const q = (params.q ?? "").trim();
+  const status = params.status ?? "active";
+  const inactiveKind: StudentsInactiveKind =
+    params.inactiveKind === "temporary" || params.inactiveKind === "graduated"
+      ? params.inactiveKind
+      : "all";
+
+  const { data, error } = await supabase.rpc("list_students_for_page", {
+    p_offset: offset,
+    p_limit: limit,
+    p_q: q || null,
+    p_status: status,
+    p_inactive_kind: status === "inactive" ? inactiveKind : "all",
+    p_today: todayHkIso,
+    p_year: year,
+  });
+  if (error) {
+    if (isMissingStudentsListRpcError(error)) return null;
+    throw new Error(error.message);
+  }
+
+  const rpcRows = (data ?? []) as StudentsListRpcRow[];
+  const totalRaw = rpcRows[0]?.total_count;
+  const total =
+    typeof totalRaw === "number"
+      ? totalRaw
+      : Number.parseInt(String(totalRaw ?? rpcRows.length), 10) || 0;
+  const rows = rpcRows.map((row) => {
+    const copy = { ...row };
+    delete (copy as { total_count?: unknown }).total_count;
+    return copy as StudentsListRow;
+  });
+
+  const { currentInactiveStartById } = await loadAllInactivePeriodsMaps(supabase, todayHkIso);
+
+  return {
+    rows,
+    total,
+    hasMore: offset + rows.length < total,
+    manualInactiveEffectiveById: currentInactiveStartById,
+  };
+}
+
 function studentMatchesStatus(
   row: StudentsListRow,
   inactivePeriodsById: Record<string, import("@/lib/studentVisibility").StudentInactivePeriod[]>,
@@ -101,6 +176,11 @@ export async function listStudentsForPage(
       : "all";
   const todayHkIso = hkTodayIso();
   const year = hkYear();
+
+  if (status !== "all") {
+    const rpcResult = await listStudentsForPageViaRpc(supabase, params, todayHkIso, year);
+    if (rpcResult) return rpcResult;
+  }
 
   let query = supabase
     .from("students")
@@ -287,6 +367,14 @@ async function loadAllInactivePeriodsMaps(
 export async function fetchNextStudentIdFromDbServer(
   supabase: SupabaseClient,
 ): Promise<string> {
+  const { data, error } = await supabase.rpc("next_student_id");
+  if (!error && typeof data === "string" && data.trim()) {
+    return data.trim();
+  }
+  if (error && !isMissingNextStudentIdRpcError(error)) {
+    throw new Error(error.message);
+  }
+
   const pageSize = 1000;
   let from = 0;
   let maxNumber = 0;
