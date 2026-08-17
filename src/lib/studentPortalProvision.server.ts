@@ -58,30 +58,6 @@ function normalizeEmail(raw: string | null | undefined): string {
   return String(raw ?? "").trim().toLowerCase();
 }
 
-async function getAuthUsersByIds(
-  sb: SupabaseClient,
-  userIds: string[],
-): Promise<Map<string, User>> {
-  const unique = [...new Set(userIds.filter(Boolean))];
-  const out = new Map<string, User>();
-  if (!unique.length) return out;
-
-  const concurrency = 8;
-  let idx = 0;
-  async function worker() {
-    while (idx < unique.length) {
-      const i = idx;
-      idx += 1;
-      const id = unique[i]!;
-      const { data, error } = await sb.auth.admin.getUserById(id);
-      if (error || !data.user) continue;
-      out.set(id, data.user);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, unique.length) }, () => worker()));
-  return out;
-}
-
 /** Look up one Auth user by email without listing the whole user directory. */
 async function findAuthUserByEmail(email: string): Promise<User | undefined> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -160,7 +136,10 @@ export async function getStudentPortalStatusBatch(
   const [{ data: studentsRaw, error: studentsError }, { data: profilesRaw, error: profilesError }, periodRows] =
     await Promise.all([
       sb.from("students").select("id, email, student_phone, grade").in("id", ids),
-      sb.from("user_profiles").select("user_id, role, student_id").in("student_id", ids),
+      sb
+        .from("user_profiles")
+        .select("user_id, role, student_id, portal_auth_email, portal_student_id_login_only")
+        .in("student_id", ids),
       loadStudentInactivePeriodsBatchServer(sb, ids),
     ]);
   if (studentsError) throw new Error(studentsError.message);
@@ -172,20 +151,33 @@ export async function getStudentPortalStatusBatch(
     if (sid) studentsById.set(sid, row as StudentRecord);
   }
 
-  const profileByStudentId = new Map<string, { user_id: string; role: string }>();
+  const profileByStudentId = new Map<
+    string,
+    {
+      user_id: string;
+      role: string;
+      portal_auth_email: string | null;
+      portal_student_id_login_only: boolean;
+    }
+  >();
   for (const row of profilesRaw ?? []) {
-    const sid = normalizeStudentId(String((row as { student_id?: string | null }).student_id ?? ""));
+    const typed = row as {
+      student_id?: string | null;
+      user_id?: string;
+      role?: string;
+      portal_auth_email?: string | null;
+      portal_student_id_login_only?: boolean | null;
+    };
+    const sid = normalizeStudentId(String(typed.student_id ?? ""));
     if (!sid) continue;
     profileByStudentId.set(sid, {
-      user_id: String((row as { user_id?: string }).user_id ?? ""),
-      role: String((row as { role?: string }).role ?? ""),
+      user_id: String(typed.user_id ?? ""),
+      role: String(typed.role ?? ""),
+      portal_auth_email: typed.portal_auth_email ? normalizeEmail(typed.portal_auth_email) : null,
+      portal_student_id_login_only: Boolean(typed.portal_student_id_login_only),
     });
   }
 
-  const linkedUserIds = [...profileByStudentId.values()]
-    .filter((p) => p.role === "student" && p.user_id)
-    .map((p) => p.user_id);
-  const authById = await getAuthUsersByIds(sb, linkedUserIds);
   const periodsById = buildStudentInactivePeriodsById(periodRows);
   const todayIso = hkTodayIso();
   const year = defaultLessonYear();
@@ -209,8 +201,7 @@ export async function getStudentPortalStatusBatch(
     const { ready, readyReason } = readiness(student);
     const profile = profileByStudentId.get(sid);
     const hasAccount = profile?.role === "student" && Boolean(profile.user_id);
-    const authUser = hasAccount ? authById.get(profile!.user_id) : undefined;
-    const authEmail = authUser?.email ? normalizeEmail(authUser.email) : null;
+    const authEmail = hasAccount ? profile!.portal_auth_email : null;
     const access = computeStudentPortalAccessState({
       studentId: sid,
       grade: student.grade,
@@ -227,7 +218,8 @@ export async function getStudentPortalStatusBatch(
       reactivateDate: access.reactivateDate,
       ready,
       readyReason,
-      studentIdLoginOnly: isStudentIdOnlyAuthEmail(authEmail),
+      studentIdLoginOnly:
+        profile?.portal_student_id_login_only ?? isStudentIdOnlyAuthEmail(authEmail),
     };
   }
 
@@ -302,6 +294,8 @@ export async function provisionStudentPortalAccount(
       role: "student",
       student_id: sid,
       tutor_id: null,
+      portal_auth_email: authEmail,
+      portal_student_id_login_only: studentIdLoginOnly,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" },
@@ -385,6 +379,16 @@ export async function syncStudentPortalEmail(studentId: string): Promise<Student
 
   const { error } = await sb.auth.admin.updateUserById(userId, { email });
   if (error) throw new Error(error.message);
+
+  const { error: profileError } = await sb
+    .from("user_profiles")
+    .update({
+      portal_auth_email: email,
+      portal_student_id_login_only: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+  if (profileError) throw new Error(profileError.message);
 
   return {
     ok: true,
