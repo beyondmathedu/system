@@ -116,7 +116,11 @@ async function listStudentsForPageViaRpc(
     typeof totalRaw === "number"
       ? totalRaw
       : Number.parseInt(String(totalRaw ?? rpcRows.length), 10) || 0;
-  const rows = rpcRows.map(({ total_count: _totalCount, ...row }) => row as StudentsListRow);
+  const rows = rpcRows.map((row) => {
+    const copy = { ...row };
+    delete (copy as { total_count?: unknown }).total_count;
+    return copy as StudentsListRow;
+  });
 
   const { currentInactiveStartById } = await loadAllInactivePeriodsMaps(supabase, todayHkIso);
 
