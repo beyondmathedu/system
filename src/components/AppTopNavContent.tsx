@@ -17,6 +17,7 @@ export type HighlightKey =
   | "daily-timetable"
   | "regular-timetable"
   | "students"
+  | "question-bank"
   | "reports"
   | "rooms"
   | "room"
@@ -141,6 +142,7 @@ export default function AppTopNavContent({
     "daily-timetable": isMatch("/daily-time-table"),
     "regular-timetable": isMatch("/regular-class-timetable"),
     students: isMatch("/students"),
+    "question-bank": isMatch("/question-bank"),
     reports: isMatch("/teacher") || isMatch("/tutor-monthly-lesson-record"),
     rooms: isMatch("/rooms"),
     room: isMatch("/rooms"),
@@ -212,6 +214,12 @@ export default function AppTopNavContent({
                     </Link>
                     <Link href="/students" className={`${base} ${isActive("students") ? active : idle}`}>
                       Student Info
+                    </Link>
+                    <Link
+                      href="/question-bank"
+                      className={`${base} ${isActive("question-bank") ? active : idle}`}
+                    >
+                      Question Bank
                     </Link>
                     <Link
                       href="/students-lesson-time-fee-record"
