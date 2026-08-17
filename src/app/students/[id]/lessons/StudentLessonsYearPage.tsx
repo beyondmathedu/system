@@ -672,7 +672,7 @@ export function StudentLessonsYearPage({
   const forceReadOnlyFromNext = (searchParams.get("next") || "").startsWith("/rooms/");
   const readOnly = isReadOnlyViewer;
   const isStudentPortal = String(navViewer?.role ?? "").toLowerCase() === "student";
-  const lessonTableColCount = isStudentPortal ? 7 : 11;
+  const lessonTableColCount = isStudentPortal ? 8 : 11;
   const skipInitialBootstrapFetchRef = useRef(Boolean(initialBootstrap));
 
   const [records, setRecords] = useState<ScheduleRecord[]>([]);
@@ -4284,7 +4284,7 @@ export function StudentLessonsYearPage({
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
               <div ref={lessonTableScrollRef} className="max-h-[70vh] overflow-auto">
                 <table
-                  className={`w-full divide-y divide-slate-200 ${isStudentPortal ? "min-w-[680px]" : "min-w-[1180px]"}`}
+                  className={`w-full divide-y divide-slate-200 ${isStudentPortal ? "min-w-[720px]" : "min-w-[1180px]"}`}
                 >
                   <thead className="bg-slate-50">
                     <tr className="divide-x divide-slate-200">
@@ -4321,15 +4321,18 @@ export function StudentLessonsYearPage({
                         thClassName={lessonCompactHeaderClass(isStudentPortal, "l")}
                         compact={isStudentPortal}
                       />
-                      {!isStudentPortal ? (
                       <LessonSortableHeader
-                        label="Attendance"
+                        label={isStudentPortal ? "Att." : "Attendance"}
                         columnKey="attendance"
                         sortConfig={sortConfig}
                         setSortConfig={setSortConfig}
-                        thClassName="w-20 whitespace-nowrap"
+                        thClassName={
+                          isStudentPortal
+                            ? lessonCompactHeaderClass(isStudentPortal, "attendance")
+                            : "w-20 whitespace-nowrap"
+                        }
+                        compact={isStudentPortal}
                       />
-                      ) : null}
                       <LessonSortableHeader
                         label="Date"
                         columnKey="date"
@@ -4472,15 +4475,19 @@ export function StudentLessonsYearPage({
                           >
                             {r.lLabel}
                           </td>
-                          {!isStudentPortal ? (
-                          <td className="whitespace-nowrap px-2 py-2 text-sm text-slate-700">
+                          <td
+                            className={
+                              isStudentPortal
+                                ? lessonCompactDataCellClass(isStudentPortal, "attendance")
+                                : "whitespace-nowrap px-2 py-2 text-sm text-slate-700"
+                            }
+                          >
                             {r.rowKind === "cancelled_original" ? (
                               <span className="font-semibold text-slate-500">/</span>
                             ) : (
                               <span
                                 className="inline-block min-w-4 text-center font-semibold text-slate-700"
-                                aria-label={`${r.date} attendance (read-only)`}
-                                title="Attendance is read-only here. Please mark attendance in the Room page."
+                                aria-label={`${r.date} attendance`}
                               >
                                 {r.rowKind === "normal" && r.scheduleRuleId
                                   ? isRegularLessonAttended(attendance, { id: r.scheduleRuleId }, r.date)
@@ -4492,7 +4499,6 @@ export function StudentLessonsYearPage({
                               </span>
                             )}
                           </td>
-                          ) : null}
                           <td className={lessonCompactDataCellClass(isStudentPortal, "date")}>
                             {r.lessonType === TYPE_RESCHEDULE && r.rescheduleFromDate ? (
                               <RescheduleChangeCell
@@ -5004,22 +5010,23 @@ const LESSON_TH_BASE =
 
 function lessonCompactDataCellClass(
   isStudentPortal: boolean,
-  column: "month" | "l" | "date" | "day" | "time",
+  column: "month" | "l" | "attendance" | "date" | "day" | "time",
 ): string {
   if (!isStudentPortal) return "whitespace-nowrap px-4 py-3 text-sm text-slate-700";
-  const widthByColumn: Record<typeof column, string> = {
-    month: "w-[3.25rem] max-w-[3.25rem]",
-    l: "w-8 max-w-8",
-    date: "w-[5.25rem] max-w-[5.25rem]",
-    day: "w-9 max-w-9",
-    time: "w-[5.25rem] max-w-[5.25rem]",
+  const cellByColumn: Record<typeof column, string> = {
+    month: "w-[3.25rem] max-w-[3.25rem] pl-4 pr-1.5",
+    l: "w-8 max-w-8 px-1",
+    attendance: "w-9 max-w-9 px-1",
+    date: "w-[5.25rem] max-w-[5.25rem] px-1.5",
+    day: "w-9 max-w-9 px-1",
+    time: "w-[5.25rem] max-w-[5.25rem] px-1.5",
   };
-  return `whitespace-nowrap px-1.5 py-2 text-xs text-slate-700 ${widthByColumn[column]}`;
+  return `whitespace-nowrap py-2 text-xs text-slate-700 ${cellByColumn[column]}`;
 }
 
 function lessonCompactHeaderClass(
   isStudentPortal: boolean,
-  column: "month" | "l" | "date" | "day" | "time",
+  column: "month" | "l" | "attendance" | "date" | "day" | "time",
 ): string {
   if (!isStudentPortal) {
     const defaults: Partial<Record<typeof column, string>> = {
@@ -5028,8 +5035,9 @@ function lessonCompactHeaderClass(
     return defaults[column] ?? "whitespace-nowrap";
   }
   const widthByColumn: Record<typeof column, string> = {
-    month: "w-[3.25rem] max-w-[3.25rem] px-1.5",
+    month: "w-[3.25rem] max-w-[3.25rem] pl-4 pr-1.5",
     l: "w-8 max-w-8 px-1",
+    attendance: "w-9 max-w-9 px-1",
     date: "w-[5.25rem] max-w-[5.25rem] px-1.5",
     day: "w-9 max-w-9 px-1",
     time: "w-[5.25rem] max-w-[5.25rem] px-1.5",
@@ -5060,7 +5068,7 @@ function LessonSortableHeader({
 
   return (
     <th
-      className={`${LESSON_TH_BASE} ${compact ? "px-1.5 py-2" : "px-3 py-3"} ${thClassName ?? "whitespace-nowrap"}`}
+      className={`${LESSON_TH_BASE} ${compact ? "py-2" : "px-3 py-3"} ${thClassName ?? (compact ? "px-1.5" : "whitespace-nowrap")}`}
     >
       <div className={`flex items-center ${compact ? "gap-0.5" : "gap-1.5"}`}>
         <span className={`whitespace-nowrap ${compact ? "text-[11px]" : ""}`}>{label}</span>
