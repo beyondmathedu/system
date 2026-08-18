@@ -872,40 +872,36 @@ async function fetchDayTimetablePayloadUncached(
   return payload;
 }
 
-const fetchDayTimetablePayloadCached = unstable_cache(
-  async (
-    year: number,
-    month: number,
-    day: number,
-    regularOnly: boolean,
-    includeInactiveSlots: boolean,
-    includeCancelledSlots: boolean,
-    includePendingMakeupSlots: boolean,
-  ) =>
-    fetchDayTimetablePayloadUncached(year, month, day, {
-      regularOnly,
-      includeInactiveSlots,
-      includeCancelledSlots,
-      includePendingMakeupSlots,
-    }),
-  ["day-timetable-payload-v22"],
-  /** Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips. */
-  { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
-);
-
 export async function fetchDayTimetablePayload(
   year: number,
   month: number,
   day: number,
   options: FetchDayTimetableOptions,
 ): Promise<DayTimetablePayload> {
-  return fetchDayTimetablePayloadCached(
-    year,
-    month,
-    day,
-    options.regularOnly,
-    Boolean(options.includeInactiveSlots),
-    Boolean(options.includeCancelledSlots),
-    Boolean(options.includePendingMakeupSlots),
-  );
+  const regularOnly = options.regularOnly;
+  const includeInactiveSlots = Boolean(options.includeInactiveSlots);
+  const includeCancelledSlots = Boolean(options.includeCancelledSlots);
+  const includePendingMakeupSlots = Boolean(options.includePendingMakeupSlots);
+
+  return unstable_cache(
+    () =>
+      fetchDayTimetablePayloadUncached(year, month, day, {
+        regularOnly,
+        includeInactiveSlots,
+        includeCancelledSlots,
+        includePendingMakeupSlots,
+      }),
+    [
+      "day-timetable-payload-v22",
+      String(year),
+      String(month),
+      String(day),
+      regularOnly ? "1" : "0",
+      includeInactiveSlots ? "1" : "0",
+      includeCancelledSlots ? "1" : "0",
+      includePendingMakeupSlots ? "1" : "0",
+    ],
+    // Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips.
+    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
+  )();
 }
