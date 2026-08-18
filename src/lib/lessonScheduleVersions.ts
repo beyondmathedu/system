@@ -377,9 +377,9 @@ export function attendanceAfterRescheduleDelete(
   delete next[rescheduleKey];
 
   const slotKey = cancelledOriginalSlotKey({
-    baseRuleId: entry.fromScheduleRuleId,
-    time: entry.fromTime,
-    room: entry.fromRoom,
+    baseRuleId: entry.fromScheduleRuleId ?? undefined,
+    time: entry.fromTime ?? undefined,
+    room: entry.fromRoom ?? undefined,
   });
   delete next[buildCancelledOriginalAttendanceKey(entry.id, entry.fromDate, slotKey)];
 
@@ -400,9 +400,9 @@ export function deleteRescheduleEntryAndAttendance(
     time: string;
     room: string;
     pending?: boolean;
-    fromScheduleRuleId?: string | null;
-    fromTime?: string | null;
-    fromRoom?: string | null;
+    fromScheduleRuleId?: string;
+    fromTime?: string;
+    fromRoom?: string;
   }>,
   entryId: string,
 ): {
@@ -414,9 +414,9 @@ export function deleteRescheduleEntryAndAttendance(
     time: string;
     room: string;
     pending?: boolean;
-    fromScheduleRuleId?: string | null;
-    fromTime?: string | null;
-    fromRoom?: string | null;
+    fromScheduleRuleId?: string;
+    fromTime?: string;
+    fromRoom?: string;
   }>;
 } {
   const targetId = String(entryId);
@@ -428,9 +428,9 @@ export function deleteRescheduleEntryAndAttendance(
   const nextAttendance = { ...attendance };
   delete nextAttendance[`reschedule:${entry.id}`];
   const slotKey = cancelledOriginalSlotKey({
-    baseRuleId: entry.fromScheduleRuleId,
-    time: entry.fromTime,
-    room: entry.fromRoom,
+    baseRuleId: entry.fromScheduleRuleId ?? undefined,
+    time: entry.fromTime ?? undefined,
+    room: entry.fromRoom ?? undefined,
   });
   delete nextAttendance[buildCancelledOriginalAttendanceKey(entry.id, entry.fromDate, slotKey)];
 
