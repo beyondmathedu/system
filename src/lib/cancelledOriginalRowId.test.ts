@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  attendanceAfterRescheduleDelete,
   buildCancelledOriginalRowId,
+  deleteRescheduleEntryAndAttendance,
+  deleteExtraEntryAndAttendance,
   parseCancelledOriginalRowId,
 } from "@/lib/lessonScheduleVersions";
 import {
@@ -92,5 +95,155 @@ describe("cancelled original row ids", () => {
     expect(new Set(ids).size).toBe(2);
     expect(ids.some((id) => id.startsWith("cancelled-1784534987445-2026-07-04-"))).toBe(true);
     expect(ids.some((id) => id.startsWith("cancelled-1784534987445-b-2026-07-04-"))).toBe(true);
+  });
+
+  it("restores marked reschedule attendance back to the original regular lesson on delete", () => {
+    const next = attendanceAfterRescheduleDelete(
+      {
+        "reschedule:rs-1": true,
+      },
+      {
+        id: "rs-1",
+        fromDate: "2026-07-26",
+        fromScheduleRuleId: "rule-sat",
+        fromTime: "03:00 PM",
+        fromRoom: "B",
+      },
+    );
+
+    expect(next).toEqual({
+      "regular:rule-sat:2026-07-26": true,
+    });
+  });
+
+  it("removes deleted reschedule attendance without creating a regular mark when it was unticked", () => {
+    const next = attendanceAfterRescheduleDelete(
+      {
+        "reschedule:rs-1": false,
+      },
+      {
+        id: "rs-1",
+        fromDate: "2026-07-26",
+        fromScheduleRuleId: "rule-sat",
+      },
+    );
+
+    expect(next).toEqual({});
+  });
+
+  it("converts a deleted regular reschedule into pending makeup instead of restoring regular attendance", () => {
+    const next = deleteRescheduleEntryAndAttendance(
+      {
+        "reschedule:rs-1": true,
+      },
+      [
+        {
+          id: "rs-1",
+          fromDate: "2026-07-26",
+          toDate: "2026-08-29",
+          time: "03:00 PM",
+          room: "B",
+          fromScheduleRuleId: "rule-sat",
+          fromTime: "03:00 PM",
+          fromRoom: "B",
+        },
+      ],
+      "rs-1",
+    );
+
+    expect(next.attendance).toEqual({});
+    expect(next.rescheduleEntries).toEqual([
+      {
+        id: "rs-1",
+        fromDate: "2026-07-26",
+        toDate: "",
+        time: "03:00 PM",
+        room: "B",
+        pending: true,
+        fromScheduleRuleId: "rule-sat",
+        fromTime: "03:00 PM",
+        fromRoom: "B",
+      },
+    ]);
+  });
+
+  it("deletes an already-pending reschedule entry completely", () => {
+    const next = deleteRescheduleEntryAndAttendance(
+      {},
+      [
+        {
+          id: "rs-pending",
+          fromDate: "2026-07-26",
+          toDate: "",
+          time: "03:00 PM",
+          room: "B",
+          pending: true,
+        },
+      ],
+      "rs-pending",
+    );
+
+    expect(next.attendance).toEqual({});
+    expect(next.rescheduleEntries).toEqual([]);
+  });
+
+  it("restores a moved extra back to its original slot as pending makeup", () => {
+    const next = deleteExtraEntryAndAttendance(
+      {
+        "extra:ex-1": true,
+      },
+      [
+        {
+          id: "ex-1",
+          date: "2026-08-29",
+          time: "03:00 PM",
+          room: "B",
+          originDate: "2026-07-26",
+          originTime: "03:00 PM",
+          originRoom: "B",
+        },
+      ],
+      "ex-1",
+    );
+
+    expect(next.attendance).toEqual({});
+    expect(next.extraEntries).toEqual([
+      {
+        id: "ex-1",
+        date: "2026-07-26",
+        time: "03:00 PM",
+        room: "B",
+        pending: true,
+      },
+    ]);
+  });
+
+  it("restores an unticked moved extra as pending makeup without attendance", () => {
+    const next = deleteExtraEntryAndAttendance(
+      {},
+      [
+        {
+          id: "ex-1",
+          date: "2026-08-29",
+          time: "03:00 PM",
+          room: "B",
+          originDate: "2026-07-26",
+          originTime: "03:00 PM",
+          originRoom: "B",
+        },
+      ],
+      "ex-1",
+    );
+
+    expect(next.attendance).toEqual({});
+    expect(next.extraEntries).toEqual([
+      {
+        id: "ex-1",
+        date: "2026-07-26",
+        time: "03:00 PM",
+        room: "B",
+        pending: true,
+      },
+    ]);
   });
 });

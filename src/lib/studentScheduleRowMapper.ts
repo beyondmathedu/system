@@ -154,6 +154,10 @@ function mapCoreRowToStudentRow(
   if (core.rowKind === "cancelled_original") {
     if (core.rowId.startsWith("extra-cancelled-")) {
       extraEntryId = core.rowId.slice("extra-cancelled-".length);
+      const entry = state.extraEntries.find((e) => e.id === extraEntryId);
+      if (entry?.pending) {
+        pendingMakeupLabel = formatPendingMakeupReminder(entry.date, hkTodayYmd);
+      }
     } else {
       const cancelledMatch = parseCancelledOriginalRowId(core.rowId);
       if (cancelledMatch) {

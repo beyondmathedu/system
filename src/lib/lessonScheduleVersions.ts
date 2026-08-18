@@ -361,6 +361,162 @@ export function regularLessonAttendanceKey(rule: { id?: string }, dateIso: strin
   return rule.id ? `regular:${rule.id}:${dateIso}` : dateIso;
 }
 
+export function attendanceAfterRescheduleDelete(
+  attendance: Record<string, boolean>,
+  entry: {
+    id: string;
+    fromDate: string;
+    fromScheduleRuleId?: string | null;
+    fromTime?: string | null;
+    fromRoom?: string | null;
+  },
+): Record<string, boolean> {
+  const next = { ...attendance };
+  const rescheduleKey = `reschedule:${entry.id}`;
+  const wasMarked = Boolean(next[rescheduleKey]);
+  delete next[rescheduleKey];
+
+  const slotKey = cancelledOriginalSlotKey({
+    baseRuleId: entry.fromScheduleRuleId,
+    time: entry.fromTime,
+    room: entry.fromRoom,
+  });
+  delete next[buildCancelledOriginalAttendanceKey(entry.id, entry.fromDate, slotKey)];
+
+  if (!wasMarked) return next;
+
+  const regularKey = entry.fromScheduleRuleId
+    ? regularLessonAttendanceKey({ id: entry.fromScheduleRuleId }, entry.fromDate)
+    : entry.fromDate;
+  return attendanceAfterRegularToggle(next, regularKey, true);
+}
+
+export function deleteRescheduleEntryAndAttendance(
+  attendance: Record<string, boolean>,
+  rescheduleEntries: Array<{
+    id: string;
+    fromDate: string;
+    toDate: string;
+    time: string;
+    room: string;
+    pending?: boolean;
+    fromScheduleRuleId?: string | null;
+    fromTime?: string | null;
+    fromRoom?: string | null;
+  }>,
+  entryId: string,
+): {
+  attendance: Record<string, boolean>;
+  rescheduleEntries: Array<{
+    id: string;
+    fromDate: string;
+    toDate: string;
+    time: string;
+    room: string;
+    pending?: boolean;
+    fromScheduleRuleId?: string | null;
+    fromTime?: string | null;
+    fromRoom?: string | null;
+  }>;
+} {
+  const targetId = String(entryId);
+  const entry = rescheduleEntries.find((e) => String(e.id) === targetId);
+  if (!entry) {
+    return { attendance: { ...attendance }, rescheduleEntries };
+  }
+
+  const nextAttendance = { ...attendance };
+  delete nextAttendance[`reschedule:${entry.id}`];
+  const slotKey = cancelledOriginalSlotKey({
+    baseRuleId: entry.fromScheduleRuleId,
+    time: entry.fromTime,
+    room: entry.fromRoom,
+  });
+  delete nextAttendance[buildCancelledOriginalAttendanceKey(entry.id, entry.fromDate, slotKey)];
+
+  if (entry.pending) {
+    return {
+      attendance: nextAttendance,
+      rescheduleEntries: rescheduleEntries.filter((e) => String(e.id) !== targetId),
+    };
+  }
+
+  return {
+    attendance: nextAttendance,
+    rescheduleEntries: rescheduleEntries.map((e) =>
+      String(e.id) === targetId
+        ? {
+            ...e,
+            toDate: "",
+            pending: true,
+          }
+        : e,
+    ),
+  };
+}
+
+export function deleteExtraEntryAndAttendance(
+  attendance: Record<string, boolean>,
+  extraEntries: Array<{
+    id: string;
+    date: string;
+    time: string;
+    room: string;
+    originDate?: string;
+    originTime?: string;
+    originRoom?: string;
+    pending?: boolean;
+  }>,
+  entryId: string,
+): {
+  attendance: Record<string, boolean>;
+  extraEntries: Array<{
+    id: string;
+    date: string;
+    time: string;
+    room: string;
+    originDate?: string;
+    originTime?: string;
+    originRoom?: string;
+    pending?: boolean;
+  }>;
+} {
+  const targetId = String(entryId);
+  const entry = extraEntries.find((e) => String(e.id) === targetId);
+  const nextAttendance = { ...attendance };
+  const attendanceKey = `extra:${targetId}`;
+  delete nextAttendance[attendanceKey];
+
+  if (!entry) {
+    return { attendance: nextAttendance, extraEntries };
+  }
+
+  const originDate = String(entry.originDate ?? "").trim();
+  const moved = Boolean(originDate && originDate !== entry.date);
+  if (!moved) {
+    return {
+      attendance: nextAttendance,
+      extraEntries: extraEntries.filter((e) => String(e.id) !== targetId),
+    };
+  }
+
+  const restored = {
+    ...entry,
+    date: originDate,
+    time: String(entry.originTime ?? "").trim() || entry.time,
+    room: String(entry.originRoom ?? "").trim() || entry.room,
+    pending: true,
+  };
+  delete restored.originDate;
+  delete restored.originTime;
+  delete restored.originRoom;
+
+  return {
+    attendance: nextAttendance,
+    extraEntries: extraEntries.map((e) => (String(e.id) === targetId ? restored : e)),
+  };
+}
+
 /**
  * Cancelled-original row identity. Include slotKey so two lessons on the same
  * fromDate (e.g. double weekly slots) do not share a React key.

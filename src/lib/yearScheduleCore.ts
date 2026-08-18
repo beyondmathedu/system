@@ -133,6 +133,7 @@ export type YearLessonState = {
     originDate?: string;
     originTime?: string;
     originRoom?: string;
+    pending?: boolean;
   }>;
 };
 
@@ -349,6 +350,7 @@ function buildScheduleRows(
   }
 
   const rescheduleById = new Map(state.rescheduleEntries.map((e) => [e.id, e]));
+  const extraById = new Map(state.extraEntries.map((e) => [String(e.id), e]));
 
   const rows: Row[] = [];
   const emittedRescheduleIds = new Set<string>();
@@ -429,9 +431,6 @@ function buildScheduleRows(
   }
 
   for (const ex of state.extraEntries) {
-    const originDate = String(ex.originDate ?? "").trim();
-    const moved = Boolean(originDate && originDate !== ex.date);
-
     const pushIfVisible = (row: {
       date: string;
       time: string;
@@ -449,6 +448,21 @@ function buildScheduleRows(
         baseRule: null,
       });
     };
+
+    if (ex.pending) {
+      pushIfVisible({
+        date: ex.date,
+        time: ex.time,
+        room: ex.room,
+        rowKind: "cancelled_original",
+        rowId: `extra-cancelled-${ex.id}`,
+        attendanceKey: `extra:${ex.id}`,
+        fromExtra: true,
+      });
+      continue;
+    }
+    const originDate = String(ex.originDate ?? "").trim();
+    const moved = Boolean(originDate && originDate !== ex.date);
 
     if (moved) {
       pushIfVisible({
@@ -511,12 +525,18 @@ function buildScheduleRows(
   return visibleRows.map((r) => {
     let lessonType: BuiltScheduleRow["lessonType"] = "恆常";
     if (r.rowKind === "cancelled_original") {
+      if (r.rowId.startsWith("extra-cancelled-")) {
+        const extraId = r.rowId.slice("extra-cancelled-".length);
+        const extraEntry = extraById.get(extraId);
+        lessonType = extraEntry?.pending ? PENDING_MAKEUP_TYPE_LABEL : "取消";
+      } else {
       const cancelledMatch = parseCancelledOriginalRowId(r.rowId);
       const pendingEntry = cancelledMatch ? rescheduleById.get(cancelledMatch.entryId) : undefined;
       lessonType =
         pendingEntry && isPendingRescheduleEntry(pendingEntry)
           ? PENDING_MAKEUP_TYPE_LABEL
           : "取消";
+      }
     } else if (r.rowKind === "reschedule") lessonType = "補堂";
     else if (r.fromExtra) lessonType = "加堂";
 

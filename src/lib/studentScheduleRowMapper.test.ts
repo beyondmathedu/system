@@ -226,6 +226,24 @@ describe("studentScheduleRowMapper", () => {
     expect(august.some((r) => r.date === "2026-08-29" && r.lessonType === "Extra")).toBe(false);
   });
 
+  it("shows restored extra entries as pending makeup instead of Extra", () => {
+    const records = [mondayRule({ weekday: "六", id: "rule-sat" })];
+    const state = emptyState();
+    state.extraEntries.push({
+      id: "ex-restored",
+      date: "2026-07-26",
+      time: "03:00 PM",
+      room: "B",
+      pending: true,
+    });
+
+    const july = buildStudentScheduleRows(records, state, YEAR, "2026-07-15", { month: 7 });
+    const restored = july.find((r) => r.date === "2026-07-26" && r.extraEntryId === "ex-restored");
+
+    expect(restored?.lessonType).toBe(PENDING_MAKEUP_TYPE_LABEL);
+    expect(restored?.pendingMakeupLabel).toBe("Makeup until end of August");
+  });
+
   it("base schedule rows ignore reschedule state (used for original-slot validation)", () => {
     const records = [mondayRule()];
     const state = emptyState();

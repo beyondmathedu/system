@@ -34,11 +34,19 @@ function mapCoreRowToDayRow(
 ): DayTimetableBuiltRow {
   let pendingMakeupLabel: string | undefined;
   if (row.rowKind === "cancelled_original") {
-    const cancelledMatch = parseCancelledOriginalRowId(row.rowId);
-    if (cancelledMatch) {
-      const entry = state.rescheduleEntries.find((e) => e.id === cancelledMatch.entryId);
-      if (entry && isPendingRescheduleEntry(entry)) {
-        pendingMakeupLabel = formatPendingMakeupReminder(entry.fromDate, todayYmd);
+    if (row.rowId.startsWith("extra-cancelled-")) {
+      const extraId = row.rowId.slice("extra-cancelled-".length);
+      const entry = state.extraEntries.find((e) => String(e.id) === extraId);
+      if (entry?.pending) {
+        pendingMakeupLabel = formatPendingMakeupReminder(entry.date, todayYmd);
+      }
+    } else {
+      const cancelledMatch = parseCancelledOriginalRowId(row.rowId);
+      if (cancelledMatch) {
+        const entry = state.rescheduleEntries.find((e) => e.id === cancelledMatch.entryId);
+        if (entry && isPendingRescheduleEntry(entry)) {
+          pendingMakeupLabel = formatPendingMakeupReminder(entry.fromDate, todayYmd);
+        }
       }
     }
   }
