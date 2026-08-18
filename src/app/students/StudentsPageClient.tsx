@@ -313,6 +313,59 @@ export default function StudentsPageClient({
     [query, statusFilter, inactiveKind],
   );
 
+  const callPortalAction = useCallback(
+    async (
+      studentId: string,
+      action: "provision" | "reset-password" | "sync-email",
+      options?: { studentIdLoginOnly?: boolean },
+    ) => {
+      const res = await fetch(`/api/students/${encodeURIComponent(studentId)}/portal-account`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          studentIdLoginOnly: options?.studentIdLoginOnly === true,
+        }),
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        result?: { message?: string };
+        status?: StudentPortalStatus | null;
+      };
+      if (!res.ok || !body.ok) {
+        const err = body.error ?? "Portal action failed.";
+        if (
+          action === "provision" &&
+          !options?.studentIdLoginOnly &&
+          /already used by another student/i.test(err)
+        ) {
+          const student = students.find((s) => normalizeStudentId(s.id) === studentId);
+          const email = (student?.email ?? "").trim().toLowerCase();
+          const otherMatch = /student\s+(\d+)/i.exec(err);
+          setDuplicateEmailPrompt({
+            otherStudentId: otherMatch?.[1] ? normalizeStudentId(otherMatch[1]) : "?",
+            email: email || "(shared email)",
+            mode: "provision",
+            provisionStudentId: studentId,
+          });
+          return { duplicatePromptShown: true as const };
+        }
+        throw new Error(err);
+      }
+      if (body.status) {
+        setPortalStatusById((prev) => ({ ...prev, [studentId]: body.status! }));
+      }
+      return {
+        duplicatePromptShown: false as const,
+        message: body.result?.message ?? "Done.",
+        status: body.status ?? null,
+      };
+    },
+    [students],
+  );
+
   const runPortalAction = useCallback(
     async (
       studentId: string,
@@ -322,52 +375,16 @@ export default function StudentsPageClient({
       setPortalBusyId(studentId);
       setPortalNotice("");
       try {
-        const res = await fetch(`/api/students/${encodeURIComponent(studentId)}/portal-account`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action,
-            studentIdLoginOnly: options?.studentIdLoginOnly === true,
-          }),
-        });
-        const body = (await res.json()) as {
-          ok?: boolean;
-          error?: string;
-          result?: { message?: string };
-          status?: StudentPortalStatus | null;
-        };
-        if (!res.ok || !body.ok) {
-          const err = body.error ?? "Portal action failed.";
-          if (
-            action === "provision" &&
-            !options?.studentIdLoginOnly &&
-            /already used by another student/i.test(err)
-          ) {
-            const student = students.find((s) => normalizeStudentId(s.id) === studentId);
-            const email = (student?.email ?? "").trim().toLowerCase();
-            const otherMatch = /student\s+(\d+)/i.exec(err);
-            setDuplicateEmailPrompt({
-              otherStudentId: otherMatch?.[1] ? normalizeStudentId(otherMatch[1]) : "?",
-              email: email || "(shared email)",
-              mode: "provision",
-              provisionStudentId: studentId,
-            });
-            return;
-          }
-          throw new Error(err);
-        }
-        if (body.status) {
-          setPortalStatusById((prev) => ({ ...prev, [studentId]: body.status! }));
-        }
-        setPortalNotice(body.result?.message ?? "Done.");
+        const result = await callPortalAction(studentId, action, options);
+        if (result.duplicatePromptShown) return;
+        setPortalNotice(result.message ?? "Done.");
       } catch (e) {
         setPortalNotice(e instanceof Error ? e.message : "Portal action failed.");
       } finally {
         setPortalBusyId(null);
       }
     },
-    [students],
+    [callPortalAction],
   );
 
   const reloadStudentsList = useCallback(async () => {
@@ -605,11 +622,31 @@ export default function StudentsPageClient({
           return;
         }
 
+        const normalizedEditingId = normalizeStudentId(editingId);
+        const portalStatus = portalStatusById[normalizedEditingId];
+        let saveNotice = "Student record updated successfully.";
+        if (portalStatus?.hasAccount) {
+          try {
+            await callPortalAction(normalizedEditingId, "reset-password");
+            if (!portalStatus.studentIdLoginOnly) {
+              await callPortalAction(normalizedEditingId, "sync-email");
+            }
+            saveNotice = portalStatus.studentIdLoginOnly
+              ? "Student record updated. Portal password auto-synced to contact number."
+              : "Student record updated. Portal email and password auto-synced."
+          } catch (portalError) {
+            saveNotice =
+              `Student record updated, but Portal auto-sync failed: ${
+                portalError instanceof Error ? portalError.message : "Unknown error."
+              }`;
+          }
+        }
+
         await reloadStudentsList();
         setEditingId(null);
         setForm(emptyForm);
         setSelectedIds([]);
-        setFormNotice("Student record updated successfully.");
+        setFormNotice(saveNotice);
         return;
       }
 
@@ -1066,7 +1103,10 @@ export default function StudentsPageClient({
               id={tableScrollId}
               className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
-              <ClientOnlyAfterMount fallback={<StudentsTableSkeleton />}>
+              <ClientOnlyAfterMount
+                fallback={<StudentsTableSkeleton />}
+                disabled={Boolean(initialList)}
+              >
               <table className={`divide-y divide-slate-200 ${isAdmin ? "min-w-[1780px]" : "min-w-[1500px]"}`}>
                 <thead className="bg-slate-50">
                   <tr className="divide-x divide-slate-200">
@@ -1213,7 +1253,9 @@ export default function StudentsPageClient({
                                       : "font-semibold text-amber-700"
                                   }
                                 >
-                                  {portalStatus.loginAllowed ? "已開通" : "已開通（停用）"}
+                                  {portalStatus.loginAllowed
+                                    ? "已開通（儲存時自動同步）"
+                                    : "已開通（停用；儲存時自動同步）"}
                                 </span>
                                 {!portalStatus.loginAllowed && portalStatus.reactivateDate ? (
                                   <span className="text-[11px] text-slate-500">
@@ -1233,7 +1275,7 @@ export default function StudentsPageClient({
                                     onClick={() => void runPortalAction(studentIdDisplay, "reset-password")}
                                     className="rounded border border-slate-300 bg-white px-2 py-0.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                                   >
-                                    重設密碼
+                                    手動重設密碼
                                   </button>
                                   {emailMismatch ? (
                                     <button
