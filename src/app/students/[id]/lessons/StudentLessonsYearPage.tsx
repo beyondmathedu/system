@@ -10,6 +10,7 @@ import { VirtualTableSpacerRow } from "@/components/VirtualTableSpacerRow";
 import { supabase } from "@/lib/supabase";
 import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import type { StudentLessonsBootstrapPayload } from "@/lib/lessonDataServer";
+import { hydrateLessonYearFromBootstrap } from "@/lib/studentLessonsBootstrapHydrate";
 import { hasPendingLessonYearStateSaves } from "@/lib/queueSaveLessonYearState";
 import {
   loadTimetableDayRemarksForStudent,
@@ -81,6 +82,8 @@ import {
   upsertRescheduleEntry,
 } from "@/lib/rescheduleEntryNormalize";
 import {
+  deleteRescheduleEntryAndAttendance,
+  deleteExtraEntryAndAttendance,
   getActiveScheduleVersionDate,
   isRegularLessonAttended,
 } from "@/lib/lessonScheduleVersions";
@@ -138,6 +141,7 @@ const TYPE_EXTRA = "Extra";
 function keepScheduleRowVisibleDuringInactive(row: ScheduleRow): boolean {
   return (
     row.lessonType === TYPE_EXTRA ||
+    row.lessonType === TYPE_PENDING ||
     row.lessonType === TYPE_RESCHEDULE ||
     row.rowKind === "reschedule" ||
     row.rowKind === "cancelled_original"
@@ -229,6 +233,7 @@ type ExtraEntry = {
   originDate?: string;
   originTime?: string;
   originRoom?: string;
+  pending?: boolean;
 };
 
 function fromSlotFieldsFromRow(row: {
@@ -644,26 +649,39 @@ export function StudentLessonsYearPage({
   const searchParams = useSearchParams();
   const rawId = String(params?.id || "");
   const studentId = normalizeStudentId(rawId);
+  const [initialHydrated] = useState(() =>
+    initialBootstrap ? hydrateLessonYearFromBootstrap(initialBootstrap, studentId, targetYear) : null,
+  );
+  const seededBootstrapRef = useRef(Boolean(initialHydrated));
   const { formatRoom, pickerLabel, pickerToStorage, registry } = useRoomDisplayLabels();
-  const [studentSummary, setStudentSummary] = useState<StudentSummary>({
-    id: studentId,
-    nameZh: "",
-    nameEn: "",
-    nicknameEn: "",
-    grade: "",
-    school: "",
-    textbookPublisher: "",
-  });
-  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>({
-    examDate: "",
-    examContent: "",
-  });
-  const [studentLoaded, setStudentLoaded] = useState(false);
-  const [studentNotFound, setStudentNotFound] = useState(false);
-  const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">("active");
-  const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState("");
-  const [visibilityReactivateDate, setVisibilityReactivateDate] = useState<string | null>(null);
-  const [inactivePeriods, setInactivePeriods] = useState<StudentInactivePeriodRow[]>([]);
+  const [studentSummary, setStudentSummary] = useState<StudentSummary>(() =>
+    initialHydrated?.studentSummary ?? {
+      id: studentId,
+      nameZh: "",
+      nameEn: "",
+      nicknameEn: "",
+      grade: "",
+      school: "",
+      textbookPublisher: "",
+    },
+  );
+  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>(() =>
+    initialHydrated?.examInfo ?? { examDate: "", examContent: "" },
+  );
+  const [studentLoaded, setStudentLoaded] = useState(() => initialHydrated?.studentLoaded ?? false);
+  const [studentNotFound, setStudentNotFound] = useState(() => initialHydrated?.studentNotFound ?? false);
+  const [visibilityMode, setVisibilityMode] = useState<"active" | "inactive">(
+    () => initialHydrated?.visibilityMode ?? "active",
+  );
+  const [visibilityEffectiveDate, setVisibilityEffectiveDate] = useState(
+    () => initialHydrated?.visibilityEffectiveDate ?? "",
+  );
+  const [visibilityReactivateDate, setVisibilityReactivateDate] = useState<string | null>(
+    () => initialHydrated?.visibilityReactivateDate ?? null,
+  );
+  const [inactivePeriods, setInactivePeriods] = useState<StudentInactivePeriodRow[]>(
+    () => initialHydrated?.inactivePeriods ?? [],
+  );
   const [accessReady, setAccessReady] = useState(() => Boolean(initialBootstrap));
   const [isReadOnlyViewer, setIsReadOnlyViewer] = useState(Boolean(initialReadOnly));
   const [canEditTimetableRemarks, setCanEditTimetableRemarks] = useState(
@@ -675,9 +693,13 @@ export function StudentLessonsYearPage({
   const lessonTableColCount = isStudentPortal ? 8 : 11;
   const skipInitialBootstrapFetchRef = useRef(Boolean(initialBootstrap));
 
-  const [records, setRecords] = useState<ScheduleRecord[]>([]);
-  const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>([]);
-  const [attendance, setAttendance] = useState<Record<string, boolean>>({});
+  const [records, setRecords] = useState<ScheduleRecord[]>(() => initialHydrated?.records ?? []);
+  const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>(
+    () => initialHydrated?.roomSlotTutorRules ?? [],
+  );
+  const [attendance, setAttendance] = useState<Record<string, boolean>>(
+    () => initialHydrated?.attendance ?? {},
+  );
   const ATTENDANCE_STORAGE_KEY = `attendance:${studentId}:${targetYear}`;
 
   useEffect(() => {
@@ -781,10 +803,14 @@ export function StudentLessonsYearPage({
     navViewer,
   ]);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
-  const [hiddenDates, setHiddenDates] = useState<Record<string, boolean>>({});
+  const [hiddenDates, setHiddenDates] = useState<Record<string, boolean>>(
+    () => initialHydrated?.hiddenDates ?? {},
+  );
   const HIDDEN_DATES_STORAGE_KEY = `hidden_dates:${studentId}:${targetYear}`;
   const [hiddenNoticeExpanded, setHiddenNoticeExpanded] = useState(false);
-  const [overrides, setOverrides] = useState<Record<string, DayOverride>>({});
+  const [overrides, setOverrides] = useState<Record<string, DayOverride>>(
+    () => initialHydrated?.overrides ?? {},
+  );
   const OVERRIDES_STORAGE_KEY = `overrides:${studentId}:${targetYear}`;
   const overridesRef = useRef<Record<string, DayOverride>>({});
   const attendanceRef = useRef<Record<string, boolean>>({});
@@ -799,9 +825,13 @@ export function StudentLessonsYearPage({
   const lessonSummaryDraftByDateIsoRef = useRef<Record<string, string>>({});
   const lessonSummarySaveTimersRef = useRef<Map<string, number>>(new Map());
   const timetableRemarksByDateIsoRef = useRef<Record<string, string>>({});
-  const [rescheduleEntries, setRescheduleEntries] = useState<RescheduleEntry[]>([]);
+  const [rescheduleEntries, setRescheduleEntries] = useState<RescheduleEntry[]>(
+    () => initialHydrated?.rescheduleEntries ?? [],
+  );
   const RESCHEDULE_STORAGE_KEY = `reschedule:${studentId}:${targetYear}`;
-  const [extraEntries, setExtraEntries] = useState<ExtraEntry[]>([]);
+  const [extraEntries, setExtraEntries] = useState<ExtraEntry[]>(
+    () => initialHydrated?.extraEntries ?? [],
+  );
   const EXTRA_STORAGE_KEY = `extra_lessons:${studentId}:${targetYear}`;
   const [editingRescheduleId, setEditingRescheduleId] = useState<string | null>(null);
   const [fromLessonDate, setFromLessonDate] = useState<string>("");
@@ -955,6 +985,7 @@ export function StudentLessonsYearPage({
         const originDate = String(e.originDate ?? "").trim();
         const originTime = String(e.originTime ?? "").trim();
         const originRoom = String(e.originRoom ?? "").trim();
+        const pending = Boolean(e.pending);
         return {
           ...e,
           id: String(e.id),
@@ -964,6 +995,7 @@ export function StudentLessonsYearPage({
           ...(originDate ? { originDate } : {}),
           ...(originTime ? { originTime } : {}),
           ...(originRoom ? { originRoom } : {}),
+          ...(pending ? { pending: true } : {}),
         };
       });
       setAttendance(state.attendance);
@@ -1047,6 +1079,39 @@ export function StudentLessonsYearPage({
 
   useEffect(() => {
     if (!studentId || !accessReady) return;
+    if (seededBootstrapRef.current) {
+      seededBootstrapRef.current = false;
+      skipInitialBootstrapFetchRef.current = false;
+      if (typeof window !== "undefined" && initialHydrated) {
+        const scheduleKey = `lesson_schedule_records:${studentId}`;
+        try {
+          window.localStorage.setItem(scheduleKey, JSON.stringify(initialHydrated.records));
+          window.localStorage.setItem(
+            ATTENDANCE_STORAGE_KEY,
+            JSON.stringify(initialHydrated.attendance),
+          );
+          window.localStorage.setItem(
+            HIDDEN_DATES_STORAGE_KEY,
+            JSON.stringify(initialHydrated.hiddenDates),
+          );
+          window.localStorage.setItem(
+            OVERRIDES_STORAGE_KEY,
+            JSON.stringify(initialHydrated.overrides),
+          );
+          window.localStorage.setItem(
+            RESCHEDULE_STORAGE_KEY,
+            JSON.stringify(initialHydrated.rescheduleEntries),
+          );
+          window.localStorage.setItem(
+            EXTRA_STORAGE_KEY,
+            JSON.stringify(initialHydrated.extraEntries),
+          );
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
     const scheduleKey = `lesson_schedule_records:${studentId}`;
     let mounted = true;
     setStudentLoaded(false);
@@ -2221,6 +2286,7 @@ export function StudentLessonsYearPage({
         delete rest.originDate;
         delete rest.originTime;
         delete rest.originRoom;
+        delete rest.pending;
         return moved
           ? {
               ...rest,
@@ -4809,9 +4875,10 @@ export function StudentLessonsYearPage({
 
                   const lockedPendingMessages: string[] = [];
                   if (rescheduleIdsToDelete.size > 0) {
-                    const removableRescheduleIds: string[] = [];
+                    let nextRescheduleEntries = rescheduleEntriesRef.current;
+                    let nextAttendance = attendanceRef.current;
                     for (const id of rescheduleIdsToDelete) {
-                      const entry = rescheduleEntryById.get(id);
+                      const entry = nextRescheduleEntries.find((e) => String(e.id) === String(id));
                       if (
                         entry &&
                         isPendingRescheduleEntry(entry) &&
@@ -4820,37 +4887,56 @@ export function StudentLessonsYearPage({
                         lockedPendingMessages.push(pendingMakeupLockedMessage(entry.fromDate));
                         continue;
                       }
-                      removableRescheduleIds.push(id);
-                    }
-                    if (removableRescheduleIds.length > 0) {
-                      const removableSet = new Set(removableRescheduleIds.map(String));
-                      const nextEntries = rescheduleEntriesRef.current.filter(
-                        (e) => !removableSet.has(String(e.id)),
+                      const next = deleteRescheduleEntryAndAttendance(
+                        nextAttendance,
+                        nextRescheduleEntries,
+                        String(id),
                       );
-                      rescheduleEntriesRef.current = nextEntries;
-                      setRescheduleEntries(nextEntries);
+                      nextAttendance = next.attendance;
+                      nextRescheduleEntries = next.rescheduleEntries;
+                    }
+                    if (JSON.stringify(nextRescheduleEntries) !== JSON.stringify(rescheduleEntriesRef.current)) {
+                      rescheduleEntriesRef.current = nextRescheduleEntries;
+                      setRescheduleEntries(nextRescheduleEntries);
                       window.localStorage.setItem(
                         RESCHEDULE_STORAGE_KEY,
-                        JSON.stringify(nextEntries),
+                        JSON.stringify(nextRescheduleEntries),
                       );
-                      persistYearState({ rescheduleEntries: nextEntries });
+                      persistYearState({ rescheduleEntries: nextRescheduleEntries });
+
+                      if (JSON.stringify(nextAttendance) !== JSON.stringify(attendanceRef.current)) {
+                        attendanceRef.current = nextAttendance;
+                        setAttendance(nextAttendance);
+                        window.localStorage.setItem(
+                          ATTENDANCE_STORAGE_KEY,
+                          JSON.stringify(nextAttendance),
+                        );
+                        persistYearState({ attendance: nextAttendance });
+                      }
                     }
                   }
 
                   if (extraIdsToDelete.size > 0) {
-                    const nextExtraEntries = extraEntriesRef.current.filter(
-                      (e) => !extraIdsToDelete.has(String(e.id)),
-                    );
-                    extraEntriesRef.current = nextExtraEntries;
-                    setExtraEntries(nextExtraEntries);
-                    window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(nextExtraEntries));
-                    persistYearState({ extraEntries: nextExtraEntries });
-
-                    const nextAttendance = { ...attendanceRef.current };
+                    let nextExtraEntries = extraEntriesRef.current;
+                    let nextAttendance = attendanceRef.current;
                     for (const id of extraIdsToDelete) {
-                      delete nextAttendance[`extra:${id}`];
+                      const next = deleteExtraEntryAndAttendance(
+                        nextAttendance,
+                        nextExtraEntries,
+                        String(id),
+                      );
+                      nextAttendance = next.attendance;
+                      nextExtraEntries = next.extraEntries;
                     }
-                    if (Object.keys(nextAttendance).length !== Object.keys(attendanceRef.current).length) {
+
+                    if (JSON.stringify(nextExtraEntries) !== JSON.stringify(extraEntriesRef.current)) {
+                      extraEntriesRef.current = nextExtraEntries;
+                      setExtraEntries(nextExtraEntries);
+                      window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(nextExtraEntries));
+                      persistYearState({ extraEntries: nextExtraEntries });
+                    }
+
+                    if (JSON.stringify(nextAttendance) !== JSON.stringify(attendanceRef.current)) {
                       attendanceRef.current = nextAttendance;
                       setAttendance(nextAttendance);
                       window.localStorage.setItem(ATTENDANCE_STORAGE_KEY, JSON.stringify(nextAttendance));
