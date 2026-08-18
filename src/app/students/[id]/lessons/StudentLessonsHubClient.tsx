@@ -23,6 +23,7 @@ import ExamDateField from "./ExamDateField";
 import type { LessonScheduleRecord } from "./LessonScheduleGrid";
 import { formatGradeDisplay } from "@/lib/grade";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import { getActiveScheduleVersionDate, normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
 
 const LessonScheduleGrid = dynamic(() => import("./LessonScheduleGrid"), {
   ssr: false,
@@ -104,6 +105,62 @@ function summaryFromBootstrap(
   };
 }
 
+const WEEKDAY_LABEL: Record<string, string> = {
+  一: "Mon",
+  二: "Tue",
+  三: "Wed",
+  四: "Thu",
+  五: "Fri",
+  六: "Sat",
+  日: "Sun",
+};
+
+function hkTodayIso() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const { y, m, d } = parts.reduce(
+    (acc, part) => {
+      if (part.type === "year") acc.y = part.value;
+      if (part.type === "month") acc.m = part.value;
+      if (part.type === "day") acc.d = part.value;
+      return acc;
+    },
+    { y: "2026", m: "01", d: "01" },
+  );
+  return `${y}-${m}-${d}`;
+}
+
+function currentSettingsFromRecords(records: LessonScheduleRecord[] | null) {
+  const normalized = (records ?? []).map((r) => ({
+    ...r,
+    effectiveDate: r.effectiveDate ?? new Date(r.createdAt).toISOString().slice(0, 10),
+    weekday: normalizeScheduleWeekday(r.weekday),
+  }));
+  const todayIso = hkTodayIso();
+  const activeVersion = getActiveScheduleVersionDate(normalized, todayIso);
+  if (!activeVersion) return [];
+  const weekdayOrder = new Map([
+    ["一", 1],
+    ["二", 2],
+    ["三", 3],
+    ["四", 4],
+    ["五", 5],
+    ["六", 6],
+    ["日", 7],
+  ]);
+  return normalized
+    .filter((r) => r.effectiveDate === activeVersion)
+    .sort((a, b) => {
+      const wd = (weekdayOrder.get(a.weekday) ?? 99) - (weekdayOrder.get(b.weekday) ?? 99);
+      if (wd !== 0) return wd;
+      return String(a.time ?? "").localeCompare(String(b.time ?? ""), "en", { numeric: true });
+    });
+}
+
 export default function StudentLessonsHubClient({
   studentId,
   hubYear,
@@ -160,6 +217,7 @@ export default function StudentLessonsHubClient({
   const isStudentPortal = String(navViewer?.role ?? "").toLowerCase() === "student";
   const [examDateInitial] = useState(() => initialBootstrap.examInfo?.examDate ?? "");
   const availableYears = useMemo(() => availableLessonYears(), []);
+  const currentSettings = useMemo(() => currentSettingsFromRecords(scheduleRecords), [scheduleRecords]);
   const metricsSavedRef = useRef(false);
 
   useEffect(() => {
@@ -572,22 +630,51 @@ export default function StudentLessonsHubClient({
                 </div>
               </div>
               ) : isStudentPortal ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <ExamDateField studentId={studentId} initialValue={examDateInitial} />
+                <div className="space-y-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="inline-flex whitespace-nowrap rounded-md bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800">
-                      Makeup Count {upcomingUntickedCount}
-                    </span>
-                    <span className="inline-flex rounded-md bg-sky-100 px-3 py-2 text-sm font-bold text-sky-800">
-                      Unattended This Month {currentMonthUntickedCount}
-                    </span>
-                    <Link
-                      href={`/student-progress/${encodeURIComponent(studentId)}`}
-                      className="inline-flex items-center rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90"
-                    >
-                      Student Progress
-                    </Link>
+                    <ExamDateField studentId={studentId} initialValue={examDateInitial} />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex whitespace-nowrap rounded-md bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800">
+                        Makeup Count {upcomingUntickedCount}
+                      </span>
+                      <span className="inline-flex rounded-md bg-sky-100 px-3 py-2 text-sm font-bold text-sky-800">
+                        Unattended This Month {currentMonthUntickedCount}
+                      </span>
+                      <Link
+                        href={`/student-progress/${encodeURIComponent(studentId)}`}
+                        className="inline-flex items-center rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90"
+                      >
+                        Student Progress
+                      </Link>
+                    </div>
                   </div>
+                  {currentSettings.length > 0 ? (
+                    <div className="max-w-xl rounded-xl border border-slate-200 bg-white p-4">
+                      <p className="text-sm font-bold text-slate-900">Current Settings</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-600">Weekly Lessons:</span>
+                          <span className="font-bold text-slate-900">{currentSettings.length}</span>
+                        </div>
+                        {currentSettings.map((lesson, idx) => (
+                          <div
+                            key={`${lesson.id}-${lesson.effectiveDate ?? ""}-${idx}`}
+                            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                          >
+                            <p className="text-xs font-bold text-slate-500">Lesson: {idx + 1}</p>
+                            <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                              <span className="font-semibold text-slate-600">Day:</span>
+                              <span className="font-bold text-slate-900">
+                                {WEEKDAY_LABEL[lesson.weekday] ?? lesson.weekday}
+                              </span>
+                              <span className="font-semibold text-slate-600">Time:</span>
+                              <span className="font-bold text-slate-900">{lesson.time || "—"}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">

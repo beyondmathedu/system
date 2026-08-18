@@ -131,7 +131,7 @@ describe("cancelled original row ids", () => {
     expect(next).toEqual({});
   });
 
-  it("converts a deleted regular reschedule into pending makeup instead of restoring regular attendance", () => {
+  it("deletes a regular reschedule and restores the original lesson as regular", () => {
     const next = deleteRescheduleEntryAndAttendance(
       {
         "reschedule:rs-1": true,
@@ -152,19 +152,7 @@ describe("cancelled original row ids", () => {
     );
 
     expect(next.attendance).toEqual({});
-    expect(next.rescheduleEntries).toEqual([
-      {
-        id: "rs-1",
-        fromDate: "2026-07-26",
-        toDate: "",
-        time: "03:00 PM",
-        room: "B",
-        pending: true,
-        fromScheduleRuleId: "rule-sat",
-        fromTime: "03:00 PM",
-        fromRoom: "B",
-      },
-    ]);
+    expect(next.rescheduleEntries).toEqual([]);
   });
 
   it("deletes an already-pending reschedule entry completely", () => {
@@ -187,7 +175,7 @@ describe("cancelled original row ids", () => {
     expect(next.rescheduleEntries).toEqual([]);
   });
 
-  it("restores a moved extra back to its original slot as pending makeup", () => {
+  it("restores a moved extra back to its original slot as extra", () => {
     const next = deleteExtraEntryAndAttendance(
       {
         "extra:ex-1": true,
@@ -213,12 +201,11 @@ describe("cancelled original row ids", () => {
         date: "2026-07-26",
         time: "03:00 PM",
         room: "B",
-        pending: true,
       },
     ]);
   });
 
-  it("restores an unticked moved extra as pending makeup without attendance", () => {
+  it("restores an unticked moved extra as extra without attendance", () => {
     const next = deleteExtraEntryAndAttendance(
       {},
       [
@@ -242,7 +229,6 @@ describe("cancelled original row ids", () => {
         date: "2026-07-26",
         time: "03:00 PM",
         room: "B",
-        pending: true,
       },
     ]);
   });

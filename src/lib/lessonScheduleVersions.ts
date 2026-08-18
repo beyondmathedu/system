@@ -433,25 +433,9 @@ export function deleteRescheduleEntryAndAttendance(
     room: entry.fromRoom ?? undefined,
   });
   delete nextAttendance[buildCancelledOriginalAttendanceKey(entry.id, entry.fromDate, slotKey)];
-
-  if (entry.pending) {
-    return {
-      attendance: nextAttendance,
-      rescheduleEntries: rescheduleEntries.filter((e) => String(e.id) !== targetId),
-    };
-  }
-
   return {
     attendance: nextAttendance,
-    rescheduleEntries: rescheduleEntries.map((e) =>
-      String(e.id) === targetId
-        ? {
-            ...e,
-            toDate: "",
-            pending: true,
-          }
-        : e,
-    ),
+    rescheduleEntries: rescheduleEntries.filter((e) => String(e.id) !== targetId),
   };
 }
 
@@ -505,11 +489,11 @@ export function deleteExtraEntryAndAttendance(
     date: originDate,
     time: String(entry.originTime ?? "").trim() || entry.time,
     room: String(entry.originRoom ?? "").trim() || entry.room,
-    pending: true,
   };
   delete restored.originDate;
   delete restored.originTime;
   delete restored.originRoom;
+  delete restored.pending;
 
   return {
     attendance: nextAttendance,
