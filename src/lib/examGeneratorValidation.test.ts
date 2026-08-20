@@ -8,13 +8,14 @@ describe("examGeneratorValidation", () => {
     const config = createInitialExamGeneratorConfig();
     config.paperType = "MC";
     config.topicMode = "specific";
+    config.questionSelectionMode = "select_questions";
     config.selectedTopics = ["Algebra", "Coordinate Geometry"];
     config.mc.totalQuestions = 10;
     config.mc.topicDistribution = { Algebra: 4, "Coordinate Geometry": 3 };
     config.mc.difficultyDistribution = { L1: 4, L2: 4, L3: 2 };
 
     const result = validateExamGeneratorConfig(config, examGeneratorMockRepository);
-    expect(result.errors).toContain("Topic distribution must equal the total number of questions.");
+    expect(result.errors).toContain("Total Topic Questions must = 10. Current total: 7.");
     expect(result.canGenerate).toBe(false);
   });
 
@@ -22,6 +23,7 @@ describe("examGeneratorValidation", () => {
     const config = createInitialExamGeneratorConfig();
     config.paperType = "MC";
     config.topicMode = "specific";
+    config.questionSelectionMode = "select_questions";
     config.selectedTopics = ["Coordinate Geometry"];
     config.mc.totalQuestions = 13;
     config.mc.topicDistribution = { "Coordinate Geometry": 13 };
@@ -39,15 +41,16 @@ describe("examGeneratorValidation", () => {
     const config = createInitialExamGeneratorConfig();
     config.paperType = "LQ";
     config.topicMode = "specific";
-    config.selectedTopics = ["Algebra", "Coordinate Geometry"];
+    config.questionSelectionMode = "select_questions";
+    config.selectedTopics = ["Geometry", "Coordinate Geometry"];
     config.lq.A.questionCount = 4;
-    config.lq.A.topicDistribution = { Algebra: 2, "Coordinate Geometry": 2 };
+    config.lq.A.topicDistribution = { Geometry: 2, "Coordinate Geometry": 2 };
     config.lq.A.difficultyDistribution = { L1: 2, L2: 2, L3: 0 };
     config.lq.B1.questionCount = 2;
-    config.lq.B1.topicDistribution = { Algebra: 1, "Coordinate Geometry": 1 };
+    config.lq.B1.topicDistribution = { Geometry: 1, "Coordinate Geometry": 1 };
     config.lq.B1.difficultyDistribution = { L1: 0, L2: 1, L3: 1 };
     config.lq.B2.questionCount = 2;
-    config.lq.B2.topicDistribution = { Algebra: 1, "Coordinate Geometry": 1 };
+    config.lq.B2.topicDistribution = { Geometry: 1, "Coordinate Geometry": 1 };
     config.lq.B2.difficultyDistribution = { L1: 0, L2: 1, L3: 1 };
 
     const result = validateExamGeneratorConfig(config, examGeneratorMockRepository);
