@@ -62,6 +62,12 @@ type SortDirection = "asc" | "desc";
 type TeacherSortKey = "id" | "name" | "nameEn" | "junior" | "senior" | "single" | "status";
 type TeacherSortConfig = { key: TeacherSortKey; direction: SortDirection } | null;
 
+type TutorAuthStatus = {
+  tutorId: string;
+  hasAccount: boolean;
+  authEmail: string | null;
+};
+
 function getTeacherStatusBadgeClass(status: TeacherStatus) {
   switch (status) {
     case "工作中":
@@ -159,8 +165,13 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
   const [rateByTeacherId, setRateByTeacherId] = useState<Record<string, { junior: number; senior: number; single: number }>>({});
   const [sortConfig, setSortConfig] = useState<TeacherSortConfig>(null);
   const [syncedRateKey, setSyncedRateKey] = useState<string | null>(null);
+  const [authStatusById, setAuthStatusById] = useState<Record<string, TutorAuthStatus>>({});
+  const [tutorPasswordDraft, setTutorPasswordDraft] = useState("");
+  const [authBusyId, setAuthBusyId] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState("");
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const isAdmin = navViewer?.role === "admin";
 
   const filteredTeachers = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -268,7 +279,64 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
       setDataError(error.message);
       return;
     }
-    setTeachers((data ?? []).map(mapRowToTeacher));
+    const mapped = (data ?? []).map(mapRowToTeacher);
+    setTeachers(mapped);
+    await loadAuthStatus(mapped.map((t) => t.id));
+  }
+
+  async function loadAuthStatus(tutorIds: string[]) {
+    if (!isAdmin || tutorIds.length === 0) return;
+    try {
+      const res = await fetch(
+        `/api/tutors/auth-status?ids=${encodeURIComponent(tutorIds.join(","))}`,
+        { credentials: "same-origin" },
+      );
+      const body = (await res.json()) as {
+        ok?: boolean;
+        statusById?: Record<string, TutorAuthStatus>;
+        error?: string;
+      };
+      if (!res.ok || !body.ok) return;
+      setAuthStatusById(body.statusById ?? {});
+    } catch {
+      /* keep previous auth status */
+    }
+  }
+
+  async function resetTutorLoginPassword(tutorId: string) {
+    const password = tutorPasswordDraft.trim();
+    if (password.length < 6) {
+      setAuthNotice("新密碼至少 6 個字元。");
+      return;
+    }
+    setAuthBusyId(tutorId);
+    setAuthNotice("");
+    try {
+      const res = await fetch(`/api/tutors/${encodeURIComponent(tutorId)}/auth-account`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset-password", password }),
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        result?: { message?: string };
+        status?: TutorAuthStatus | null;
+      };
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error ?? "Failed to reset tutor password.");
+      }
+      if (body.status) {
+        setAuthStatusById((prev) => ({ ...prev, [tutorId]: body.status! }));
+      }
+      setTutorPasswordDraft("");
+      setAuthNotice(body.result?.message ?? "密碼已更新。");
+    } catch (e) {
+      setAuthNotice(e instanceof Error ? e.message : "Failed to reset tutor password.");
+    } finally {
+      setAuthBusyId(null);
+    }
   }
 
   async function loadLatestRates() {
@@ -315,6 +383,8 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     setRateJunior("");
     setRateSenior("");
     setRateSingle("");
+    setTutorPasswordDraft("");
+    setAuthNotice("");
     setFormError("");
   }
 
@@ -322,6 +392,8 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     const target = teacherById.get(tutorId);
     if (!target) return;
     setSelectionError("");
+    setAuthNotice("");
+    setTutorPasswordDraft("");
     setEditingId(target.id);
     setTeacherNickname(target.nickname);
     setTeacherNameZh(target.nameZh);
@@ -884,6 +956,11 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
                       MPF
                     </th>
                     <TeacherSortableHeader label="Status" columnKey="status" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    {isAdmin ? (
+                      <th className="sticky top-0 z-20 whitespace-nowrap bg-slate-50 px-2 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                        Login
+                      </th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -958,6 +1035,15 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
                             {TEACHER_STATUS_DISPLAY[teacher.status]}
                           </span>
                         </td>
+                        {isAdmin ? (
+                          <td className="whitespace-nowrap px-2 py-3 text-xs text-slate-700">
+                            {authStatusById[teacher.id]?.hasAccount ? (
+                              <span className="font-medium text-emerald-700">{authStatusById[teacher.id]?.authEmail}</span>
+                            ) : (
+                              <span className="text-slate-400">未绑定</span>
+                            )}
+                          </td>
+                        ) : null}
                       </tr>
                     );
                   })}
@@ -1009,6 +1095,43 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
                 </div>
               ) : null}
             </div>
+
+            {editingId && isAdmin ? (
+              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-800">Tutor 登入密碼</p>
+                {authStatusById[editingId]?.hasAccount ? (
+                  <p className="mt-1 text-sm text-slate-600">
+                    登入電郵：<span className="font-medium text-slate-800">{authStatusById[editingId]?.authEmail}</span>
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-amber-800">
+                    未绑定 Supabase Auth。请在 Supabase 建立用户并写入 user_profiles（role=tutor, tutor_id）。
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap items-end gap-3">
+                  <label className="block min-w-[220px]">
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">新密碼</span>
+                    <input
+                      type="password"
+                      value={tutorPasswordDraft}
+                      onChange={(event) => setTutorPasswordDraft(event.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                      placeholder="至少 6 個字元"
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={authBusyId === editingId || !authStatusById[editingId]?.hasAccount}
+                    onClick={() => void resetTutorLoginPassword(editingId)}
+                    className="inline-flex h-10 items-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {authBusyId === editingId ? "更新中…" : "重設密碼"}
+                  </button>
+                </div>
+                {authNotice ? <p className="mt-2 text-sm text-slate-700">{authNotice}</p> : null}
+              </div>
+            ) : null}
           </div>
         </div>
 
