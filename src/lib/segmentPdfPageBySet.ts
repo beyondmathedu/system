@@ -87,7 +87,7 @@ export function detectSetRegionsFromLines(
   lines: TextLine[],
   pageHeight: number,
   pageWidth: number,
-  pageNumber: number,
+  _pageNumber: number,
   defaultTopic = "",
 ): AiDetectedQuestion[] {
   if (!lines.length || pageHeight <= 0 || pageWidth <= 0) return [];
@@ -107,7 +107,6 @@ export function detectSetRegionsFromLines(
   return setLineIndices.map((lineIdx, i) => {
     const startLine = lines[lineIdx]!;
     const nextLineIdx = setLineIndices[i + 1];
-    const endLine = nextLineIdx != null ? lines[nextLineIdx]! : lines[lines.length - 1]!;
 
     const topPx = Math.max(0, startLine.y - 6);
     const bottomPx =
