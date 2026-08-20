@@ -78,3 +78,20 @@ on conflict (id) do nothing;
 
 comment on table public.question_pdf_sources is 'Uploaded exam PDF sources for AI-assisted question splitting.';
 comment on table public.questions is 'Individual question images + metadata for paper generation.';
+
+-- Idempotent column adds (safe when table existed from an earlier partial setup).
+alter table public.question_pdf_sources
+  add column if not exists page_count integer not null default 0,
+  add column if not exists status text not null default 'uploaded',
+  add column if not exists uploaded_by uuid references auth.users (id) on delete set null,
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
+
+alter table public.questions
+  add column if not exists question_code text,
+  add column if not exists processing_status text not null default 'pending_review',
+  add column if not exists difficulty_reviewed boolean not null default false,
+  add column if not exists bbox_json jsonb,
+  add column if not exists ai_difficulty_confidence numeric(5, 4),
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();

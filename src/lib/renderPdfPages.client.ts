@@ -12,7 +12,7 @@ export type RenderedPdfPage = {
 
 let pdfWorkerReady: Promise<void> | null = null;
 
-async function ensurePdfWorker() {
+export async function ensurePdfWorker() {
   if (pdfWorkerReady) return pdfWorkerReady;
   pdfWorkerReady = (async () => {
     const pdfjs = await import("pdfjs-dist");

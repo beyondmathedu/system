@@ -93,8 +93,11 @@ export async function detectQuestionsOnPage(input: {
   const OpenAI = (await import("openai")).default;
   const client = new OpenAI({ apiKey });
 
-  const prompt = `You analyze Hong Kong secondary school math exam paper page images.
-Detect each separate question region on this page. Return ONLY valid JSON:
+  const prompt = `You analyze Hong Kong secondary school math exam paper page images (Beyond Math format).
+Each question block starts with a line like "Set Z/23-24/S6 Mock/I/Q7".
+Detect ONE bounding box per Set header — never merge multiple Set blocks into one region.
+
+Return ONLY valid JSON:
 {
   "questions": [
     {
@@ -116,13 +119,17 @@ Detect each separate question region on this page. Return ONLY valid JSON:
   ]
 }
 Rules:
+- CRITICAL: One entry per "Set …" header. If the page shows Set A, Set B, Set C, return 3 separate questions.
+- questionLabel = the Q number from the Set line (e.g. Q7 → "7").
+- sourceLabel = the full Set line text exactly as printed.
 - top/left/width/height are percentages (0-100) of the page image.
-- One page may contain multiple independent questions; do NOT treat the whole page as one question unless it truly is one question.
+- Each box must span from its Set header down to just above the next Set header (or page bottom).
 - Boxes must include the full question stem, diagrams, sub-parts (a)(b), and marks text.
 - suggestedDifficulty must be L1, L2, L3, or needs_review.
-- If marks, sourceLabel, sourceYear, or examType cannot be read reliably, use null and set needsReview=true.
+- If marks, sourceYear, or examType cannot be read reliably, use null and set needsReview=true.
 - Do NOT invent metadata.
-- If the page is blank or only instructions, return {"questions":[]}.
+- Do NOT treat the whole page as one question when multiple Set headers exist.
+- If the page is blank or only instructions with no Set headers, return {"questions":[]}.
 Subject hint: ${input.defaultSubject ?? "Mathematics"}
 Topic hint: ${input.defaultTopic ?? ""}
 Page number: ${input.pageNumber}.`;

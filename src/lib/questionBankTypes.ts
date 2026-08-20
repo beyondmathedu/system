@@ -11,6 +11,9 @@ export type QuestionProcessingStatus =
   | "needs_review"
   | "failed";
 
+export type QuestionPdfSourceStatus = "uploaded" | "processing" | "ready" | "failed";
+export type QuestionBankShelfStatus = "uploaded" | "needs_segmentation" | "segmented" | "needs_review" | "ready";
+
 /** Bounding box as percentage of page dimensions (0–100). */
 export type QuestionBBox = {
   top: number;
@@ -21,6 +24,7 @@ export type QuestionBBox = {
 
 export type DraftQuestion = {
   clientId: string;
+  pdfSourceId: string | null;
   pageNumber: number;
   questionLabel: string;
   subject: string;
@@ -81,6 +85,22 @@ export type QuestionRow = {
   created_at: string;
 };
 
+export type QuestionPdfSourceRow = {
+  id: string;
+  file_name: string;
+  storage_path: string;
+  page_count: number;
+  status: QuestionPdfSourceStatus;
+  created_at: string;
+  updated_at: string;
+  signed_pdf_url: string | null;
+  saved_question_count: number;
+  needs_review_count: number;
+  ready_question_count: number;
+  shelf_status: QuestionBankShelfStatus;
+};
+
+// Kept for backwards compatibility with older tests and UI copy.
 export const TEST_MODE_MAX_PAGES = 3;
 
 export function clampPercent(n: number): number {
@@ -116,4 +136,18 @@ export function parseConfidence(raw: unknown): number | null {
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
   return Math.max(0, Math.min(1, n));
+}
+
+export function deriveShelfStatus(input: {
+  sourceStatus: QuestionPdfSourceStatus;
+  savedQuestionCount: number;
+  needsReviewCount: number;
+}): QuestionBankShelfStatus {
+  if (input.sourceStatus === "failed") return "needs_review";
+  if (input.savedQuestionCount === 0) {
+    return input.sourceStatus === "uploaded" ? "needs_segmentation" : "uploaded";
+  }
+  if (input.needsReviewCount > 0) return "needs_review";
+  if (input.sourceStatus === "ready") return "ready";
+  return "segmented";
 }

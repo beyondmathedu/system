@@ -1,12 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireQuestionBankAdmin } from "@/lib/questionBankAuth.server";
+import {
+  ensureQuestionBankStorageBuckets,
+  formatStorageUploadError,
+  QUESTION_BANK_IMAGE_BUCKET,
+} from "@/lib/questionBankStorage.server";
+import { formatQuestionBankDbError } from "@/lib/questionBankSchema.server";
 import type { QuestionDifficulty, QuestionProcessingStatus } from "@/lib/questionBankTypes";
 import { allocateQuestionCodes, dataUrlToBuffer } from "@/lib/questionBankVision.server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
-
-const IMAGE_BUCKET = "question-assets";
 const DIFFICULTIES = new Set<QuestionDifficulty>(["L1", "L2", "L3", "needs_review"]);
 const PROCESSING_STATUSES = new Set<QuestionProcessingStatus>([
   "pending_review",
@@ -53,6 +57,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const sb = getSupabaseAdmin();
+    await ensureQuestionBankStorageBuckets(sb);
     const codes = await allocateQuestionCodes(items.length);
     const saved: string[] = [];
 
@@ -82,11 +87,13 @@ export async function POST(request: NextRequest) {
       if (imageDataUrl.startsWith("data:image/")) {
         imagePath = `question-bank/${questionCode}/question.png`;
         const { buffer } = dataUrlToBuffer(imageDataUrl);
-        const { error: uploadError } = await sb.storage.from(IMAGE_BUCKET).upload(imagePath, buffer, {
+        const { error: uploadError } = await sb.storage.from(QUESTION_BANK_IMAGE_BUCKET).upload(imagePath, buffer, {
           contentType: "image/png",
           upsert: true,
         });
-        if (uploadError) throw new Error(uploadError.message);
+        if (uploadError) {
+          throw new Error(formatStorageUploadError(QUESTION_BANK_IMAGE_BUCKET, uploadError.message));
+        }
       }
 
       const { error: insertError } = await sb.from("questions").insert({
@@ -97,7 +104,9 @@ export async function POST(request: NextRequest) {
         question_label: String(item.questionLabel ?? "").trim(),
         subject: String(item.subject ?? "Mathematics").trim() || "Mathematics",
         topic: String(item.topic ?? "").trim() || null,
-        subtopic: String(item.subtopic ?? "").trim() || null,
+        // `subtopic` in Supabase is configured as NOT NULL in some setups.
+        // Always insert at least empty string instead of converting "" -> null.
+        subtopic: String(item.subtopic ?? "").trim() || "",
         source_label: item.sourceLabel ? String(item.sourceLabel).trim() : null,
         source_year: item.sourceYear ? String(item.sourceYear).trim() : null,
         exam_type: item.examType ? String(item.examType).trim() : null,
@@ -105,7 +114,10 @@ export async function POST(request: NextRequest) {
         ai_difficulty: aiDifficulty,
         ai_difficulty_confidence: confidence,
         difficulty_reviewed: false,
-        marks: item.marks != null && Number(item.marks) > 0 ? Math.round(Number(item.marks)) : null,
+        // Some Supabase setups configure `marks` as NOT NULL (even though checks allow null in the intended schema).
+        // If marks can't be detected, we still route the question to human review, so default to a safe positive value.
+        marks:
+          item.marks != null && Number(item.marks) > 0 ? Math.round(Number(item.marks)) : 1,
         time_minutes:
           item.timeMinutes != null && Number(item.timeMinutes) > 0
             ? Math.round(Number(item.timeMinutes))
@@ -128,7 +140,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, savedCount: saved.length, questionIds: saved, questionCodes: codes });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Save failed";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    const raw = e instanceof Error ? e.message : "Save failed";
+    return NextResponse.json({ ok: false, error: formatQuestionBankDbError(raw) }, { status: 500 });
   }
 }

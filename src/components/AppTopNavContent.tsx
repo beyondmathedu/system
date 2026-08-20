@@ -216,12 +216,6 @@ export default function AppTopNavContent({
                       Student Info
                     </Link>
                     <Link
-                      href="/question-bank"
-                      className={`${base} ${isActive("question-bank") ? active : idle}`}
-                    >
-                      Question Bank
-                    </Link>
-                    <Link
                       href="/students-lesson-time-fee-record"
                       className={`${base} ${isMatch("/students-lesson-time-fee-record") ? active : idle}`}
                     >

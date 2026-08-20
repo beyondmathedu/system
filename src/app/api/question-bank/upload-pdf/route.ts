@@ -1,11 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireQuestionBankAdmin } from "@/lib/questionBankAuth.server";
+import {
+  ensureQuestionBankStorageBuckets,
+  formatStorageUploadError,
+  QUESTION_BANK_PDF_BUCKET,
+} from "@/lib/questionBankStorage.server";
+import { formatQuestionBankDbError } from "@/lib/questionBankSchema.server";
 import { dataUrlToBuffer } from "@/lib/questionBankVision.server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
-
-const PDF_BUCKET = "question-bank-original-pdfs";
 
 /** Upload PDF source file to Storage and record metadata. */
 export async function POST(request: NextRequest) {
@@ -28,15 +32,18 @@ export async function POST(request: NextRequest) {
 
   try {
     const sb = getSupabaseAdmin();
+    await ensureQuestionBankStorageBuckets(sb);
     const { buffer } = dataUrlToBuffer(pdfDataUrl);
     const sourceId = crypto.randomUUID();
     const storagePath = `pdf-sources/${sourceId}/${fileName.replace(/[^\w.\-()]+/g, "_")}`;
 
-    const { error: uploadError } = await sb.storage.from(PDF_BUCKET).upload(storagePath, buffer, {
+    const { error: uploadError } = await sb.storage.from(QUESTION_BANK_PDF_BUCKET).upload(storagePath, buffer, {
       contentType: "application/pdf",
       upsert: false,
     });
-    if (uploadError) throw new Error(uploadError.message);
+    if (uploadError) {
+      throw new Error(formatStorageUploadError(QUESTION_BANK_PDF_BUCKET, uploadError.message));
+    }
 
     const { data, error } = await sb
       .from("question_pdf_sources")
@@ -51,11 +58,12 @@ export async function POST(request: NextRequest) {
       })
       .select("id, file_name, storage_path, page_count, status, created_at")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(formatQuestionBankDbError(error.message));
 
     return NextResponse.json({ ok: true, source: data });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Upload failed";
+    const raw = e instanceof Error ? e.message : "Upload failed";
+    const message = formatQuestionBankDbError(raw);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

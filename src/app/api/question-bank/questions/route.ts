@@ -1,12 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireQuestionBankAdmin } from "@/lib/questionBankAuth.server";
+import {
+  ensureQuestionBankStorageBuckets,
+  formatStorageUploadError,
+  QUESTION_BANK_IMAGE_BUCKET,
+} from "@/lib/questionBankStorage.server";
 import type { QuestionDifficulty, QuestionProcessingStatus } from "@/lib/questionBankTypes";
 import { allocateQuestionCodes, dataUrlToBuffer } from "@/lib/questionBankVision.server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
-
-const IMAGE_BUCKET = "question-assets";
 const DIFFICULTIES = new Set<QuestionDifficulty>(["L1", "L2", "L3", "needs_review"]);
 
 type SaveQuestionInput = {
@@ -36,10 +39,12 @@ export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams;
   const status = sp.get("status");
   const difficulty = sp.get("difficulty");
+  const pdfSourceId = String(sp.get("pdfSourceId") ?? "").trim();
   const limit = Math.min(200, Math.max(1, Number(sp.get("limit") ?? "50")));
 
   try {
     const sb = getSupabaseAdmin();
+    await ensureQuestionBankStorageBuckets(sb);
     let query = sb
       .from("questions")
       .select(
@@ -56,6 +61,9 @@ export async function GET(request: NextRequest) {
     if (difficulty && DIFFICULTIES.has(difficulty as QuestionDifficulty)) {
       query = query.eq("difficulty", difficulty);
     }
+    if (pdfSourceId) {
+      query = query.eq("pdf_source_id", pdfSourceId);
+    }
 
     const { data, error } = await query;
     if (error) throw new Error(error.message);
@@ -63,7 +71,7 @@ export async function GET(request: NextRequest) {
     const rows = data ?? [];
     const paths = rows.map((r) => String((r as { image_path?: string }).image_path ?? "")).filter(Boolean);
     const signed = paths.length
-      ? await sb.storage.from(IMAGE_BUCKET).createSignedUrls(paths, 3600)
+      ? await sb.storage.from(QUESTION_BANK_IMAGE_BUCKET).createSignedUrls(paths, 3600)
       : { data: [] as { path: string | null; signedUrl: string }[] };
 
     const urlByPath = new Map(
@@ -102,6 +110,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const sb = getSupabaseAdmin();
+    await ensureQuestionBankStorageBuckets(sb);
     const codes = await allocateQuestionCodes(items.length);
     const saved: string[] = [];
 
@@ -114,11 +123,13 @@ export async function POST(request: NextRequest) {
       if (imageDataUrl.startsWith("data:image/")) {
         imagePath = `question-bank/${questionCode}/question.png`;
         const { buffer } = dataUrlToBuffer(imageDataUrl);
-        const { error: uploadError } = await sb.storage.from(IMAGE_BUCKET).upload(imagePath, buffer, {
+        const { error: uploadError } = await sb.storage.from(QUESTION_BANK_IMAGE_BUCKET).upload(imagePath, buffer, {
           contentType: "image/png",
           upsert: true,
         });
-        if (uploadError) throw new Error(uploadError.message);
+        if (uploadError) {
+          throw new Error(formatStorageUploadError(QUESTION_BANK_IMAGE_BUCKET, uploadError.message));
+        }
       }
 
       const aiDifficulty = item.aiDifficulty && DIFFICULTIES.has(item.aiDifficulty) ? item.aiDifficulty : null;
