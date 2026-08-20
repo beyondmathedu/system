@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppTopNav from "@/components/AppTopNav";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
@@ -263,7 +263,26 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     contentKey: sortedTeachers.length,
   });
 
-  async function loadTeachers() {
+  const loadAuthStatus = useCallback(async (tutorIds: string[]) => {
+    if (!isAdmin || tutorIds.length === 0) return;
+    try {
+      const res = await fetch(
+        `/api/tutors/auth-status?ids=${encodeURIComponent(tutorIds.join(","))}`,
+        { credentials: "same-origin" },
+      );
+      const body = (await res.json()) as {
+        ok?: boolean;
+        statusById?: Record<string, TutorAuthStatus>;
+        error?: string;
+      };
+      if (!res.ok || !body.ok) return;
+      setAuthStatusById(body.statusById ?? {});
+    } catch {
+      /* keep previous auth status */
+    }
+  }, [isAdmin]);
+
+  const loadTeachers = useCallback(async () => {
     setDataError("");
     const fullSelect =
       "id, name, name_zh, name_en, birth_date, status, color_hex, mpf_enabled";
@@ -282,64 +301,48 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     const mapped = (data ?? []).map(mapRowToTeacher);
     setTeachers(mapped);
     await loadAuthStatus(mapped.map((t) => t.id));
-  }
+  }, [loadAuthStatus]);
 
-  async function loadAuthStatus(tutorIds: string[]) {
-    if (!isAdmin || tutorIds.length === 0) return;
-    try {
-      const res = await fetch(
-        `/api/tutors/auth-status?ids=${encodeURIComponent(tutorIds.join(","))}`,
-        { credentials: "same-origin" },
-      );
-      const body = (await res.json()) as {
-        ok?: boolean;
-        statusById?: Record<string, TutorAuthStatus>;
-        error?: string;
-      };
-      if (!res.ok || !body.ok) return;
-      setAuthStatusById(body.statusById ?? {});
-    } catch {
-      /* keep previous auth status */
-    }
-  }
-
-  async function resetTutorLoginPassword(tutorId: string) {
-    const password = tutorPasswordDraft.trim();
-    if (password.length < 6) {
-      setAuthNotice("新密碼至少 6 個字元。");
-      return;
-    }
-    setAuthBusyId(tutorId);
-    setAuthNotice("");
-    try {
-      const res = await fetch(`/api/tutors/${encodeURIComponent(tutorId)}/auth-account`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset-password", password }),
-      });
-      const body = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        result?: { message?: string };
-        status?: TutorAuthStatus | null;
-      };
-      if (!res.ok || !body.ok) {
-        throw new Error(body.error ?? "Failed to reset tutor password.");
+  const resetTutorLoginPassword = useCallback(
+    async (tutorId: string) => {
+      const password = tutorPasswordDraft.trim();
+      if (password.length < 6) {
+        setAuthNotice("新密碼至少 6 個字元。");
+        return;
       }
-      if (body.status) {
-        setAuthStatusById((prev) => ({ ...prev, [tutorId]: body.status! }));
+      setAuthBusyId(tutorId);
+      setAuthNotice("");
+      try {
+        const res = await fetch(`/api/tutors/${encodeURIComponent(tutorId)}/auth-account`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "reset-password", password }),
+        });
+        const body = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          result?: { message?: string };
+          status?: TutorAuthStatus | null;
+        };
+        if (!res.ok || !body.ok) {
+          throw new Error(body.error ?? "Failed to reset tutor password.");
+        }
+        if (body.status) {
+          setAuthStatusById((prev) => ({ ...prev, [tutorId]: body.status! }));
+        }
+        setTutorPasswordDraft("");
+        setAuthNotice(body.result?.message ?? "密碼已更新。");
+      } catch (e) {
+        setAuthNotice(e instanceof Error ? e.message : "Failed to reset tutor password.");
+      } finally {
+        setAuthBusyId(null);
       }
-      setTutorPasswordDraft("");
-      setAuthNotice(body.result?.message ?? "密碼已更新。");
-    } catch (e) {
-      setAuthNotice(e instanceof Error ? e.message : "Failed to reset tutor password.");
-    } finally {
-      setAuthBusyId(null);
-    }
-  }
+    },
+    [tutorPasswordDraft],
+  );
 
-  async function loadLatestRates() {
+  const loadLatestRates = useCallback(async () => {
     const { data, error } = await supabase
       .from("latest_tutor_rates")
       .select("tutor_id, junior_rate, senior_rate, single_student_rate");
@@ -355,7 +358,7 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
       };
     }
     setRateByTeacherId(map);
-  }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -367,7 +370,7 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [loadTeachers, loadLatestRates]);
 
   function resetForm() {
     setEditingId(null);
