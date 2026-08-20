@@ -27,6 +27,7 @@ import { loadTutorVisibility } from "@/lib/tutorVisibility";
 import { isSharedIpadTutorDisplayName } from "@/lib/tutorConstants";
 import { attendanceAfterRegularToggle } from "@/lib/lessonScheduleVersions";
 import { formatGradeDisplay } from "@/lib/grade";
+import { hkTodayIso } from "@/lib/examDateVisibility";
 import { useRoomLessonStateRealtime } from "@/lib/useRoomLessonStateRealtime";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
@@ -55,6 +56,8 @@ type Props = {
   tutorFieldLocked?: boolean;
   /** 導師帳：仍可改 Lesson summary（當 tutorFieldLocked 為 true 時） */
   allowSummaryEdit?: boolean;
+  /** 共用 iPad 帳：出席／summary 僅可改香港今日堂 */
+  restrictAttendanceAndSummaryToToday?: boolean;
   /** 共用 iPad 帳：不顯示學號欄 */
   hideStudentId?: boolean;
   /** admin：/students/{id}/lessons；共用 iPad：/lessons/{year}?next=房間 */
@@ -81,6 +84,7 @@ export default function RoomScheduleTable({
   attendanceLocked = false,
   tutorFieldLocked = false,
   allowSummaryEdit = false,
+  restrictAttendanceAndSummaryToToday = false,
   hideStudentId = false,
   studentLessonsHrefMode = "yearFromRoom",
 }: Props) {
@@ -88,6 +92,14 @@ export default function RoomScheduleTable({
   const router = useRouter();
   const searchParams = useSearchParams();
   const summaryLocked = tutorFieldLocked && !allowSummaryEdit;
+  const todayIso = hkTodayIso();
+  const isAttendanceOrSummaryEditableForDate = useCallback(
+    (dateIso: string) => {
+      if (!restrictAttendanceAndSummaryToToday) return true;
+      return dateIso.trim() === todayIso;
+    },
+    [restrictAttendanceAndSummaryToToday, todayIso],
+  );
   const returnTo = useMemo(() => {
     const q = searchParams?.toString() ?? "";
     return q ? `${pathname}?${q}` : pathname;
@@ -468,6 +480,7 @@ export default function RoomScheduleTable({
   }, []);
 
   function onToggle(row: RoomScheduleRow, checked: boolean) {
+    if (attendanceLocked || !isAttendanceOrSummaryEditableForDate(row.dateIso)) return;
     setSaveError("");
     setLocalRows((prev) => prev.map((r) => (r.rowKey === row.rowKey ? { ...r, attended: checked } : r)));
 
@@ -537,6 +550,7 @@ export default function RoomScheduleTable({
   }
 
   function onChangeLessonSummary(row: RoomScheduleRow, nextNoteRaw: string) {
+    if (summaryLocked || !isAttendanceOrSummaryEditableForDate(row.dateIso)) return;
     const nextNote = nextNoteRaw.trim();
 
     setSaveError("");
@@ -591,6 +605,7 @@ export default function RoomScheduleTable({
   }
 
   function scheduleLessonSummarySave(row: RoomScheduleRow, nextValueRaw: string) {
+    if (summaryLocked || !isAttendanceOrSummaryEditableForDate(row.dateIso)) return;
     const rowKey = row.rowKey;
     const nextNote = nextValueRaw.trim();
     const original = initialNoteByRowKey.current.get(rowKey) ?? "";
@@ -889,10 +904,13 @@ export default function RoomScheduleTable({
                     type="checkbox"
                     checked={r.attended}
                     disabled={
-                      attendanceLocked || savingRowKey === r.rowKey || savingRowKey === slotKey(r)
+                      attendanceLocked ||
+                      !isAttendanceOrSummaryEditableForDate(r.dateIso) ||
+                      savingRowKey === r.rowKey ||
+                      savingRowKey === slotKey(r)
                     }
                     onChange={(event) => void onToggle(r, event.target.checked)}
-                    className="h-4 w-4 cursor-pointer accent-[#1d76c2]"
+                    className="h-4 w-4 cursor-pointer accent-[#1d76c2] disabled:cursor-not-allowed"
                     aria-label={`Toggle attendance ${rowAriaStudentLabel(r)} ${r.dateDisplay} ${r.time}`}
                     suppressHydrationWarning
                   />
@@ -929,10 +947,15 @@ export default function RoomScheduleTable({
                 <td className="px-3 py-2">
                   <textarea
                     value={r.note || ""}
-                    disabled={summaryLocked}
+                    disabled={summaryLocked || !isAttendanceOrSummaryEditableForDate(r.dateIso)}
                     aria-busy={savingLessonSummaryRowKey === r.rowKey}
-                    placeholder="Enter lesson summary"
+                    placeholder={
+                      restrictAttendanceAndSummaryToToday && !isAttendanceOrSummaryEditableForDate(r.dateIso)
+                        ? "Only today's lessons can be edited"
+                        : "Enter lesson summary"
+                    }
                     onChange={(event) => {
+                      if (!isAttendanceOrSummaryEditableForDate(r.dateIso)) return;
                       const nextValue = event.target.value;
                       setLocalRows((prev) =>
                         prev.map((row) => (row.rowKey === r.rowKey ? { ...row, note: nextValue } : row)),
@@ -940,7 +963,7 @@ export default function RoomScheduleTable({
                       scheduleLessonSummarySave(r, nextValue);
                     }}
                     className={[
-                      "w-full max-w-[200px] resize-none rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]",
+                      "w-full max-w-[200px] resize-none rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500",
                       savingLessonSummaryRowKey === r.rowKey ? "opacity-90" : "",
                     ].join(" ")}
                     aria-label={`${rowAriaStudentLabel(r)} ${r.dateDisplay} lesson summary`}

@@ -281,6 +281,12 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
               {summaryPrefix} this classroom has <span className="font-semibold text-slate-900">{rows.length}</span>{" "}
               lessons (regular / makeup / extra).
             </p>
+            {isSharedIpadTutor ? (
+              <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Attendance and Lesson summary can only be edited for <strong>today</strong> (Hong Kong date). Past and
+                future lessons are view-only.
+              </p>
+            ) : null}
 
             {rows.length === 0 && !loadError ? (
               <p className="text-slate-600">No lessons found for this period in this classroom.</p>
@@ -296,6 +302,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                 attendanceLocked={isRoomStaffView && !isSharedIpadTutor}
                 tutorFieldLocked={isRoomStaffView}
                 allowSummaryEdit={isRoomStaffView}
+                restrictAttendanceAndSummaryToToday={isSharedIpadTutor}
               />
             ) : null}
 
