@@ -88,9 +88,9 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
             </div>
           </div>
 
-          <div className="p-4 sm:p-6">
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="mb-3 text-sm font-bold text-slate-700">Daily lesson records</div>
+          <div className="p-2 sm:p-4 lg:p-6">
+            <div className="rounded-xl border border-slate-200 bg-white p-2 sm:p-4">
+              <div className="mb-2 text-sm font-bold text-slate-700 sm:mb-3">Daily lesson records</div>
               <DayTimetableTable
                 key={payload.dateIso}
                 payload={tablePayload}

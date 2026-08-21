@@ -50,3 +50,47 @@
     width: 5rem;
   }
 }
+
+/* Daily Timetable: pack columns left (w-max table) so all rooms fit on iPad. */
+.tt-daily-table col.tt-daily-col-time {
+  width: 2.6rem;
+}
+.tt-daily-table col.tt-daily-col-name {
+  width: 3.6rem;
+}
+.tt-daily-table col.tt-daily-col-grade {
+  width: 2.6rem;
+}
+.tt-daily-table col.tt-daily-col-exam {
+  width: 2.6rem;
+}
+
+@media (min-width: 640px) {
+  .tt-daily-table col.tt-daily-col-time {
+    width: 2.9rem;
+  }
+  .tt-daily-table col.tt-daily-col-name {
+    width: 4.2rem;
+  }
+  .tt-daily-table col.tt-daily-col-grade {
+    width: 2.9rem;
+  }
+  .tt-daily-table col.tt-daily-col-exam {
+    width: 2.9rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .tt-daily-table col.tt-daily-col-time {
+    width: 3.25rem;
+  }
+  .tt-daily-table col.tt-daily-col-name {
+    width: 4.9rem;
+  }
+  .tt-daily-table col.tt-daily-col-grade {
+    width: 3.2rem;
+  }
+  .tt-daily-table col.tt-daily-col-exam {
+    width: 3.2rem;
+  }
+}
