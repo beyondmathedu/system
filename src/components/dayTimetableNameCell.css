@@ -53,44 +53,69 @@
 
 /* Daily Timetable: pack columns left (w-max table) so all rooms fit on iPad. */
 .tt-daily-table col.tt-daily-col-time {
-  width: 2.6rem;
+  width: 2.25rem;
 }
 .tt-daily-table col.tt-daily-col-name {
-  width: 3.6rem;
+  width: 3.4rem;
 }
 .tt-daily-table col.tt-daily-col-grade {
-  width: 2.6rem;
+  width: 2rem;
 }
 .tt-daily-table col.tt-daily-col-exam {
-  width: 2.6rem;
+  width: 2rem;
 }
 
 @media (min-width: 640px) {
   .tt-daily-table col.tt-daily-col-time {
-    width: 2.9rem;
+    width: 2.5rem;
   }
   .tt-daily-table col.tt-daily-col-name {
-    width: 4.2rem;
+    width: 3.8rem;
   }
   .tt-daily-table col.tt-daily-col-grade {
-    width: 2.9rem;
+    width: 2.2rem;
   }
   .tt-daily-table col.tt-daily-col-exam {
-    width: 2.9rem;
+    width: 2.2rem;
   }
 }
 
 @media (min-width: 1024px) {
   .tt-daily-table col.tt-daily-col-time {
-    width: 3.25rem;
+    width: 2.75rem;
   }
   .tt-daily-table col.tt-daily-col-name {
-    width: 4.9rem;
+    width: 4.2rem;
   }
   .tt-daily-table col.tt-daily-col-grade {
-    width: 3.2rem;
+    width: 2.25rem;
   }
   .tt-daily-table col.tt-daily-col-exam {
-    width: 3.2rem;
+    width: 2.25rem;
   }
 }
+
+/* iPad / narrow screens: shrink whole table so 5 rooms stay visible without heavy scroll. */
+.tt-daily-fit {
+  width: max-content;
+  max-width: none;
+}
+
+@media (max-width: 1023px) {
+  .tt-daily-fit {
+    zoom: 0.88;
+  }
+}
+
+@media (max-width: 834px) {
+  .tt-daily-fit {
+    zoom: 0.8;
+  }
+}
+
+@media (max-width: 768px) {
+  .tt-daily-fit {
+    zoom: 0.74;
+  }
+}
+
