@@ -206,29 +206,32 @@ const COLS_PER_ROOM = 3;
 
 const TH_TIME =
   "w-14 border border-slate-300 bg-slate-50 px-2 py-2 text-left text-base font-semibold text-slate-800";
-/** Daily compact: narrow on small screens, fixed widths from lg up. */
+/** Daily compact: keep columns tight so 5 rooms fit on iPad; leftover space stays on the right. */
 const TH_TIME_DAILY =
-  "border border-slate-300 bg-slate-50 align-middle text-center font-semibold text-slate-800 w-9 min-w-0 px-0.5 py-1.5 text-[10px] leading-tight sm:w-12 sm:px-1 sm:py-2 sm:text-xs lg:w-14 lg:px-2 lg:py-2 lg:text-sm";
+  "border border-slate-300 bg-slate-50 align-middle text-center font-semibold text-slate-800 w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-1 text-[9px] leading-tight sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:px-0.5 sm:py-1.5 sm:text-[10px] lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] lg:text-xs";
 const TH_ROOM_ROW1 =
   "border border-slate-300 bg-slate-50 px-2 py-2 text-center text-sm font-semibold text-slate-900";
 const TH_ROOM_ROW1_DAILY =
-  "border border-slate-300 bg-slate-50 px-0.5 py-1.5 text-center text-[10px] font-semibold text-slate-900 sm:px-1 sm:py-2 sm:text-xs lg:px-2 lg:py-2 lg:text-sm";
+  "border border-slate-300 bg-slate-50 px-0 py-1 text-center text-[9px] font-semibold leading-tight text-slate-900 sm:px-0.5 sm:py-1.5 sm:text-[10px] lg:px-1 lg:py-1.5 lg:text-xs";
 const TH_SUB =
   "border border-slate-300 bg-slate-50 py-2 text-left text-sm font-semibold text-slate-900";
+/** Daily Name / Grade / Exam — ~30% wider than ultra-compact; table uses w-max so extra space stays right. */
 const TH_SUB_DAILY_NAME =
-  `${TH_SUB} min-w-0 px-0.5 py-1.5 text-[10px] sm:px-1 sm:py-2 sm:text-xs lg:w-[5.75rem] lg:max-w-[5.75rem] lg:min-w-[5.75rem] lg:text-sm`;
+  `${TH_SUB} w-[3.6rem] min-w-[3.6rem] max-w-[3.6rem] px-0.5 py-1 text-[9px] leading-tight sm:w-[4.2rem] sm:min-w-[4.2rem] sm:max-w-[4.2rem] sm:px-0.5 sm:py-1 sm:text-[10px] lg:w-[4.9rem] lg:min-w-[4.9rem] lg:max-w-[4.9rem] lg:text-[11px]`;
 const TH_SUB_DAILY_GRADE =
-  `${TH_SUB} w-6 min-w-0 max-w-6 px-0 py-1.5 text-center text-[10px] leading-tight sm:w-7 sm:max-w-7 sm:px-0.5 sm:py-2 sm:text-xs lg:w-9 lg:max-w-9 lg:min-w-9 lg:px-0.5 lg:text-xs`;
+  `${TH_SUB} w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-1 text-center text-[9px] leading-tight sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:text-[10px] lg:w-[3.2rem] lg:min-w-[3.2rem] lg:max-w-[3.2rem] lg:text-[10px]`;
 const TH_SUB_DAILY_EXAM =
-  `${TH_SUB} w-7 min-w-0 max-w-7 px-0 py-1.5 text-center text-[10px] leading-tight sm:w-8 sm:max-w-8 sm:px-0.5 sm:py-2 sm:text-xs lg:w-10 lg:max-w-10 lg:min-w-10 lg:px-0.5 lg:text-[10px]`;
+  `${TH_SUB} w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-1 text-center text-[9px] leading-tight sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:text-[10px] lg:w-[3.2rem] lg:min-w-[3.2rem] lg:max-w-[3.2rem] lg:text-[10px]`;
 const TD_TIME =
   "border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800";
+const TD_TIME_DAILY =
+  "border border-slate-300 bg-white px-0 py-0.5 text-center text-[9px] font-medium leading-tight text-slate-800 sm:px-0.5 sm:text-[10px] lg:text-xs";
 const TD_DAILY_NAME_EXTRA =
-  "min-w-0 !h-auto px-0.5 py-0.5 align-top break-words sm:px-1 lg:w-[5.75rem] lg:max-w-[5.75rem]";
+  "w-[3.6rem] min-w-[3.6rem] max-w-[3.6rem] !h-auto px-0.5 py-0.5 align-top break-words overflow-hidden sm:w-[4.2rem] sm:min-w-[4.2rem] sm:max-w-[4.2rem] lg:w-[4.9rem] lg:min-w-[4.9rem] lg:max-w-[4.9rem]";
 const TD_DAILY_GRADE_EXTRA =
-  "w-6 min-w-0 max-w-6 px-0 py-0.5 text-center text-[10px] sm:w-7 sm:max-w-7 sm:px-0.5 sm:text-xs lg:w-9 lg:max-w-9";
+  "w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-0.5 text-center text-[9px] leading-tight sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:text-[10px] lg:w-[3.2rem] lg:min-w-[3.2rem] lg:max-w-[3.2rem] lg:text-[10px]";
 const TD_DAILY_EXAM_EXTRA =
-  "w-7 min-w-0 max-w-7 px-0 py-0.5 text-center text-[10px] tabular-nums sm:w-8 sm:max-w-8 sm:px-0.5 sm:text-xs lg:w-10 lg:max-w-10";
+  "w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-0.5 text-center text-[9px] leading-tight tabular-nums sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:text-[10px] lg:w-[3.2rem] lg:min-w-[3.2rem] lg:max-w-[3.2rem] lg:text-[10px]";
 const TD_REGULAR_NAME_EXTRA =
   "tt-name-cell @container/name min-h-9 !h-auto align-top break-words px-2 py-1 sm:px-3";
 const TD_TIME_CAP =
@@ -292,12 +295,15 @@ export default function DayTimetableTable({
   const tdExamExtra = dailyCompactColumns ? TD_DAILY_EXAM_EXTRA : "w-20 shrink-0";
   const thTimeClass = dailyCompactColumns ? TH_TIME_DAILY : TH_TIME;
   const thRoomRow1Class = dailyCompactColumns ? TH_ROOM_ROW1_DAILY : TH_ROOM_ROW1;
+  const tdTimeClass = dailyCompactColumns ? TD_TIME_DAILY : TD_TIME;
   const tableClassName =
-    dailyCompactColumns || (compactStudentNames && showRegularCapacitySummary)
-      ? "w-full min-w-0 table-fixed border-collapse text-[11px] sm:text-sm lg:min-w-[960px]"
-      : fluidNameCell
-        ? "tt-regular-table w-full min-w-0 table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm"
-        : "min-w-[960px] w-full border-collapse text-sm";
+    dailyCompactColumns
+      ? "tt-daily-table w-max max-w-none table-fixed border-collapse text-[9px] sm:text-[10px] lg:text-xs"
+      : compactStudentNames && showRegularCapacitySummary
+        ? "w-full min-w-0 table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm"
+        : fluidNameCell
+          ? "tt-regular-table w-full min-w-0 table-fixed border-collapse text-[10px] sm:text-xs lg:text-sm"
+          : "min-w-[960px] w-full border-collapse text-sm";
   const [hoverPanel, setHoverPanel] = useState<{
     studentId: string;
     name: string;
@@ -384,9 +390,10 @@ export default function DayTimetableTable({
   }, []);
 
   function renderEyeIcon(hidden: boolean) {
+    const iconClass = dailyCompactColumns ? "h-2.5 w-2.5 sm:h-3 sm:w-3" : "h-3.5 w-3.5";
     if (hidden) {
       return (
-        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+        <svg viewBox="0 0 20 20" className={iconClass} fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
           <path d="M2.5 2.5l15 15" strokeLinecap="round" />
           <path d="M8.9 4.2A8.7 8.7 0 0110 4.1c4.3 0 7.8 3 9 5.9a10.8 10.8 0 01-3.1 4.2" strokeLinecap="round" />
           <path d="M7 7a4 4 0 005.5 5.5" strokeLinecap="round" />
@@ -395,7 +402,7 @@ export default function DayTimetableTable({
       );
     }
     return (
-      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <svg viewBox="0 0 20 20" className={iconClass} fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
         <path d="M1 10c1.2-2.9 4.7-5.9 9-5.9S17.8 7.1 19 10c-1.2 2.9-4.7 5.9-9 5.9S2.2 12.9 1 10z" />
         <circle cx="10" cy="10" r="2.6" />
       </svg>
@@ -442,11 +449,11 @@ export default function DayTimetableTable({
         const { line1, line2 } = splitTimetableDisplayName(item.name);
         return line2 ? (
           <>
-            <span className="block text-[10px] leading-snug sm:text-[13px]">{line1}</span>
-            <span className="block text-[9px] leading-snug sm:text-[11px]">{line2}</span>
+            <span className="block text-[9px] leading-snug sm:text-[10px] lg:text-[11px]">{line1}</span>
+            <span className="block text-[8px] leading-snug sm:text-[9px] lg:text-[10px]">{line2}</span>
           </>
         ) : (
-          <span className="block text-[10px] leading-snug sm:text-[13px]">{line1}</span>
+          <span className="block text-[9px] leading-snug sm:text-[10px] lg:text-[11px]">{line1}</span>
         );
       })()
     ) : fluidNameCell ? (
@@ -518,17 +525,17 @@ export default function DayTimetableTable({
     if (!enableRoomVisibilityToggle) return headerLabel;
     const hidden = hiddenRooms.includes(room);
     return (
-      <div className="flex items-center justify-center gap-1.5">
+      <div className="flex items-center justify-center gap-0.5 sm:gap-1">
         <button
           type="button"
           onClick={() => toggleRoomVisibility(room)}
-          className="inline-flex h-6 w-6 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-800"
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-800 sm:h-5 sm:w-5"
           aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
           title={hidden ? `Show ${label}` : `Hide ${label}`}
         >
           {renderEyeIcon(hidden)}
         </button>
-        <span>{headerLabel}</span>
+        <span className="min-w-0 truncate">{headerLabel}</span>
       </div>
     );
   }
@@ -546,7 +553,7 @@ export default function DayTimetableTable({
       {repeatRoomHeadersPerTimeSlot ? (
         <p className="border-b border-slate-200 bg-sky-50/80 px-3 py-2 text-xs text-slate-700">
           <span className="font-semibold text-slate-800">
-            Each time slot repeats room headers: {repeatSlotRoomHint} — Name, Grade, Exam date — so columns
+            Each time slot repeats room headers: {repeatSlotRoomHint} — Name, Gr., Exam — so columns
             stay clear when scrolling.
           </span>
           {omittedRoomsToday.length > 0 ? (
@@ -588,7 +595,16 @@ export default function DayTimetableTable({
       ) : null}
       <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-auto rounded-b-lg">
       <table className={tableClassName}>
-        {fluidNameCell ? (
+        {dailyCompactColumns ? (
+          <colgroup>
+            <col className="tt-daily-col-time" />
+            {visibleRoomsForTable.flatMap((room) => [
+              <col key={`col-name-${room}`} className="tt-daily-col-name" />,
+              <col key={`col-grade-${room}`} className="tt-daily-col-grade" />,
+              <col key={`col-exam-${room}`} className="tt-daily-col-exam" />,
+            ])}
+          </colgroup>
+        ) : fluidNameCell ? (
           <colgroup>
             <col className="tt-col-time" />
             {visibleRoomsForTable.flatMap((room) => [
@@ -640,7 +656,7 @@ export default function DayTimetableTable({
                   {t.grade}
                 </th>,
                 <th key={`exam-${room}`} title={t.examThTitle} className={thExamClass}>
-                  {t.examHeader}
+                  {dailyCompactColumns ? "Exam" : t.examHeader}
                 </th>,
               ])}
             </tr>
@@ -701,7 +717,7 @@ export default function DayTimetableTable({
                           title={t.examThTitle}
                           className={thExamClass}
                         >
-                          {t.examHeader}
+                          {dailyCompactColumns ? "Exam" : t.examHeader}
                         </th>,
                       ])}
                     </tr>
@@ -713,7 +729,7 @@ export default function DayTimetableTable({
                     repeatRoomHeadersPerTimeSlot ? "" : idx === 0 ? frame.time : "";
                   return (
                     <tr key={`${frame.time}-${idx}`}>
-                      <td className={`${TD_TIME} ${noGridCls}`}>{timeCell}</td>
+                      <td className={`${tdTimeClass} ${noGridCls}`}>{timeCell}</td>
                       {visibleRoomsForTable.map((room, roomIdx) => {
                         const item = cells[roomIdx][idx];
                         const feeTone = item
