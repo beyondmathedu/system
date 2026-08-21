@@ -466,6 +466,13 @@ export default function StudentProgressByIdClient({
 }) {
   const params = useParams<{ id: string }>();
   const studentId = normalizeStudentId(String(params?.id || ""));
+  const viewerRole = String(navViewer?.role ?? "").toLowerCase();
+  const isStudentViewer = viewerRole === "student";
+  const isTutorViewerRole = viewerRole === "tutor";
+  const backHref = isStudentViewer
+    ? studentPortalHomePath(studentId)
+    : `/students/${encodeURIComponent(studentId)}/lessons`;
+  const backAriaLabel = isStudentViewer ? "Back to my lessons" : "Back to student lesson record";
   const [studentSummary, setStudentSummary] = useState<StudentSummary>({
     id: studentId,
     nameZh: "",
@@ -709,7 +716,7 @@ export default function StudentProgressByIdClient({
   return (
     <div className="min-h-screen bg-slate-100 py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight="students" viewer={navViewer} />
+        <AppTopNav highlight={isTutorViewerRole ? "daily-timetable" : "students"} viewer={navViewer} />
 
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div
@@ -718,20 +725,20 @@ export default function StudentProgressByIdClient({
           >
             <div className="flex items-center gap-3">
               <Link
-                href={
-                  readOnly
-                    ? studentPortalHomePath(studentId)
-                    : `/students/${encodeURIComponent(studentId)}/lessons`
-                }
+                href={backHref}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
-                aria-label={readOnly ? "Back to my lessons" : "Back to student lesson record"}
+                aria-label={backAriaLabel}
               >
                 ←
               </Link>
               <h1 className="text-2xl font-bold tracking-tight">Student Lesson Record</h1>
             </div>
             {readOnly ? (
-              <p className="mt-2 text-xs font-medium text-blue-100/95">檢視模式（學生帳號不可修改進度表）</p>
+              <p className="mt-2 text-xs font-medium text-blue-100/95">
+                {isTutorViewerRole
+                  ? "檢視模式（Tutor／共用 iPad 不可修改進度表）"
+                  : "檢視模式（學生帳號不可修改進度表）"}
+              </p>
             ) : null}
             <p className="mt-1 text-sm text-blue-100">
               Student ID: {studentId || "—"} | Student:{" "}

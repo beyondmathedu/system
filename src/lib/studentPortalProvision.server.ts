@@ -393,3 +393,61 @@ export async function syncStudentPortalEmail(studentId: string): Promise<Student
     userId,
   };
 }
+
+export type DeleteStudentsAndAuthResult = {
+  ok: boolean;
+  deletedStudentIds: string[];
+  deletedAuthUserIds: string[];
+  skippedAuthStudentIds: string[];
+};
+
+/**
+ * Delete student records and any linked student-role Auth users.
+ * Tutor/admin Auth accounts are never deleted, even if a profile row is mis-linked.
+ */
+export async function deleteStudentsAndAuthAccounts(
+  studentIds: string[],
+): Promise<DeleteStudentsAndAuthResult> {
+  const ids = [...new Set(studentIds.map((id) => normalizeStudentId(id)).filter(Boolean))];
+  if (!ids.length) throw new Error("No student ids");
+  if (ids.length > 50) throw new Error("Delete at most 50 students at a time.");
+
+  const sb = getSupabaseAdmin();
+  const { data: profilesRaw, error: profilesError } = await sb
+    .from("user_profiles")
+    .select("user_id, role, student_id")
+    .in("student_id", ids);
+  if (profilesError) throw new Error(profilesError.message);
+
+  const deletedAuthUserIds: string[] = [];
+  const skippedAuthStudentIds: string[] = [];
+  const authUserIdsToDelete: string[] = [];
+
+  for (const row of profilesRaw ?? []) {
+    const sid = normalizeStudentId(String((row as { student_id?: string | null }).student_id ?? ""));
+    const userId = String((row as { user_id?: string }).user_id ?? "").trim();
+    const role = String((row as { role?: string }).role ?? "").toLowerCase();
+    if (!sid || !userId) continue;
+    if (role !== "student") {
+      skippedAuthStudentIds.push(sid);
+      continue;
+    }
+    authUserIdsToDelete.push(userId);
+  }
+
+  for (const userId of [...new Set(authUserIdsToDelete)]) {
+    const { error } = await sb.auth.admin.deleteUser(userId);
+    if (error) throw new Error(`Failed to delete login account: ${error.message}`);
+    deletedAuthUserIds.push(userId);
+  }
+
+  const { error: deleteStudentsError } = await sb.from("students").delete().in("id", ids);
+  if (deleteStudentsError) throw new Error(deleteStudentsError.message);
+
+  return {
+    ok: true,
+    deletedStudentIds: ids,
+    deletedAuthUserIds,
+    skippedAuthStudentIds: [...new Set(skippedAuthStudentIds)],
+  };
+}

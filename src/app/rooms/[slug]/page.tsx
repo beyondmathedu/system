@@ -296,7 +296,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
               <RoomScheduleTable
                 rows={rows}
                 year={year}
-                canOpenStudentLink={isSharedIpadTutor || isAdminViewer}
+                canOpenStudentLink={isAdminViewer || isTutorView || isSharedIpadTutor}
                 studentLessonsHrefMode={isAdminViewer ? "hub" : "yearFromRoom"}
                 hideStudentId={isSharedIpadTutor}
                 attendanceLocked={isRoomStaffView && !isSharedIpadTutor}
