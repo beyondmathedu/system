@@ -208,30 +208,30 @@ const TH_TIME =
   "w-14 border border-slate-300 bg-slate-50 px-2 py-2 text-left text-base font-semibold text-slate-800";
 /** Daily compact: keep columns tight so 5 rooms fit on iPad; leftover space stays on the right. */
 const TH_TIME_DAILY =
-  "border border-slate-300 bg-slate-50 align-middle text-center font-semibold text-slate-800 w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-1 text-[9px] leading-tight sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:px-0.5 sm:py-1.5 sm:text-[10px] lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] lg:text-xs";
+  "border border-slate-300 bg-slate-50 align-middle text-center font-semibold text-slate-800 w-9 min-w-[2.25rem] max-w-[2.25rem] px-0 py-1 text-[9px] leading-tight sm:w-10 sm:min-w-[2.5rem] sm:max-w-[2.5rem] sm:px-0.5 sm:py-1.5 sm:text-[10px] lg:w-11 lg:min-w-[2.75rem] lg:max-w-[2.75rem] lg:text-xs";
 const TH_ROOM_ROW1 =
   "border border-slate-300 bg-slate-50 px-2 py-2 text-center text-sm font-semibold text-slate-900";
 const TH_ROOM_ROW1_DAILY =
   "border border-slate-300 bg-slate-50 px-0 py-1 text-center text-[9px] font-semibold leading-tight text-slate-900 sm:px-0.5 sm:py-1.5 sm:text-[10px] lg:px-1 lg:py-1.5 lg:text-xs";
 const TH_SUB =
   "border border-slate-300 bg-slate-50 py-2 text-left text-sm font-semibold text-slate-900";
-/** Daily Name / Grade / Exam — ~30% wider than ultra-compact; table uses w-max so extra space stays right. */
+/** Daily Name / Grade / Exam — labels visible; widths sized to fit ~5 rooms on iPad portrait. */
 const TH_SUB_DAILY_NAME =
-  `${TH_SUB} w-[3.6rem] min-w-[3.6rem] max-w-[3.6rem] px-0.5 py-1 text-[9px] leading-tight sm:w-[4.2rem] sm:min-w-[4.2rem] sm:max-w-[4.2rem] sm:px-0.5 sm:py-1 sm:text-[10px] lg:w-[4.9rem] lg:min-w-[4.9rem] lg:max-w-[4.9rem] lg:text-[11px]`;
+  `${TH_SUB} w-[3.4rem] min-w-[3.4rem] max-w-[3.4rem] px-0.5 py-1 text-center text-[9px] leading-tight sm:w-[3.8rem] sm:min-w-[3.8rem] sm:max-w-[3.8rem] sm:text-[10px] lg:w-[4.2rem] lg:min-w-[4.2rem] lg:max-w-[4.2rem] lg:text-[11px]`;
 const TH_SUB_DAILY_GRADE =
-  `${TH_SUB} w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-1 text-center text-[9px] leading-tight sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:text-[10px] lg:w-[3.2rem] lg:min-w-[3.2rem] lg:max-w-[3.2rem] lg:text-[10px]`;
+  `${TH_SUB} w-8 min-w-[2rem] max-w-[2rem] px-0 py-1 text-center text-[9px] leading-tight sm:w-[2.2rem] sm:min-w-[2.2rem] sm:max-w-[2.2rem] sm:text-[10px] lg:w-9 lg:min-w-[2.25rem] lg:max-w-[2.25rem] lg:text-[10px]`;
 const TH_SUB_DAILY_EXAM =
-  `${TH_SUB} w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-1 text-center text-[9px] leading-tight sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:text-[10px] lg:w-[3.2rem] lg:min-w-[3.2rem] lg:max-w-[3.2rem] lg:text-[10px]`;
+  `${TH_SUB} w-8 min-w-[2rem] max-w-[2rem] px-0 py-1 text-center text-[9px] leading-tight sm:w-[2.2rem] sm:min-w-[2.2rem] sm:max-w-[2.2rem] sm:text-[10px] lg:w-9 lg:min-w-[2.25rem] lg:max-w-[2.25rem] lg:text-[10px]`;
 const TD_TIME =
   "border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800";
 const TD_TIME_DAILY =
   "border border-slate-300 bg-white px-0 py-0.5 text-center text-[9px] font-medium leading-tight text-slate-800 sm:px-0.5 sm:text-[10px] lg:text-xs";
 const TD_DAILY_NAME_EXTRA =
-  "w-[3.6rem] min-w-[3.6rem] max-w-[3.6rem] !h-auto px-0.5 py-0.5 align-top break-words overflow-hidden sm:w-[4.2rem] sm:min-w-[4.2rem] sm:max-w-[4.2rem] lg:w-[4.9rem] lg:min-w-[4.9rem] lg:max-w-[4.9rem]";
+  "w-[3.4rem] min-w-[3.4rem] max-w-[3.4rem] !h-auto px-0.5 py-0.5 align-top break-words overflow-hidden sm:w-[3.8rem] sm:min-w-[3.8rem] sm:max-w-[3.8rem] lg:w-[4.2rem] lg:min-w-[4.2rem] lg:max-w-[4.2rem]";
 const TD_DAILY_GRADE_EXTRA =
-  "w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-0.5 text-center text-[9px] leading-tight sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:text-[10px] lg:w-[3.2rem] lg:min-w-[3.2rem] lg:max-w-[3.2rem] lg:text-[10px]";
+  "w-8 min-w-[2rem] max-w-[2rem] px-0 py-0.5 text-center text-[9px] leading-tight sm:w-[2.2rem] sm:min-w-[2.2rem] sm:max-w-[2.2rem] sm:text-[10px] lg:w-9 lg:min-w-[2.25rem] lg:max-w-[2.25rem] lg:text-[10px]";
 const TD_DAILY_EXAM_EXTRA =
-  "w-[2.6rem] min-w-[2.6rem] max-w-[2.6rem] px-0 py-0.5 text-center text-[9px] leading-tight tabular-nums sm:w-[2.9rem] sm:min-w-[2.9rem] sm:max-w-[2.9rem] sm:text-[10px] lg:w-[3.2rem] lg:min-w-[3.2rem] lg:max-w-[3.2rem] lg:text-[10px]";
+  "w-8 min-w-[2rem] max-w-[2rem] px-0 py-0.5 text-center text-[9px] leading-tight tabular-nums sm:w-[2.2rem] sm:min-w-[2.2rem] sm:max-w-[2.2rem] sm:text-[10px] lg:w-9 lg:min-w-[2.25rem] lg:max-w-[2.25rem] lg:text-[10px]";
 const TD_REGULAR_NAME_EXTRA =
   "tt-name-cell @container/name min-h-9 !h-auto align-top break-words px-2 py-1 sm:px-3";
 const TD_TIME_CAP =
@@ -594,6 +594,7 @@ export default function DayTimetableTable({
         </div>
       ) : null}
       <div className="max-h-[min(72vh,calc(100vh-10rem))] overflow-auto rounded-b-lg">
+      <div className={dailyCompactColumns ? "tt-daily-fit" : undefined}>
       <table className={tableClassName}>
         {dailyCompactColumns ? (
           <colgroup>
@@ -957,6 +958,7 @@ export default function DayTimetableTable({
           )}
         </div>
       ) : null}
+      </div>
     </div>
   );
 }
