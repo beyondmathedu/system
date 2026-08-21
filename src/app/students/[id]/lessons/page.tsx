@@ -7,7 +7,6 @@ import { computeStudentLessonHubMetrics } from "@/lib/studentLessonHubMetrics";
 import { normalizeStudentId } from "@/lib/studentId";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { TUTOR_SHARED_IPAD_EMAIL } from "@/lib/tutorConstants";
-import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
 import StudentLessonsHubClient from "./StudentLessonsHubClient";
 
 type PageProps = { params: Promise<{ id: string }> };
@@ -22,10 +21,6 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
   const studentId = normalizeStudentId(String(rawId ?? ""));
   if (!studentId) {
     redirect("/students");
-  }
-
-  if (viewer.isSharedIpadTutor) {
-    redirect(defaultDailyTimetablePath());
   }
 
   if (viewer.role === "student") {
@@ -47,6 +42,7 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
     inactivePeriods: initialBootstrap.inactivePeriods,
   });
   const initialReadOnly =
+    viewer.isSharedIpadTutor ||
     viewer.role === "tutor" ||
     viewer.role === "student" ||
     String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();

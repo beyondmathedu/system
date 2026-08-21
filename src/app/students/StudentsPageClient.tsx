@@ -717,23 +717,38 @@ export default function StudentsPageClient({
     }
     setFormNotice("");
 
-    const { error } = await supabase.from("students").delete().in("id", selectedIds);
-    if (error) {
-      setSelectionError("Delete failed. Please try again later.");
+    try {
+      const res = await fetch("/api/students/delete", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        result?: { deletedStudentIds?: string[]; deletedAuthUserIds?: string[] };
+      };
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error ?? "Delete failed.");
+      }
+
+      await reloadStudentsList();
+      const deletedCount = body.result?.deletedStudentIds?.length ?? selectedIds.length;
+      const deletedAuthCount = body.result?.deletedAuthUserIds?.length ?? 0;
+      setSelectedIds([]);
+      setSelectionError("");
+      setShowDeleteConfirm(false);
+      setFormNotice(
+        deletedCount === 1
+          ? `Student record deleted${deletedAuthCount ? " (login account removed)" : ""}.`
+          : `${deletedCount} student records deleted${deletedAuthCount ? ` (${deletedAuthCount} login account(s) removed)` : ""}.`,
+      );
+    } catch (e) {
+      setSelectionError(e instanceof Error ? e.message : "Delete failed. Please try again later.");
       setShowDeleteConfirm(false);
       return;
     }
-
-    await reloadStudentsList();
-    const deletedCount = selectedIds.length;
-    setSelectedIds([]);
-    setSelectionError("");
-    setShowDeleteConfirm(false);
-    setFormNotice(
-      deletedCount === 1
-        ? "Student record deleted successfully."
-        : `${deletedCount} student records deleted successfully.`,
-    );
     if (editingId && selectedIds.includes(editingId)) {
       setEditingId(null);
       setForm(emptyForm);
@@ -1448,6 +1463,7 @@ export default function StudentsPageClient({
             <h2 className="text-lg font-bold text-slate-900">Confirm delete</h2>
             <p className="mt-2 text-sm text-slate-600">
               Are you sure you want to delete the selected {selectedIds.length} student record(s)?
+              This also deletes their Portal login account if one exists.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
