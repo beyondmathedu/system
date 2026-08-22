@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
+import type { YearLessonState } from "@/lib/yearScheduleCore";
 import { normalizeStudentId } from "@/lib/studentId";
 import {
   formatVisibleExamDateSlashed,
@@ -12,7 +13,6 @@ import {
 } from "@/lib/examDateVisibility";
 import {
   loadExamInfoBatch,
-  loadLessonYearStatesBatch,
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
 import { DEFAULT_LESSON_YEAR_STATE } from "@/lib/lessonYearStateShared";
@@ -49,6 +49,8 @@ function RoomScheduleTableSkeleton() {
 type Props = {
   rows: RoomScheduleRow[];
   year: number;
+  /** Server-loaded year state for students on this page (avoids duplicate client fetch). */
+  initialYearStatesByStudentId?: Record<string, YearLessonState>;
   canOpenStudentLink?: boolean;
   /** 鎖定出席 checkbox */
   attendanceLocked?: boolean;
@@ -80,6 +82,7 @@ type RoomScheduleSortConfig = { key: RoomScheduleSortKey; direction: SortDirecti
 export default function RoomScheduleTable({
   rows,
   year,
+  initialYearStatesByStudentId = {},
   canOpenStudentLink = true,
   attendanceLocked = false,
   tutorFieldLocked = false,
@@ -130,8 +133,9 @@ export default function RoomScheduleTable({
 
   const [localRows, setLocalRows] = useState(rows);
   const [sortConfig, setSortConfig] = useState<RoomScheduleSortConfig>(null);
-  const [savingRowKey] = useState<string | null>(null);
-  const [savingLessonSummaryRowKey] = useState<string | null>(null);
+  const [savingStudentIds, setSavingStudentIds] = useState<Set<string>>(() => new Set());
+  const [savedFlashStudentIds, setSavedFlashStudentIds] = useState<Set<string>>(() => new Set());
+  const [savingLessonSummaryRowKey, setSavingLessonSummaryRowKey] = useState<string | null>(null);
   const [saveError, setSaveError] = useState("");
   const [saveErrorStudentId, setSaveErrorStudentId] = useState("");
   const saveErrorStudentIdRef = useRef("");
@@ -154,12 +158,64 @@ export default function RoomScheduleTable({
   const lessonSummarySaveTimersRef = useRef(new Map<string, number>());
   const lessonSummaryPendingRef = useRef(new Map<string, string>());
   const lessonSummaryInFlightRef = useRef(new Set<string>());
+  const savedFlashTimersRef = useRef(new Map<string, number>());
   const savingRowKeyRef = useRef<string | null>(null);
   const savingLessonSummaryRowKeyRef = useRef<string | null>(null);
   const examDateCache = useRef(new Map<string, string>());
 
-  savingRowKeyRef.current = savingRowKey;
   savingLessonSummaryRowKeyRef.current = savingLessonSummaryRowKey;
+
+  function markStudentSaving(studentId: string) {
+    setSavingStudentIds((prev) => {
+      if (prev.has(studentId)) return prev;
+      const next = new Set(prev);
+      next.add(studentId);
+      return next;
+    });
+    setSavedFlashStudentIds((prev) => {
+      if (!prev.has(studentId)) return prev;
+      const next = new Set(prev);
+      next.delete(studentId);
+      return next;
+    });
+    const existingTimer = savedFlashTimersRef.current.get(studentId);
+    if (existingTimer != null) window.clearTimeout(existingTimer);
+    savedFlashTimersRef.current.delete(studentId);
+  }
+
+  function markStudentSaved(studentId: string) {
+    setSavingStudentIds((prev) => {
+      if (!prev.has(studentId)) return prev;
+      const next = new Set(prev);
+      next.delete(studentId);
+      return next;
+    });
+    if (saveErrorStudentIdRef.current === studentId) {
+      saveErrorStudentIdRef.current = "";
+      setSaveErrorStudentId("");
+      setSaveError("");
+    }
+    savingRowKeyRef.current = null;
+    setSavedFlashStudentIds((prev) => new Set(prev).add(studentId));
+    const existingTimer = savedFlashTimersRef.current.get(studentId);
+    if (existingTimer != null) window.clearTimeout(existingTimer);
+    savedFlashTimersRef.current.set(
+      studentId,
+      window.setTimeout(() => {
+        savedFlashTimersRef.current.delete(studentId);
+        setSavedFlashStudentIds((prev) => {
+          if (!prev.has(studentId)) return prev;
+          const next = new Set(prev);
+          next.delete(studentId);
+          return next;
+        });
+      }, 2000),
+    );
+  }
+
+  function isStudentSaving(studentId: string, row: RoomScheduleRow) {
+    return savingStudentIds.has(studentId) || savingLessonSummaryRowKey === row.rowKey;
+  }
 
   const studentIdsOnPage = useMemo(
     () => new Set(localRows.map((r) => r.studentId).filter(Boolean)),
@@ -170,17 +226,31 @@ export default function RoomScheduleTable({
     return subscribeLessonSaveStatus((evt) => {
       if (evt.kind !== "year" || evt.year !== year) return;
       if (!studentIdsOnPage.has(evt.studentId)) return;
-      if (evt.status === "failed") {
+      if (evt.status === "saving") {
+        markStudentSaving(evt.studentId);
+      } else if (evt.status === "saved") {
+        markStudentSaved(evt.studentId);
+      } else if (evt.status === "failed") {
+        setSavingStudentIds((prev) => {
+          if (!prev.has(evt.studentId)) return prev;
+          const next = new Set(prev);
+          next.delete(evt.studentId);
+          return next;
+        });
         saveErrorStudentIdRef.current = evt.studentId;
         setSaveErrorStudentId(evt.studentId);
         setSaveError(evt.message ?? "Cloud save failed. Please retry.");
-      } else if (evt.status === "saved" && evt.studentId === saveErrorStudentIdRef.current) {
-        saveErrorStudentIdRef.current = "";
-        setSaveErrorStudentId("");
-        setSaveError("");
       }
     });
   }, [year, studentIdsOnPage]);
+
+  useEffect(() => {
+    const timersRef = savedFlashTimersRef;
+    return () => {
+      for (const timer of timersRef.current.values()) window.clearTimeout(timer);
+      timersRef.current.clear();
+    };
+  }, []);
 
   useRoomLessonStateRealtime({
     year,
@@ -357,13 +427,17 @@ export default function RoomScheduleTable({
     setLocalRows(rows);
     stateCache.current.clear();
     cloudStateLoadedRef.current.clear();
+    for (const [studentId, state] of Object.entries(initialYearStatesByStudentId)) {
+      stateCache.current.set(studentId, state as StudentLesson2026State);
+      cloudStateLoadedRef.current.add(studentId);
+    }
     seedAttendanceFromRows(rows);
     for (const t of lessonSummarySaveTimersRef.current.values()) window.clearTimeout(t);
     lessonSummarySaveTimersRef.current.clear();
     lessonSummaryPendingRef.current.clear();
     initialNoteByRowKey.current = new Map(rows.map((r) => [r.rowKey, r.note]));
     latestNoteByRowKeyRef.current = new Map(rows.map((r) => [r.rowKey, r.note]));
-  }, [rows]);
+  }, [rows, initialYearStatesByStudentId]);
 
   const gradeOptions = useMemo(() => {
     const set = new Set<string>();
@@ -444,28 +518,6 @@ export default function RoomScheduleTable({
   }, [rows]);
 
   useEffect(() => {
-    if (!rows.length) return;
-    let mounted = true;
-    void (async () => {
-      const studentIds = Array.from(new Set(rows.map((r) => r.studentId)));
-      const missing = studentIds.filter((id) => !cloudStateLoadedRef.current.has(id));
-      if (missing.length === 0) return;
-      const batch = await loadLessonYearStatesBatch(missing, year);
-      if (!mounted) return;
-      for (const id of missing) {
-        const st = batch[id];
-        if (!st) continue;
-        stateCache.current.set(id, st);
-        cloudStateLoadedRef.current.add(id);
-      }
-      seedAttendanceFromRows(rows);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [rows, year]);
-
-  useEffect(() => {
     let mounted = true;
     void (async () => {
       const v = await loadTutorVisibility();
@@ -482,6 +534,8 @@ export default function RoomScheduleTable({
   function onToggle(row: RoomScheduleRow, checked: boolean) {
     if (attendanceLocked || !isAttendanceOrSummaryEditableForDate(row.dateIso)) return;
     setSaveError("");
+    savingRowKeyRef.current = row.rowKey;
+    markStudentSaving(row.studentId);
     setLocalRows((prev) => prev.map((r) => (r.rowKey === row.rowKey ? { ...r, attended: checked } : r)));
 
     const current = stateCache.current.get(row.studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
@@ -499,22 +553,11 @@ export default function RoomScheduleTable({
     const nextTutor = displayTutor.trim() || "TBD";
     const affected = localRows.filter((r) => slotKey(r) === slot);
 
-    const needCloudLoad = [
-      ...new Set(affected.map((r) => r.studentId).filter((id) => !cloudStateLoadedRef.current.has(id))),
-    ];
-    if (needCloudLoad.length) {
-      const batch = await loadLessonYearStatesBatch(needCloudLoad, year);
-      for (const id of needCloudLoad) {
-        const st = batch[id];
-        if (st) stateCache.current.set(id, st);
-        cloudStateLoadedRef.current.add(id);
-      }
-      seedAttendanceFromRows(localRows);
-    }
-
     setLocalRows((prev) => prev.map((r) => (slotKey(r) === slot ? { ...r, tutor: nextTutor } : r)));
 
     for (const r of affected) {
+      markStudentSaving(r.studentId);
+      savingRowKeyRef.current = r.rowKey;
       const current = stateCache.current.get(r.studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
       const overrides =
         current.overrides && typeof current.overrides === "object"
@@ -590,11 +633,17 @@ export default function RoomScheduleTable({
     }
 
     lessonSummaryInFlightRef.current.add(rowKey);
+    setSavingLessonSummaryRowKey(rowKey);
+    savingLessonSummaryRowKeyRef.current = rowKey;
+    markStudentSaving(row.studentId);
     void (async () => {
       try {
         await onChangeLessonSummary(row, nextNote);
       } finally {
         lessonSummaryInFlightRef.current.delete(rowKey);
+        setSavingLessonSummaryRowKey((current) => (current === rowKey ? null : current));
+        savingLessonSummaryRowKeyRef.current =
+          savingLessonSummaryRowKeyRef.current === rowKey ? null : savingLessonSummaryRowKeyRef.current;
         const pending = lessonSummaryPendingRef.current.get(rowKey);
         lessonSummaryPendingRef.current.delete(rowKey);
         if (pending !== undefined) {
@@ -655,6 +704,11 @@ export default function RoomScheduleTable({
           <p className="mt-1 text-xs text-red-700">
             Changes are shown on screen but may not be saved yet. Retry before leaving this page.
           </p>
+        </div>
+      ) : null}
+      {savingStudentIds.size > 0 ? (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+          Saving {savingStudentIds.size} change{savingStudentIds.size === 1 ? "" : "s"}…
         </div>
       ) : null}
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
@@ -906,14 +960,18 @@ export default function RoomScheduleTable({
                     disabled={
                       attendanceLocked ||
                       !isAttendanceOrSummaryEditableForDate(r.dateIso) ||
-                      savingRowKey === r.rowKey ||
-                      savingRowKey === slotKey(r)
+                      isStudentSaving(r.studentId, r)
                     }
                     onChange={(event) => void onToggle(r, event.target.checked)}
                     className="h-4 w-4 cursor-pointer accent-[#1d76c2] disabled:cursor-not-allowed"
                     aria-label={`Toggle attendance ${rowAriaStudentLabel(r)} ${r.dateDisplay} ${r.time}`}
                     suppressHydrationWarning
                   />
+                  {savingStudentIds.has(r.studentId) ? (
+                    <span className="mt-1 block text-[10px] font-medium text-amber-700">Saving…</span>
+                  ) : savedFlashStudentIds.has(r.studentId) ? (
+                    <span className="mt-1 block text-[10px] font-medium text-emerald-700">Saved</span>
+                  ) : null}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-800">{r.dateDisplay}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-slate-700">{weekdayLabelFromIso(r.dateIso)}</td>
@@ -929,7 +987,7 @@ export default function RoomScheduleTable({
                       return normalizeTutorLabel(mapped ?? raw);
                     })()}
                     disabled={
-                      tutorFieldLocked || savingRowKey === r.rowKey || savingRowKey === slotKey(r)
+                      tutorFieldLocked || isStudentSaving(r.studentId, r)
                     }
                     onChange={(event) => void onChangeTutor(r, event.target.value)}
                     className="min-w-[120px] rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
