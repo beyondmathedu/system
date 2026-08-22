@@ -15,6 +15,8 @@ import { fetchRoomScheduleAggregate } from "@/lib/roomScheduleAggregate";
 import { defaultDailyTimetablePath, getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
 import RoomScheduleTable from "./RoomScheduleTable";
 
+export const maxDuration = 60;
+
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function hkMonthNow(): number {

@@ -16,7 +16,7 @@ import {
 } from "@/lib/yearScheduleCore";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
-import { filterActiveStudentsOnDate, filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
+import { filterActiveStudentsOnDate } from "@/lib/activeStudentIds";
 import {
   buildStudentInactivePeriodsById,
   isTemporarilyInactiveOnDateFromPeriods,
@@ -25,7 +25,7 @@ import {
 } from "@/lib/studentVisibility";
 import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
 import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
-import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
+import { loadYearScheduleData } from "@/lib/yearScheduleData.server";
 import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorConstants";
 import type { DayTimetableFeePaymentTone } from "@/lib/dayTimetableStyleSettings";
 import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings.server";
@@ -182,46 +182,6 @@ function toHkIsoDateFromMs(ms: number) {
   }).formatToParts(new Date(ms));
   const { y, m, d } = readYmdParts(parts, { y: "2026", m: "01", d: "01" });
   return `${y}-${m}-${d}`;
-}
-
-function normalizeYearState(raw: unknown): YearLessonState {
-  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  return {
-    attendance: (obj.attendance as Record<string, boolean>) ?? {},
-    hiddenDates: (obj.hidden_dates as Record<string, boolean>) ?? (obj.hiddenDates as Record<string, boolean>) ?? {},
-    overrides: (obj.overrides as YearLessonState["overrides"]) ?? {},
-    rescheduleEntries: (obj.reschedule_entries as YearLessonState["rescheduleEntries"]) ?? [],
-    extraEntries: (obj.extra_entries as YearLessonState["extraEntries"]) ?? [],
-  };
-}
-
-function normalizeRecords(raw: unknown): YearLessonRecord[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      const o = item as Record<string, unknown>;
-      const weekday = normalizeWeekday(o.weekday ?? o.week_day ?? o.weekDay);
-      const room = String(o.room ?? o.classroom ?? o.room_name ?? "").trim();
-      const time = String(o.time ?? o.lesson_time ?? "").trim();
-      const effectiveDate =
-        typeof o.effectiveDate === "string"
-          ? o.effectiveDate
-          : typeof o.effective_date === "string"
-            ? o.effective_date
-            : undefined;
-      const createdAtRaw = o.createdAt ?? o.created_at ?? 0;
-      return {
-        id: typeof o.id === "string" ? o.id : undefined,
-        effectiveDate,
-        weekday,
-        time,
-        room,
-        tutor: typeof o.tutor === "string" ? o.tutor : undefined,
-        lessonSummary: typeof o.lessonSummary === "string" ? o.lessonSummary : undefined,
-        createdAt: Number(createdAtRaw) || 0,
-      } as YearLessonRecord;
-    })
-    .filter((r) => r.weekday && r.room);
 }
 
 function feeSystemStartMonth1to12(sheetYear: number): number {
@@ -501,11 +461,6 @@ type DayTimetableStaticBundle = {
   feeTierBundle: StudentFeeTierBundle;
 };
 
-type DayTimetableYearScheduleData = {
-  normalizedRecordsById: Record<string, YearLessonRecord[]>;
-  stateById: Record<string, YearLessonState>;
-};
-
 const loadDayTimetableStaticBundle = unstable_cache(
   async (): Promise<DayTimetableStaticBundle> => {
     const supabase = getSupabaseAdmin();
@@ -559,62 +514,6 @@ const loadDayTimetableStaticBundle = unstable_cache(
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
-const loadDayTimetableYearScheduleData = unstable_cache(
-  async (year: number): Promise<DayTimetableYearScheduleData> => {
-    const supabase = getSupabaseAdmin();
-    const staticBundle = await loadDayTimetableStaticBundle();
-    const studentsForYear = filterStudentsWithAnyActivityInYear(
-      staticBundle.studentList,
-      staticBundle.inactivePeriodsById,
-      year,
-    );
-    const ids = studentIdsOf(studentsForYear);
-    if (!ids.length) {
-      return { normalizedRecordsById: {}, stateById: {} };
-    }
-
-    const [{ data: recRows, error: recErr }, { data: stateRows, error: stateErr }] = await Promise.all([
-      fetchRowsInChunks({
-        ids,
-        concurrency: 8,
-        query: (chunk) =>
-          supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
-      }),
-      fetchRowsInChunks({
-        ids,
-        concurrency: 8,
-        query: (chunk) =>
-          supabase
-            .from("student_lessons_year_state")
-            .select("student_id, attendance, hidden_dates, overrides, reschedule_entries, extra_entries")
-            .eq("year", year)
-            .in("student_id", chunk),
-      }),
-    ]);
-
-    if (recErr || stateErr) {
-      throw new Error(recErr || stateErr || "Failed to load timetable year schedule data");
-    }
-
-    const normalizedRecordsById: Record<string, YearLessonRecord[]> = {};
-    for (const row of recRows ?? []) {
-      const sid = String((row as { student_id?: string }).student_id ?? "");
-      if (!sid) continue;
-      normalizedRecordsById[sid] = normalizeRecords((row as { records?: unknown }).records);
-    }
-
-    const stateById: Record<string, YearLessonState> = {};
-    for (const row of stateRows ?? []) {
-      const sid = String((row as { student_id?: string }).student_id ?? "");
-      if (sid) stateById[sid] = normalizeYearState(row);
-    }
-
-    return { normalizedRecordsById, stateById };
-  },
-  ["day-timetable-year-schedule-v1"],
-  { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
-);
-
 async function fetchDayTimetablePayloadUncached(
   year: number,
   month: number,
@@ -631,7 +530,7 @@ async function fetchDayTimetablePayloadUncached(
   const targetWeekday = weekdayCnFromIsoDateHk(dateIso);
   const [staticBundle, yearSchedule, timetableStyle, { data: remarkRows }] = await Promise.all([
     loadDayTimetableStaticBundle(),
-    loadDayTimetableYearScheduleData(year),
+    loadYearScheduleData(year),
     loadDayTimetableStyleSettings(),
     supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
   ]);

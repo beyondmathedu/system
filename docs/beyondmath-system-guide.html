@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>Beyond Math 管理系統 — 使用與維護指南</title>
+  <style>
+    @page { size: A4; margin: 16mm 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+      color: #1e293b;
+      line-height: 1.55;
+      font-size: 10.5pt;
+      max-width: 210mm;
+      margin: 0 auto;
+      padding: 10mm 8mm;
+      background: #fff;
+    }
+    h1 { font-size: 21pt; color: #1d76c2; margin: 0 0 6px; }
+    h2 { font-size: 13.5pt; color: #1d76c2; border-bottom: 2px solid #dbeafe; padding-bottom: 4px; margin-top: 20px; page-break-after: avoid; }
+    h3 { font-size: 11.5pt; color: #334155; margin-top: 14px; page-break-after: avoid; }
+    p, li { margin: 5px 0; }
+    .subtitle { color: #64748b; font-size: 10pt; margin-bottom: 16px; }
+    .cover {
+      border: 2px solid #1d76c2;
+      border-radius: 12px;
+      padding: 22px;
+      margin-bottom: 20px;
+      background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%);
+    }
+    .cover ul { columns: 2; column-gap: 20px; margin: 8px 0 0 18px; }
+    table { width: 100%; border-collapse: collapse; font-size: 9pt; margin: 8px 0 12px; }
+    th, td { border: 1px solid #cbd5e1; padding: 5px 7px; text-align: left; vertical-align: top; }
+    th { background: #eff6ff; color: #1e3a5f; }
+    .ok { color: #047857; font-weight: 700; }
+    .no { color: #b91c1c; font-weight: 700; }
+    .view { color: #b45309; font-weight: 700; }
+    .note, .tip {
+      padding: 9px 11px; margin: 10px 0; font-size: 9.5pt; border-radius: 0 6px 6px 0;
+    }
+    .note { background: #fffbeb; border-left: 4px solid #f59e0b; }
+    .tip { background: #ecfdf5; border-left: 4px solid #10b981; }
+    .diagram {
+      border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px;
+      margin: 10px 0 14px; background: #f8fafc; page-break-inside: avoid;
+    }
+    .diagram-title { font-weight: 700; font-size: 10pt; margin-bottom: 6px; color: #334155; }
+    svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+    .page-break { page-break-before: always; }
+    .legend { font-size: 8.5pt; color: #64748b; }
+    code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 8.5pt; }
+    .page-card {
+      border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px;
+      margin: 8px 0; background: #fff; page-break-inside: avoid;
+    }
+    .page-card h4 { margin: 0 0 4px; color: #1d76c2; font-size: 10.5pt; }
+    .page-card .path { font-size: 8.5pt; color: #64748b; margin-bottom: 6px; }
+    footer { margin-top: 20px; font-size: 8.5pt; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Beyond Math 管理系統</h1>
+  <p class="subtitle">使用與維護指南 · 各頁面邏輯 · 含流程圖<br>版本：2026年8月 · 生產環境：Vercel（<code>main</code> 分支）</p>
+  <p><strong>本文適合：</strong>老闆／行政負責人，了解系統邏輯、日常操作，以及何時需要開發者協助。</p>
+  <ul>
+    <li>三種登入身份（Admin／共用 iPad／Student）</li>
+    <li>每個主要頁面的用途與邏輯</li>
+    <li>學生、課堂、費用、課室核心流程</li>
+    <li>Supabase／程式碼／部署分工</li>
+  </ul>
+</div>
+
+<h2>1. 系統架構概覽</h2>
+<div class="diagram">
+  <div class="diagram-title">圖 1 — 系統組成</div>
+  <svg viewBox="0 0 620 190" xmlns="http://www.w3.org/2000/svg">
+    <rect x="20" y="20" width="140" height="50" rx="8" fill="#dbeafe" stroke="#1d76c2"/>
+    <text x="90" y="50" text-anchor="middle" font-size="13" fill="#1e3a5f">瀏覽器</text>
+    <text x="90" y="62" text-anchor="middle" font-size="10" fill="#64748b">Admin／iPad／學生</text>
+    <line x1="160" y1="45" x2="210" y2="45" stroke="#64748b" marker-end="url(#arrow)"/>
+    <rect x="210" y="20" width="180" height="50" rx="8" fill="#1d76c2" stroke="#1663a3"/>
+    <text x="300" y="42" text-anchor="middle" font-size="13" fill="#fff">Next.js 網站</text>
+    <text x="300" y="58" text-anchor="middle" font-size="10" fill="#dbeafe">頁面 + 業務邏輯</text>
+    <line x1="390" y1="45" x2="440" y2="45" stroke="#64748b" marker-end="url(#arrow)"/>
+    <rect x="440" y="20" width="160" height="50" rx="8" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="520" y="42" text-anchor="middle" font-size="13" fill="#065f46">Supabase</text>
+    <text x="520" y="58" text-anchor="middle" font-size="10" fill="#047857">資料庫 + 登入</text>
+    <rect x="210" y="95" width="180" height="50" rx="8" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="300" y="117" text-anchor="middle" font-size="13" fill="#92400e">GitHub → Vercel</text>
+    <text x="300" y="133" text-anchor="middle" font-size="10" fill="#b45309">推送 main 自動上線</text>
+    <line x1="300" y1="70" x2="300" y2="95" stroke="#64748b" stroke-dasharray="4"/>
+    <text x="310" y="168" text-anchor="middle" font-size="10" fill="#64748b">日常改資料 → 網站 UI；改帳號／資料庫結構 → Supabase；改規則 → 程式碼 + 重新部署</text>
+    <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  </svg>
+</div>
+
+<h2>2. 三種登入身份</h2>
+<div class="note">
+  <strong>說明：</strong>本中心實際使用 <strong>Admin</strong>、<strong>共用 iPad</strong>、<strong>Student</strong> 三種身份。系統程式碼雖有「Tutor」角色，但<strong>不在本指南範圍</strong>（課室 iPad 只用共用帳號）。
+</div>
+<table>
+  <tr><th>身份</th><th>誰用</th><th>登入後首頁</th><th>主要用途</th></tr>
+  <tr>
+    <td><strong>Admin</strong></td>
+    <td>老闆／行政</td>
+    <td><code>/home</code></td>
+    <td>全站管理：學生、課堂、費用、導師資料、課表</td>
+  </tr>
+  <tr>
+    <td><strong>共用 iPad</strong><br><small>hk6896554@gmail.com</small></td>
+    <td>課室 iPad</td>
+    <td><code>/daily-time-table</code></td>
+    <td>全部 5 課室；<strong>僅今天</strong>可改出席 + Lesson summary</td>
+  </tr>
+  <tr>
+    <td><strong>Student</strong></td>
+    <td>學生</td>
+    <td><code>/students/{學號}/lessons</code></td>
+    <td>看自己的課堂記錄（只讀）</td>
+  </tr>
+</table>
+
+<h3>圖 2 — 登入流程</h3>
+<div class="diagram">
+  <svg viewBox="0 0 620 280" xmlns="http://www.w3.org/2000/svg">
+    <rect x="240" y="10" width="140" height="36" rx="6" fill="#dbeafe" stroke="#1d76c2"/>
+    <text x="310" y="33" text-anchor="middle" font-size="12">開啟 /login</text>
+    <line x1="310" y1="46" x2="310" y2="66" stroke="#64748b" marker-end="url(#a2)"/>
+    <rect x="200" y="66" width="220" height="36" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="310" y="89" text-anchor="middle" font-size="11">輸入 Email／學號 + 密碼</text>
+    <line x1="310" y1="102" x2="310" y2="122" stroke="#64748b" marker-end="url(#a2)"/>
+    <rect x="210" y="122" width="200" height="36" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="310" y="145" text-anchor="middle" font-size="11">系統讀取 user_profiles 辨識身份</text>
+    <line x1="310" y1="158" x2="310" y2="178" stroke="#64748b" marker-end="url(#a2)"/>
+    <rect x="230" y="178" width="160" height="30" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="310" y="198" text-anchor="middle" font-size="11">Inactive 學生？</text>
+    <line x1="230" y1="193" x2="120" y2="230" stroke="#64748b" marker-end="url(#a2)"/>
+    <text x="175" y="215" font-size="10" fill="#64748b">是</text>
+    <rect x="40" y="230" width="160" height="36" rx="6" fill="#fee2e2" stroke="#ef4444"/>
+    <text x="120" y="253" text-anchor="middle" font-size="11">拒絕登入</text>
+    <line x1="390" y1="193" x2="500" y2="230" stroke="#64748b" marker-end="url(#a2)"/>
+    <text x="445" y="215" font-size="10" fill="#64748b">否</text>
+    <rect x="420" y="230" width="180" height="36" rx="6" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="510" y="253" text-anchor="middle" font-size="11">按身份跳轉首頁</text>
+    <text x="120" y="275" font-size="10" fill="#1d76c2">Admin → /home</text>
+    <text x="310" y="275" font-size="10" fill="#1d76c2">iPad → Daily Timetable</text>
+    <text x="500" y="275" font-size="10" fill="#1d76c2">Student → 自己課堂</text>
+    <defs><marker id="a2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  </svg>
+</div>
+
+<div class="page-break"></div>
+
+<h2>3. 各角色權限對照</h2>
+<p class="legend">✅ 可編輯　👁 只讀　❌ 不可進入</p>
+<table>
+  <tr><th>功能／頁面</th><th>Admin</th><th>共用 iPad</th><th>Student</th></tr>
+  <tr><td>Home 提醒板</td><td class="ok">✅</td><td class="no">❌</td><td class="no">❌</td></tr>
+  <tr><td>學生名單 /students</td><td class="ok">✅</td><td class="no">❌</td><td class="no">❌</td></tr>
+  <tr><td>學生課堂排期</td><td class="ok">✅</td><td class="no">❌</td><td class="view">👁 自己</td></tr>
+  <tr><td>費用記錄</td><td class="ok">✅</td><td class="no">❌</td><td class="no">❌</td></tr>
+  <tr><td>Daily Timetable</td><td class="ok">✅ 可改樣式</td><td class="view">👁</td><td class="no">❌</td></tr>
+  <tr><td>Room 課室頁 — 出席</td><td class="ok">✅ 任何日期</td><td class="ok">✅ 僅今天</td><td class="no">❌</td></tr>
+  <tr><td>Room 課室頁 — 導師 Tutor</td><td class="ok">✅</td><td class="no">❌</td><td class="no">❌</td></tr>
+  <tr><td>Room 課室頁 — Summary</td><td class="ok">✅</td><td class="ok">✅ 僅今天</td><td class="no">❌</td></tr>
+  <tr><td>導師管理 /teacher</td><td class="ok">✅</td><td class="no">❌</td><td class="no">❌</td></tr>
+</table>
+
+<h2>4. 各頁面邏輯說明</h2>
+<p>以下按實際使用順序，說明每個主要頁面<strong>做什麼、資料從哪來、誰可以改</strong>。</p>
+
+<div class="page-card">
+  <h4>① Home 提醒板</h4>
+  <p class="path">路徑：<code>/home</code> · 僅 Admin</p>
+  <ul>
+    <li><strong>用途：</strong>登入後總覽，顯示待辦提醒（補堂、未 tick 出席、生日等）。</li>
+    <li><strong>邏輯：</strong>從 Supabase 讀取所有學生課堂狀態，計算哪些需要跟進。</li>
+    <li><strong>操作：</strong>點提醒可跳轉到對應學生或課堂頁面處理。</li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>② 學生名單</h4>
+  <p class="path">路徑：<code>/students</code> · 僅 Admin</p>
+  <ul>
+    <li><strong>用途：</strong>管理學生基本資料（姓名、年級、學校、Email、電話等）。</li>
+    <li><strong>邏輯：</strong>資料存在 Supabase <code>students</code> 表；搜尋／篩選 Active／Inactive。</li>
+    <li><strong>Portal 欄：</strong>可「開 Portal 帳號」、「手動重設密碼」、「同步電郵」。</li>
+    <li><strong>重要規則：</strong>Portal 密碼預設 = 8 位聯絡電話；儲存學生資料時會自動同步密碼／電郵。</li>
+    <li><strong>Inactive 學生：</strong>暫停登入 Portal，可設定復課日期。</li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>③ 學生課堂 Hub</h4>
+  <p class="path">路徑：<code>/students/{學號}/lessons</code> · Admin 可編輯；Student 只看自己</p>
+  <ul>
+    <li><strong>用途：</strong>學生課堂入口，顯示 Current Settings（每週課堂時間）及年度連結。</li>
+    <li><strong>邏輯：</strong>從 active schedule version 讀取每週 Regular 設定。</li>
+    <li><strong>Student Portal：</strong>登入後只看自己的 Hub，不能改任何資料。</li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>④ 學生年度課堂頁（核心排期）</h4>
+  <p class="path">路徑：<code>/students/{學號}/lessons/{年份}</code> · 僅 Admin 可編輯</p>
+  <ul>
+    <li><strong>用途：</strong>管理該學生整年課堂：Regular、Extra、補堂、Hide、出席 tick。</li>
+    <li><strong>資料來源：</strong>Schedule records（每週規則）+ <code>student_lessons_year_state</code>（出席、override、補堂記錄）。</li>
+    <li><strong>Regular：</strong>每週固定課堂，由 Schedule grid 產生。</li>
+    <li><strong>Hide date：</strong>隱藏某次 Regular，不刪除規則。</li>
+    <li><strong>Extra：</strong>加一堂一次性課堂。</li>
+    <li><strong>Reschedule 補堂：</strong>原日期變 Cancel，新日期上課。</li>
+    <li><strong>Leave／Pending makeup：</strong>請假待補，Home 會提醒。</li>
+    <li><strong>Delete 補堂：</strong>刪除後 Regular 恢復 Regular；Extra 移動後刪除會恢復原位。</li>
+    <li><strong>注意：</strong>導師 Tutor 和 Lesson summary 建議在 Room 課室頁改（按日期儲存）。</li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>⑤ 費用記錄</h4>
+  <p class="path">路徑：<code>/students-lesson-time-fee-record</code> · 僅 Admin</p>
+  <ul>
+    <li><strong>用途：</strong>每月學生堂數、學費、期初結餘、價目設定。</li>
+    <li><strong>邏輯：</strong>堂數通常由出席記錄計算；Admin 可手動調整及提交。</li>
+    <li><strong>資料：</strong><code>student_monthly_fee_records</code> 等 Supabase 表。</li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>⑥ Daily Timetable 每日課表</h4>
+  <p class="path">路徑：<code>/daily-time-table</code> · Admin 可改樣式；iPad 只讀</p>
+  <ul>
+    <li><strong>用途：</strong>一日內所有課室、所有時段一覽。</li>
+    <li><strong>邏輯：</strong>聚合各學生 schedule + 當日 override，按課室／時間排列。</li>
+    <li><strong>Admin：</strong>可改表格顏色、樣式；看到完整備註。</li>
+    <li><strong>共用 iPad：</strong>只讀；備註會隱藏；可點進課室頁記出席。</li>
+    <li><strong>預設：</strong>iPad 登入後落在此頁（今日日期）。</li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>⑦ Room 課室頁（出席／導師／Summary）</h4>
+  <p class="path">路徑：<code>/rooms/{slug}</code> · Admin 全改；iPad 僅今天</p>
+  <ul>
+    <li><strong>用途：</strong>單一課室在一段時間內的所有課堂列表。</li>
+    <li><strong>資料來源：</strong>所有在該課室上課的學生 schedule 聚合而成。</li>
+    <li><strong>期間：</strong>Admin 可切 Today／This Week／This Month；iPad 預設 Today，亦可切其他期間但<strong>只能改今天</strong>。</li>
+    <li><strong>出席 Attendance：</strong>tick 後寫入該學生 year state；iPad 僅香港「今日」可 tick。</li>
+    <li><strong>導師 Tutor：</strong>只限 Admin 改；改動會寫入該日 override。</li>
+    <li><strong>Lesson summary：</strong>堂後小結；iPad 僅今日可改。</li>
+    <li><strong>五個課室 slug：</strong><code>b</code>、<code>m-qian</code>、<code>m-hou</code>、<code>hope</code>、<code>hope-2</code></li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>⑧ 導師管理 Teacher Records</h4>
+  <p class="path">路徑：<code>/teacher</code> · 僅 Admin</p>
+  <ul>
+    <li><strong>用途：</strong>管理導師資料（T001…）、費率、顏色、MPF、狀態。</li>
+    <li><strong>邏輯：</strong>資料在 <code>tutors</code>、<code>tutor_rates</code> 表；用於課表顯示導師顏色及月薪計算。</li>
+    <li><strong>Tutor 登入密碼：</strong>選定導師後，在頁底「Tutor 登入密碼」區重設（須已綁定 Supabase Auth）。</li>
+    <li><strong>共用 iPad 帳號：</strong>即 <code>hk6896554@gmail.com</code>，密碼亦在此重設。</li>
+    <li><strong>注意：</strong>此頁管理的是「導師資料」，不是課室 iPad 的日常操作入口。</li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>⑨ 導師月薪記錄</h4>
+  <p class="path">路徑：<code>/tutor-monthly-lesson-record</code> · 僅 Admin</p>
+  <ul>
+    <li><strong>用途：</strong>按導師計算每月授課堂數及薪金。</li>
+    <li><strong>邏輯：</strong>從出席記錄 + 導師費率計算；可設定 MPF、第一席位金額等。</li>
+  </ul>
+</div>
+
+<div class="page-card">
+  <h4>⑩ Regular Class Timetable</h4>
+  <p class="path">路徑：<code>/regular-class-timetable</code> · 僅 Admin</p>
+  <ul>
+    <li><strong>用途：</strong>以課室為單位看 Regular 時段配置（非每日動態）。</li>
+    <li><strong>邏輯：</strong>顯示各課室固定 Regular 時段，供行政參考。</li>
+  </ul>
+</div>
+
+<div class="page-break"></div>
+
+<h2>5. 共用 iPad 操作流程</h2>
+<div class="diagram">
+  <div class="diagram-title">圖 3 — iPad 每日使用流程</div>
+  <svg viewBox="0 0 620 300" xmlns="http://www.w3.org/2000/svg">
+    <rect x="220" y="10" width="180" height="36" rx="6" fill="#1d76c2"/>
+    <text x="310" y="33" text-anchor="middle" font-size="12" fill="#fff">iPad 登入 hk6896554@gmail.com</text>
+    <line x1="310" y1="46" x2="310" y2="66" stroke="#64748b" marker-end="url(#a3)"/>
+    <rect x="200" y="66" width="220" height="36" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="310" y="89" text-anchor="middle" font-size="11">Daily Timetable（看今日各課室）</text>
+    <line x1="310" y1="102" x2="310" y2="122" stroke="#64748b" marker-end="url(#a3)"/>
+    <rect x="200" y="122" width="220" height="36" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="310" y="145" text-anchor="middle" font-size="11">點選課室 → /rooms/{slug}</text>
+    <line x1="310" y1="158" x2="310" y2="178" stroke="#64748b" marker-end="url(#a3)"/>
+    <rect x="210" y="178" width="200" height="36" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="310" y="201" text-anchor="middle" font-size="11">課堂日期 = 香港今日？</text>
+    <line x1="210" y1="196" x2="100" y2="232" stroke="#64748b" marker-end="url(#a3)"/>
+    <text x="155" y="218" font-size="9">否</text>
+    <rect x="30" y="232" width="140" height="44" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="100" y="252" text-anchor="middle" font-size="10">只讀</text>
+    <text x="100" y="266" text-anchor="middle" font-size="9">不能改</text>
+    <line x1="410" y1="196" x2="520" y2="232" stroke="#64748b" marker-end="url(#a3)"/>
+    <text x="465" y="218" font-size="9">是</text>
+    <rect x="450" y="232" width="140" height="44" rx="6" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="520" y="252" text-anchor="middle" font-size="10">tick 出席</text>
+    <text x="520" y="266" text-anchor="middle" font-size="9">寫 Summary</text>
+    <rect x="120" y="290" width="380" height="0" rx="0" fill="none"/>
+    <text x="310" y="288" text-anchor="middle" font-size="10" fill="#b91c1c">導師 Tutor 欄：iPad 不可改（僅 Admin 在 Room 頁或 Admin 帳號改）</text>
+    <defs><marker id="a3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  </svg>
+</div>
+
+<h2>6. 學生 Portal 流程（Admin 操作）</h2>
+<div class="diagram">
+  <div class="diagram-title">圖 4 — Portal 開通與同步</div>
+  <svg viewBox="0 0 620 230" xmlns="http://www.w3.org/2000/svg">
+    <rect x="20" y="20" width="130" height="40" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="85" y="45" text-anchor="middle" font-size="10">新增／編輯學生</text>
+    <line x1="150" y1="40" x2="180" y2="40" stroke="#64748b" marker-end="url(#a4)"/>
+    <rect x="180" y="20" width="130" height="40" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="245" y="38" text-anchor="middle" font-size="10">Email + 8 位電話</text>
+    <text x="245" y="52" text-anchor="middle" font-size="9">資料完整？</text>
+    <line x1="310" y1="40" x2="340" y2="40" stroke="#64748b" marker-end="url(#a4)"/>
+    <rect x="340" y="20" width="130" height="40" rx="6" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="405" y="45" text-anchor="middle" font-size="10">開 Portal 帳號</text>
+    <line x1="405" y1="60" x2="405" y2="88" stroke="#64748b" marker-end="url(#a4)"/>
+    <rect x="330" y="88" width="150" height="40" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="405" y="106" text-anchor="middle" font-size="10">密碼 = 聯絡電話</text>
+    <text x="405" y="120" text-anchor="middle" font-size="9">（8 位數字）</text>
+    <line x1="405" y1="128" x2="405" y2="156" stroke="#64748b" marker-end="url(#a4)"/>
+    <rect x="300" y="156" width="210" height="50" rx="6" fill="#dbeafe" stroke="#1d76c2"/>
+    <text x="405" y="178" text-anchor="middle" font-size="10">學生用 Email + 電話登入</text>
+    <text x="405" y="194" text-anchor="middle" font-size="9">或 學號 + 電話（兄弟姊妹共用 Email）</text>
+    <rect x="20" y="88" width="200" height="50" rx="6" fill="#fffbeb" stroke="#f59e0b"/>
+    <text x="120" y="110" text-anchor="middle" font-size="10">之後改電話／Email</text>
+    <text x="120" y="126" text-anchor="middle" font-size="9">Save → 自動同步密碼／電郵</text>
+    <rect x="20" y="156" width="200" height="50" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="120" y="178" text-anchor="middle" font-size="10">或按「手動重設密碼」</text>
+    <text x="120" y="194" text-anchor="middle" font-size="9">立即重設成現有電話</text>
+    <defs><marker id="a4" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  </svg>
+</div>
+
+<h2>7. 課堂排期邏輯（Admin）</h2>
+<h3>圖 5 — 補堂／刪除邏輯</h3>
+<div class="diagram">
+  <svg viewBox="0 0 620 190" xmlns="http://www.w3.org/2000/svg">
+    <rect x="30" y="20" width="150" height="44" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="105" y="40" text-anchor="middle" font-size="10">Regular → Reschedule</text>
+    <text x="105" y="54" text-anchor="middle" font-size="9">設定新日期</text>
+    <line x1="180" y1="42" x2="220" y2="42" stroke="#64748b" marker-end="url(#a5)"/>
+    <rect x="220" y="20" width="150" height="44" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="295" y="40" text-anchor="middle" font-size="10">原堂 = Cancel</text>
+    <text x="295" y="54" text-anchor="middle" font-size="9">新堂 = 補堂</text>
+    <line x1="370" y1="42" x2="410" y2="42" stroke="#64748b" marker-end="url(#a5)"/>
+    <rect x="410" y="20" width="180" height="44" rx="6" fill="#fee2e2" stroke="#ef4444"/>
+    <text x="500" y="40" text-anchor="middle" font-size="10">Delete 補堂</text>
+    <text x="500" y="54" text-anchor="middle" font-size="9">→ 原 Regular 恢復</text>
+    <rect x="30" y="95" width="150" height="44" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="105" y="115" text-anchor="middle" font-size="10">Extra → Moved</text>
+    <text x="105" y="129" text-anchor="middle" font-size="9">改日期／時間</text>
+    <line x1="180" y1="117" x2="220" y2="117" stroke="#64748b" marker-end="url(#a5)"/>
+    <rect x="220" y="95" width="150" height="44" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="295" y="115" text-anchor="middle" font-size="10">記錄移動目標</text>
+    <line x1="370" y1="117" x2="410" y2="117" stroke="#64748b" marker-end="url(#a5)"/>
+    <rect x="410" y="95" width="180" height="44" rx="6" fill="#fee2e2" stroke="#ef4444"/>
+    <text x="500" y="115" text-anchor="middle" font-size="10">Delete moved</text>
+    <text x="500" y="129" text-anchor="middle" font-size="9">→ Extra 恢復原位</text>
+    <text x="310" y="175" text-anchor="middle" font-size="10" fill="#64748b">出席、導師、Summary 以 Room 頁為準，即時同步 Supabase</text>
+    <defs><marker id="a5" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  </svg>
+</div>
+
+<div class="page-break"></div>
+
+<h2>8. 資料流向（頁面之間如何連動）</h2>
+<div class="diagram">
+  <div class="diagram-title">圖 6 — 核心資料流</div>
+  <svg viewBox="0 0 620 340" xmlns="http://www.w3.org/2000/svg">
+    <rect x="20" y="20" width="150" height="44" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="95" y="40" text-anchor="middle" font-size="10">/students</text>
+    <text x="95" y="54" text-anchor="middle" font-size="9">學生基本資料</text>
+    <line x1="170" y1="42" x2="210" y2="42" stroke="#64748b" marker-end="url(#a6)"/>
+    <rect x="210" y="20" width="200" height="44" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="310" y="40" text-anchor="middle" font-size="10">/students/{id}/lessons/{year}</text>
+    <text x="310" y="54" text-anchor="middle" font-size="9">Schedule + 補堂 + Extra</text>
+    <line x1="410" y1="42" x2="450" y2="42" stroke="#64748b" marker-end="url(#a6)"/>
+    <rect x="450" y="20" width="150" height="44" rx="6" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="525" y="40" text-anchor="middle" font-size="10">Supabase</text>
+    <text x="525" y="54" text-anchor="middle" font-size="9">year_state</text>
+    <line x1="310" y1="64" x2="310" y2="100" stroke="#64748b" marker-end="url(#a6)"/>
+    <rect x="210" y="100" width="200" height="44" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="310" y="120" text-anchor="middle" font-size="10">/rooms/{slug}</text>
+    <text x="310" y="134" text-anchor="middle" font-size="9">出席／導師／Summary</text>
+    <line x1="310" y1="144" x2="310" y2="180" stroke="#64748b" marker-end="url(#a6)"/>
+    <rect x="210" y="180" width="200" height="44" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="310" y="200" text-anchor="middle" font-size="10">/daily-time-table</text>
+    <text x="310" y="214" text-anchor="middle" font-size="9">全日各課室一覽</text>
+    <line x1="310" y1="224" x2="310" y2="260" stroke="#64748b" marker-end="url(#a6)"/>
+    <rect x="180" y="260" width="260" height="44" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="310" y="280" text-anchor="middle" font-size="10">/students-lesson-time-fee-record</text>
+    <text x="310" y="294" text-anchor="middle" font-size="9">費用（依出席堂數計算）</text>
+    <rect x="20" y="100" width="150" height="44" rx="6" fill="#dbeafe" stroke="#1d76c2"/>
+    <text x="95" y="120" text-anchor="middle" font-size="10">共用 iPad</text>
+    <text x="95" y="134" text-anchor="middle" font-size="9">僅改今日出席+Summary</text>
+    <line x1="170" y1="122" x2="210" y2="122" stroke="#64748b" marker-end="url(#a6)"/>
+    <rect x="450" y="100" width="150" height="44" rx="6" fill="#dbeafe" stroke="#1d76c2"/>
+    <text x="525" y="120" text-anchor="middle" font-size="10">/home</text>
+    <text x="525" y="134" text-anchor="middle" font-size="9">讀取狀態 → 提醒</text>
+    <line x1="525" y1="64" x2="525" y2="100" stroke="#64748b" stroke-dasharray="3"/>
+    <text x="310" y="330" text-anchor="middle" font-size="10" fill="#64748b">改 Schedule 影響所有下游頁面；改 Room 出席即時更新 year_state</text>
+    <defs><marker id="a6" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  </svg>
+</div>
+
+<h2>9. 維護決策 — 該改哪裡？</h2>
+<div class="diagram">
+  <div class="diagram-title">圖 7 — 維護決策樹</div>
+  <svg viewBox="0 0 620 280" xmlns="http://www.w3.org/2000/svg">
+    <rect x="210" y="10" width="200" height="36" rx="6" fill="#1d76c2"/>
+    <text x="310" y="33" text-anchor="middle" font-size="12" fill="#fff">需要改什麼？</text>
+    <line x1="210" y1="28" x2="90" y2="68" stroke="#64748b" marker-end="url(#a8)"/>
+    <line x1="310" y1="46" x2="310" y2="68" stroke="#64748b" marker-end="url(#a8)"/>
+    <line x1="410" y1="28" x2="530" y2="68" stroke="#64748b" marker-end="url(#a8)"/>
+    <rect x="20" y="68" width="140" height="50" rx="6" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="90" y="90" text-anchor="middle" font-size="10">學生／課堂</text>
+    <text x="90" y="106" text-anchor="middle" font-size="9">費用／出席</text>
+    <rect x="240" y="68" width="140" height="50" rx="6" fill="#dbeafe" stroke="#1d76c2"/>
+    <text x="310" y="90" text-anchor="middle" font-size="10">iPad 密碼</text>
+    <text x="310" y="106" text-anchor="middle" font-size="9">導師資料</text>
+    <rect x="460" y="68" width="140" height="50" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="530" y="90" text-anchor="middle" font-size="10">新規則</text>
+    <text x="530" y="106" text-anchor="middle" font-size="9">新功能</text>
+    <line x1="90" y1="118" x2="90" y2="148" stroke="#64748b" marker-end="url(#a8)"/>
+    <rect x="20" y="148" width="140" height="44" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="90" y="168" text-anchor="middle" font-size="10">→ Admin 網頁</text>
+    <text x="90" y="182" text-anchor="middle" font-size="9">無需改程式</text>
+    <line x1="310" y1="118" x2="310" y2="148" stroke="#64748b" marker-end="url(#a8)"/>
+    <rect x="240" y="148" width="140" height="44" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="310" y="168" text-anchor="middle" font-size="10">→ /teacher</text>
+    <text x="310" y="182" text-anchor="middle" font-size="9">重設登入密碼</text>
+    <line x1="530" y1="118" x2="530" y2="148" stroke="#64748b" marker-end="url(#a8)"/>
+    <rect x="460" y="148" width="140" height="44" rx="6" fill="#fee2e2" stroke="#ef4444"/>
+    <text x="530" y="168" text-anchor="middle" font-size="10">→ 找開發者</text>
+    <text x="530" y="182" text-anchor="middle" font-size="9">改程式 + 部署</text>
+    <rect x="140" y="210" width="340" height="55" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="310" y="232" text-anchor="middle" font-size="10">新建 Admin 登入、資料庫結構變更</text>
+    <text x="310" y="250" text-anchor="middle" font-size="10">→ Supabase Dashboard + migration SQL</text>
+    <defs><marker id="a8" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  </svg>
+</div>
+
+<h2>10. 部署流程</h2>
+<div class="diagram">
+  <div class="diagram-title">圖 8 — 程式上線流程</div>
+  <svg viewBox="0 0 620 110" xmlns="http://www.w3.org/2000/svg">
+    <rect x="20" y="35" width="100" height="40" rx="6" fill="#eff6ff" stroke="#1d76c2"/>
+    <text x="70" y="60" text-anchor="middle" font-size="10">開發者改程式</text>
+    <line x1="120" y1="55" x2="150" y2="55" stroke="#64748b" marker-end="url(#a9)"/>
+    <rect x="150" y="35" width="100" height="40" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="200" y="60" text-anchor="middle" font-size="10">Push main</text>
+    <line x1="250" y1="55" x2="280" y2="55" stroke="#64748b" marker-end="url(#a9)"/>
+    <rect x="280" y="35" width="100" height="40" rx="6" fill="#fff" stroke="#cbd5e1"/>
+    <text x="330" y="60" text-anchor="middle" font-size="10">GitHub CI</text>
+    <line x1="380" y1="55" x2="410" y2="55" stroke="#64748b" marker-end="url(#a9)"/>
+    <rect x="410" y="35" width="100" height="40" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="460" y="60" text-anchor="middle" font-size="10">Vercel 上線</text>
+    <line x1="510" y1="55" x2="540" y2="55" stroke="#64748b" marker-end="url(#a9)"/>
+    <rect x="540" y="35" width="60" height="40" rx="6" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="570" y="60" text-anchor="middle" font-size="10">生產</text>
+    <text x="310" y="98" text-anchor="middle" font-size="10" fill="#64748b">若涉及資料庫結構變更，需額外在 Supabase 執行 migration SQL</text>
+    <defs><marker id="a9" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  </svg>
+</div>
+
+<h2>11. 常用頁面速查</h2>
+<table>
+  <tr><th>頁面</th><th>路徑</th><th>用途</th><th>誰用</th></tr>
+  <tr><td>Home 提醒</td><td><code>/home</code></td><td>補堂、生日、待辦</td><td>Admin</td></tr>
+  <tr><td>學生名單</td><td><code>/students</code></td><td>學生資料、Portal</td><td>Admin</td></tr>
+  <tr><td>學生課堂</td><td><code>/students/{id}/lessons</code></td><td>排期、補堂、Extra</td><td>Admin</td></tr>
+  <tr><td>費用</td><td><code>/students-lesson-time-fee-record</code></td><td>月費、堂數</td><td>Admin</td></tr>
+  <tr><td>每日課表</td><td><code>/daily-time-table</code></td><td>全日各課室</td><td>Admin／iPad 只讀</td></tr>
+  <tr><td>課室</td><td><code>/rooms/{slug}</code></td><td>出席、導師、Summary</td><td>Admin／iPad 僅今天</td></tr>
+  <tr><td>導師</td><td><code>/teacher</code></td><td>導師資料、登入密碼</td><td>Admin</td></tr>
+  <tr><td>登入</td><td><code>/login</code></td><td>所有用戶入口</td><td>全部</td></tr>
+</table>
+
+<div class="tip">
+  <strong>給老闆的建議：</strong>日常營運（學生、課堂、費用、iPad 記出席）在 Admin 網頁完成。課室 iPad 只用 <code>hk6896554@gmail.com</code>，每天開 Daily Timetable → 進課室 → tick 今日出席、寫 Summary。只有「改系統規則、新功能、資料庫結構」才需要開發者。
+</div>
+
+<footer>
+  Beyond Math Management System · 內部文件 · GitHub: beyondmathedu/system · 2026年8月
+</footer>
+
+</body>
+</html>
