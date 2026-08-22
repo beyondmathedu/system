@@ -3,11 +3,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import {
-  parseLessonYearStateFromRealtimeRow,
   patchRoomRowsFromLessonState,
 } from "@/lib/roomScheduleLiveSync";
-import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
-import { supabase } from "@/lib/supabase";
+import {
+  loadLessonYearStatesBatch,
+  type StudentLesson2026State,
+} from "@/lib/studentLessonStorage";
+
+/** Poll only when tab is visible; avoids Supabase Realtime WAL load. */
+const ROOM_STATE_POLL_MS = 60_000;
 
 type Options = {
   year: number;
@@ -25,7 +29,7 @@ function slotKeyFromRow(r: Pick<RoomScheduleRow, "dateIso" | "time" | "room">) {
   return `${r.dateIso}__${r.time}__${r.room}`.toLowerCase();
 }
 
-/** 訂閱 Supabase Realtime：其他裝置／帳號改動會即時反映在本頁課表 */
+/** Light sync for room schedule: poll page students instead of Realtime subscribe. */
 export function useRoomLessonStateRealtime({
   year,
   rows,
@@ -43,25 +47,25 @@ export function useRoomLessonStateRealtime({
     rowsRef.current = rows;
   }, [rows]);
 
-  const studentIdsKey = useMemo(
+  const studentIds = useMemo(
     () =>
       Array.from(new Set(rows.map((r) => r.studentId)))
         .filter(Boolean)
-        .sort()
-        .join(","),
+        .sort(),
     [rows],
   );
+
+  const studentIdsKey = studentIds.join(",");
 
   useEffect(() => {
     if (!studentIdsKey) return;
 
-    const studentIdSet = new Set(studentIdsKey.split(","));
+    const ids = studentIdsKey.split(",").filter(Boolean);
+    let cancelled = false;
+    const timer = window.setInterval(() => void poll(), ROOM_STATE_POLL_MS);
 
-    const applyRemote = (raw: Record<string, unknown>) => {
-      const parsed = parseLessonYearStateFromRealtimeRow(raw);
-      if (!parsed || !studentIdSet.has(parsed.studentId)) return;
-
-      stateCache.current.set(parsed.studentId, parsed.state);
+    const applyRemoteState = (studentId: string, state: StudentLesson2026State) => {
+      stateCache.current.set(studentId, state);
 
       const skipRowKeys = new Set<string>();
       const savingKey = savingRowKeyRef.current;
@@ -81,11 +85,11 @@ export function useRoomLessonStateRealtime({
       }
 
       setLocalRows((prev) => {
-        const next = patchRoomRowsFromLessonState(prev, parsed.studentId, parsed.state, {
+        const next = patchRoomRowsFromLessonState(prev, studentId, state, {
           skipRowKeys,
         });
         for (const row of next) {
-          if (row.studentId !== parsed.studentId || skipRowKeys.has(row.rowKey)) continue;
+          if (row.studentId !== studentId || skipRowKeys.has(row.rowKey)) continue;
           initialNoteByRowKey.current.set(row.rowKey, row.note);
           latestNoteByRowKeyRef.current.set(row.rowKey, row.note);
         }
@@ -93,27 +97,32 @@ export function useRoomLessonStateRealtime({
       });
     };
 
-    const channel = supabase
-      .channel(`room-lesson-state-y${year}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "student_lessons_year_state",
-          filter: `year=eq.${year}`,
-        },
-        (payload) => {
-          if (payload.eventType === "DELETE") return;
-          const raw = payload.new as Record<string, unknown> | null;
-          if (!raw) return;
-          applyRemote(raw);
-        },
-      )
-      .subscribe();
+    const poll = async () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      if (savingRowKeyRef.current || savingLessonSummaryRowKeyRef.current) return;
+
+      try {
+        const batch = await loadLessonYearStatesBatch(ids, year);
+        if (cancelled) return;
+        for (const id of ids) {
+          const state = batch[id];
+          if (state) applyRemoteState(id, state);
+        }
+      } catch {
+        // Ignore transient network errors; next poll will retry.
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void poll();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [
     year,
