@@ -13,6 +13,21 @@ export type StudentProgressWorkbookPayload = {
 export const CUT_OFF_SHEET = "Cut Off";
 export const F6_BY_YEARS_SHEET = "F6 By Years";
 
+/** F.5+ students use F5 curriculum alongside DSE (F.6) progress sheets. */
+export const F6_PROGRESS_SHEET_NAMES = [
+  "F6 By Topics",
+  "F6 By Years",
+  "F6 學校mock卷",
+  "Cut Off",
+  "Exam Schedule",
+] as const;
+
+export const F6_PRIMARY_SHEET_NAMES = [
+  "F6 By Topics",
+  "F6 By Years",
+  "F6 學校mock卷",
+] as const;
+
 const CUT_OFF_FIXED_LEVELS = ["5**", "5*", "5", "4", "3", "2"] as const;
 
 export const DEFAULT_YEAR_GRADE_THRESHOLDS: Record<number, number[]> = {
@@ -46,8 +61,10 @@ export function getCumulativeSheetNames(level: number): string[] {
   if (level >= 2) base.push("F2");
   if (level >= 3) base.push("F3");
   if (level >= 4) base.push("F4");
-  if (level >= 5) base.push("F5");
-  if (level >= 6) base.push("F6 By Topics", "F6 By Years", "F6 學校mock卷", "Cut Off", "Exam Schedule");
+  if (level >= 5) {
+    base.push("F5");
+    base.push(...F6_PROGRESS_SHEET_NAMES);
+  }
   return base;
 }
 
@@ -56,8 +73,8 @@ export function getCurrentGradeSheetNames(level: number): string[] {
   if (level === 2) return ["F2"];
   if (level === 3) return ["F3"];
   if (level === 4) return ["F4"];
-  if (level === 5) return ["F5"];
-  return ["F6 By Topics", "F6 By Years", "F6 學校mock卷"];
+  if (level === 5) return ["F5", ...F6_PRIMARY_SHEET_NAMES];
+  return [...F6_PRIMARY_SHEET_NAMES];
 }
 
 function normalizeHeaderName(input: string): string {
