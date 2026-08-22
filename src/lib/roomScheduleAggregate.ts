@@ -233,21 +233,21 @@ async function fetchRoomScheduleAggregateUncached(
   year: number,
   month: number,
   options?: { startIso?: string; endIso?: string },
-): Promise<{ roomLabel: string; rows: RoomScheduleRow[]; loadError: string | null }> {
+): Promise<RoomScheduleAggregateResult> {
   const perfStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const roomLabel = await fetchClassroomScheduleLabel(slug);
   if (!roomLabel) {
-    return { roomLabel: "", rows: [], loadError: null };
+    return { roomLabel: "", rows: [], loadError: null, yearStatesByStudentId: {} };
   }
 
   const { bundle, error, stats } = await loadRoomScheduleBundleFromSharedCache(year, roomLabel);
   const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
   if (error) {
-    return { roomLabel, rows: [], loadError: error };
+    return { roomLabel, rows: [], loadError: error, yearStatesByStudentId: {} };
   }
   if (!bundle || bundle.students.length === 0) {
-    return { roomLabel, rows: [], loadError: null };
+    return { roomLabel, rows: [], loadError: null, yearStatesByStudentId: {} };
   }
 
   const { students, recMap, stateMap, inactivePeriodsById } = bundle;
@@ -346,8 +346,20 @@ async function fetchRoomScheduleAggregateUncached(
       `[perf] fetchRoomScheduleAggregate slug=${slug} room=${roomLabel} y=${year} m=${month} active=${stats?.active ?? students.length} stateLoads=${stats?.stateLoads ?? students.length} candidates=${roomCandidateStudents.length} rows=${sortedRows.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
     );
   }
-  return { roomLabel, rows: sortedRows, loadError: null };
+  const yearStatesByStudentId: Record<string, YearLessonState> = {};
+  for (const st of roomCandidateStudents) {
+    yearStatesByStudentId[st.id] = stateMap.get(st.id) ?? emptyState();
+  }
+
+  return { roomLabel, rows: sortedRows, loadError: null, yearStatesByStudentId };
 }
+
+export type RoomScheduleAggregateResult = {
+  roomLabel: string;
+  rows: RoomScheduleRow[];
+  loadError: string | null;
+  yearStatesByStudentId: Record<string, YearLessonState>;
+};
 
 /** Cached full-room expand (heavy); short TTL keeps edits near-real-time while cutting repeat DB load. */
 export async function fetchRoomScheduleAggregate(
@@ -355,7 +367,7 @@ export async function fetchRoomScheduleAggregate(
   year: number,
   month: number,
   options?: { startIso?: string; endIso?: string },
-): Promise<{ roomLabel: string; rows: RoomScheduleRow[]; loadError: string | null }> {
+): Promise<RoomScheduleAggregateResult> {
   const startIso = options?.startIso?.trim() ?? "";
   const endIso = options?.endIso?.trim() ?? "";
   const slugKey = slug.trim().toLowerCase();
