@@ -73,7 +73,7 @@ const loadProgressPayloadForLevelCached = unstable_cache(
     const sheetsByName = new Map(Object.entries(sheetsRecord));
     return buildProgressPayloadFromSheets(sheetsByName, level);
   },
-  ["student-progress-sheets-v1"],
+  ["student-progress-sheets-v2"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
