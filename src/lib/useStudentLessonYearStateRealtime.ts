@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { parseLessonYearStateFromRealtimeRow } from "@/lib/roomScheduleLiveSync";
+import { hasPendingLessonYearStateSaves } from "@/lib/queueSaveLessonYearState";
 import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
-import { supabase } from "@/lib/supabase";
+import { loadLessonYearState } from "@/lib/studentLessonStorage";
 
-/** Supabase Realtime for one student's year state (room-page tutor edits, other devices). */
+/** Poll only when tab is visible; avoids Supabase Realtime WAL load. */
+const STUDENT_STATE_POLL_MS = 60_000;
+
+/** Light sync for student lesson page: poll year state instead of Realtime subscribe. */
 export function useStudentLessonYearStateRealtime(
   studentId: string,
   year: number,
@@ -20,38 +23,32 @@ export function useStudentLessonYearStateRealtime(
   useEffect(() => {
     if (!studentId) return;
 
-    const channel = supabase
-      .channel(`student-lesson-state-${studentId}-y${year}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "student_lessons_year_state",
-          filter: `student_id=eq.${studentId}`,
-        },
-        (payload) => {
-          if (payload.eventType === "DELETE") return;
-          const raw = payload.new as Record<string, unknown> | null;
-          if (!raw || Number(raw.year) !== year) return;
-          // REPLICA IDENTITY DEFAULT may omit JSON columns — skip incomplete rows
-          // so we don't wipe local extras/reschedules/hidden_dates with empty defaults.
-          const requiredJsonKeys = [
-            "attendance",
-            "hidden_dates",
-            "overrides",
-            "reschedule_entries",
-            "extra_entries",
-          ] as const;
-          if (!requiredJsonKeys.every((key) => key in raw)) return;
-          const parsed = parseLessonYearStateFromRealtimeRow(raw);
-          if (parsed) onRemoteRef.current(parsed.state);
-        },
-      )
-      .subscribe();
+    let cancelled = false;
+    const timer = window.setInterval(() => void poll(), STUDENT_STATE_POLL_MS);
+
+    const poll = async () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      if (hasPendingLessonYearStateSaves()) return;
+
+      try {
+        const state = await loadLessonYearState(studentId, year);
+        if (cancelled || hasPendingLessonYearStateSaves()) return;
+        onRemoteRef.current(state);
+      } catch {
+        // Ignore transient network errors; next poll will retry.
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void poll();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [studentId, year]);
 }
