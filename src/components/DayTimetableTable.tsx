@@ -318,6 +318,7 @@ export default function DayTimetableTable({
   );
   const [savingById, setSavingById] = useState<Record<string, boolean>>({});
   const [hiddenRooms, setHiddenRooms] = useState<RoomGroup[]>([]);
+  const [showRemarkDots, setShowRemarkDots] = useState(true);
   const saveTimersRef = useRef<Map<string, number>>(new Map());
   const hideHoverTimerRef = useRef<number | null>(null);
 
@@ -462,7 +463,10 @@ export default function DayTimetableTable({
       item.name
     );
     const remarkDot =
-      hideRemarks ? null : (remarksById[item.studentId] ?? "").trim() ? (
+      hideRemarks || !showRemarkDots
+        ? null
+        : (remarksById[item.studentId] ?? "").trim()
+          ? (
         <span
           className={`ml-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
             nameSurf.isDarkBg ? "bg-white/70" : "bg-slate-400"
@@ -566,30 +570,57 @@ export default function DayTimetableTable({
           ) : null}
         </p>
       ) : null}
-      {enableRoomVisibilityToggle ? (
+      {enableRoomVisibilityToggle || !hideRemarks ? (
         <div className="border-b border-slate-200 bg-white px-3 py-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-slate-600">Rooms</span>
-            {roomsForTable.map((room) => {
-              const hidden = hiddenRooms.includes(room);
-              return (
+            {enableRoomVisibilityToggle ? (
+              <>
+                <span className="text-xs font-semibold text-slate-600">Rooms</span>
+                {roomsForTable.map((room) => {
+                  const hidden = hiddenRooms.includes(room);
+                  return (
+                    <button
+                      key={`room-visibility-${room}`}
+                      type="button"
+                      onClick={() => toggleRoomVisibility(room)}
+                      className={[
+                        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition",
+                        hidden
+                          ? "border-slate-300 bg-slate-100 text-slate-500"
+                          : "border-sky-200 bg-sky-50 text-slate-800",
+                      ].join(" ")}
+                      aria-pressed={!hidden}
+                    >
+                      {renderEyeIcon(hidden)}
+                      {roomLabel(room)}
+                    </button>
+                  );
+                })}
+              </>
+            ) : null}
+            {!hideRemarks ? (
+              <>
+                {enableRoomVisibilityToggle ? (
+                  <span className="mx-1 hidden h-4 w-px bg-slate-200 sm:inline-block" aria-hidden />
+                ) : null}
+                <span className="text-xs font-semibold text-slate-600">{t.remarkDotsLabel}</span>
                 <button
-                  key={`room-visibility-${room}`}
                   type="button"
-                  onClick={() => toggleRoomVisibility(room)}
+                  onClick={() => setShowRemarkDots((v) => !v)}
                   className={[
                     "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition",
-                    hidden
-                      ? "border-slate-300 bg-slate-100 text-slate-500"
-                      : "border-sky-200 bg-sky-50 text-slate-800",
+                    showRemarkDots
+                      ? "border-sky-200 bg-sky-50 text-slate-800"
+                      : "border-slate-300 bg-slate-100 text-slate-500",
                   ].join(" ")}
-                  aria-pressed={!hidden}
+                  aria-pressed={showRemarkDots}
+                  title={showRemarkDots ? t.remarkDotsHide : t.remarkDotsShow}
                 >
-                  {renderEyeIcon(hidden)}
-                  {roomLabel(room)}
+                  {renderEyeIcon(!showRemarkDots)}
+                  {showRemarkDots ? t.remarkDotsHide : t.remarkDotsShow}
                 </button>
-              );
-            })}
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}
