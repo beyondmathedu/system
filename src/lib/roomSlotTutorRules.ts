@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { unstable_cache } from "next/cache";
-import { canonicalScheduleRoomLabel, canonicalScheduleTimeLabel, ROOM_GROUPS } from "@/lib/dayTimetableShared";
+import { canonicalScheduleRoomLabel, canonicalScheduleTimeLabel } from "@/lib/dayTimetableShared";
 import { normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
 import { SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -143,9 +143,6 @@ export async function upsertRoomSlotTutorRule(
   const effective_date = String(input.effective_date ?? "").trim();
   if (!room || !weekday || !time || !tutor_name || !/^\d{4}-\d{2}-\d{2}$/.test(effective_date)) {
     throw new Error("Invalid room slot tutor rule");
-  }
-  if (!ROOM_GROUPS.includes(room as (typeof ROOM_GROUPS)[number])) {
-    throw new Error("Invalid room");
   }
 
   const { error } = await supabase.from("room_slot_tutor_rules").upsert(

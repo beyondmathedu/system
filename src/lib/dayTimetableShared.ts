@@ -59,7 +59,7 @@ export function resolveScheduleRoomPickerValue(
   const canonical = normalizeScheduleRoom(roomRaw);
   if (canonical) return canonical;
   const trimmed = (roomRaw ?? "").trim();
-  if ((ROOM_GROUPS as readonly string[]).includes(trimmed)) return trimmed as RoomGroup;
+  if (trimmed) return trimmed;
   return fallback;
 }
 
@@ -91,6 +91,8 @@ export type DayTimetablePayload = {
   rowFrames: DayTimetableRowFrame[];
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
   roomDisplayLabels: Record<RoomGroup, string>;
+  extraRoomGroups: RoomGroup[];
+  roomSlugByGroup: Record<string, string>;
   feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone>;
   timetableStyle: DayTimetableStyleSettings;
 };
@@ -188,7 +190,7 @@ export function filterDayTimetablePayloadByLessonView(
   const rowFrames: DayTimetableRowFrame[] = [];
   for (const frame of payload.rowFrames) {
     let maxRows = 0;
-    for (const room of ROOM_GROUPS) {
+    for (const room of [...ROOM_GROUPS, ...(payload.extraRoomGroups ?? [])]) {
       const size = (byTimeRoom[`${frame.time}::${room}`] ?? []).length;
       if (size > maxRows) maxRows = size;
     }

@@ -6,11 +6,11 @@ import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { fetchClassroomMeta } from "@/lib/classroomsRegistry";
 import {
-  buildTutorRoomNavLinks,
   defaultRoomScheduleSearch,
   getTutorLandingPath,
   isSharedIpadTutorViewer,
   isTutorViewer,
+  loadTutorRoomNavLinks,
 } from "@/lib/tutorRoomAccess";
 
 export default async function TutorRoomsPortal() {
@@ -18,7 +18,7 @@ export default async function TutorRoomsPortal() {
   if (!viewer.userId) redirect("/login?next=/rooms");
   if (!isTutorViewer(viewer)) redirect("/rooms");
 
-  const links = buildTutorRoomNavLinks(viewer.allowedRoomSlugs);
+  const links = await loadTutorRoomNavLinks(viewer);
   if (links.length === 1) {
     redirect(`${links[0]!.href}?${defaultRoomScheduleSearch(viewer)}`);
   }

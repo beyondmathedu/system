@@ -119,7 +119,20 @@ export default function AppTopNavContent({
     void loadNav();
 
     const onClassroomsUpdated = () => {
-      if (viewerRole === "admin" || !hasServerViewer) {
+      if (viewerRole === "admin" || viewerRole === "tutor" || !hasServerViewer) {
+        if (viewerRole === "tutor") {
+          void (async () => {
+            try {
+              const res = await fetch("/api/me", { credentials: "same-origin" });
+              if (!res.ok) return;
+              const body = (await res.json()) as MeNavResponse;
+              if (body.roomNavLinks?.length) setRoomLinks(body.roomNavLinks);
+            } catch {
+              /* keep current links */
+            }
+          })();
+          return;
+        }
         void loadAdminRoomsFromClient();
       }
     };

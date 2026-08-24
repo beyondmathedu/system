@@ -119,7 +119,6 @@ import {
 } from "@/lib/examDateVisibility";
 
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
-const ROOM_OPTIONS = [...ROOM_GROUPS];
 const WEEKDAY_LABEL: Record<string, string> = {
   一: "Mon",
   二: "Tue",
@@ -506,6 +505,7 @@ function BulkEditLessonFields({
   onChange,
   formatRoom,
   pickerLabel,
+  roomOptions,
 }: {
   draft: BulkEditLessonDraft;
   yearMin: string;
@@ -513,6 +513,7 @@ function BulkEditLessonFields({
   onChange: (next: BulkEditLessonDraft) => void;
   formatRoom: (raw: string) => string;
   pickerLabel: (group: RoomGroup) => string;
+  roomOptions: readonly string[];
 }) {
   const newWeekday = draft.date ? weekdayFromIsoDate(draft.date) : "";
   const newWeekdayDisplay = newWeekday ? WEEKDAY_LABEL[newWeekday] ?? newWeekday : "—";
@@ -609,7 +610,7 @@ function BulkEditLessonFields({
           onChange={(e) => onChange({ ...draft, room: e.target.value })}
           className={bulkEditInputClass}
         >
-          {ROOM_OPTIONS.map((option) => (
+          {roomOptions.map((option) => (
             <option key={option} value={option}>
               {pickerLabel(option)}
             </option>
@@ -653,7 +654,8 @@ export function StudentLessonsYearPage({
     initialBootstrap ? hydrateLessonYearFromBootstrap(initialBootstrap, studentId, targetYear) : null,
   );
   const seededBootstrapRef = useRef(Boolean(initialHydrated));
-  const { formatRoom, pickerLabel, pickerToStorage, registry } = useRoomDisplayLabels();
+  const { formatRoom, pickerLabel, pickerToStorage, registry, roomPickerOptions } = useRoomDisplayLabels();
+  const ROOM_OPTIONS = roomPickerOptions.length > 0 ? roomPickerOptions : [...ROOM_GROUPS];
   const [studentSummary, setStudentSummary] = useState<StudentSummary>(() =>
     initialHydrated?.studentSummary ?? {
       id: studentId,
@@ -3232,6 +3234,7 @@ export function StudentLessonsYearPage({
                           yearMax={yearMax}
                           formatRoom={formatRoom}
                           pickerLabel={pickerLabel}
+                          roomOptions={ROOM_OPTIONS}
                           onChange={(next) =>
                             setBulkEditLessonDrafts((prev) =>
                               prev.map((d, i) => (i === index ? next : d)),
@@ -3473,6 +3476,7 @@ export function StudentLessonsYearPage({
                     yearMax={yearMax}
                     formatRoom={formatRoom}
                     pickerLabel={pickerLabel}
+                    roomOptions={ROOM_OPTIONS}
                     onChange={(next) =>
                       setRowEditSession((prev) => (prev ? { ...prev, draft: next } : prev))
                     }

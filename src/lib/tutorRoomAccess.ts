@@ -1,3 +1,4 @@
+import { fetchClassroomNavLinks } from "@/lib/classroomsRegistry";
 import type { ViewerContext } from "@/lib/authz";
 import { defaultLessonYear } from "@/lib/lessonCalendar";
 import { readMonthPart } from "@/lib/intlFormatParts";
@@ -73,12 +74,22 @@ export function getTutorLandingPath(_viewer?: ViewerContext): string | null {
   return defaultDailyTimetablePath();
 }
 
-export function buildTutorRoomNavLinks(allowedSlugs: string[]): RoomNavItem[] {
+export function buildTutorRoomNavLinks(
+  allowedSlugs: string[],
+  classroomLinks: RoomNavItem[] = FALLBACK_ROOM_NAV_LINKS,
+): RoomNavItem[] {
   const allowed = new Set(allowedSlugs.map(normalizeRoomSlug));
-  return FALLBACK_ROOM_NAV_LINKS.filter((item) => {
+  return classroomLinks.filter((item) => {
     const slug = item.href.replace(/^\/rooms\//, "").toLowerCase();
     return allowed.has(slug);
   });
+}
+
+/** Shared iPad sees every classroom; other tutors see only granted slugs. */
+export async function loadTutorRoomNavLinks(viewer: ViewerContext): Promise<RoomNavItem[]> {
+  const classroomLinks = await fetchClassroomNavLinks();
+  if (isSharedIpadTutorViewer(viewer)) return classroomLinks;
+  return buildTutorRoomNavLinks(viewer.allowedRoomSlugs, classroomLinks);
 }
 
 /** 導師不可進入的後台路徑（僅能看已授權房間課表） */

@@ -276,7 +276,7 @@ export default function DayTimetableTable({
       rowFrames.some((frame) => (byTimeRoom[`${frame.time}::${room}`] ?? []).length > 0),
     ) as RoomGroup[];
     const roomsForTable: RoomGroup[] =
-      withStudents.length > 0 ? withStudents : [...ROOM_GROUPS];
+      withStudents.length > 0 ? withStudents : [...baseRoomGroups];
     const omittedRoomsToday: RoomGroup[] =
       rowFrames.length > 0 && withStudents.length < baseRoomGroups.length
         ? (baseRoomGroups.filter((r) => !withStudents.includes(r)) as RoomGroup[])
@@ -514,7 +514,7 @@ export default function DayTimetableTable({
 
   function renderRoomHeader(room: RoomGroup) {
     const label = roomLabel(room);
-    const href = buildRoomPageHref(room, effectiveRoomScheduleQuery());
+    const href = buildRoomPageHref(room, effectiveRoomScheduleQuery(), payload.roomSlugByGroup);
     const headerLabel = href ? (
       <Link href={href} className="text-[#1d76c2] hover:underline">
         {label}
