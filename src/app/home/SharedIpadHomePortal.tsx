@@ -4,7 +4,7 @@ import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import type { ViewerContext } from "@/lib/authz";
 import { fetchClassroomMeta } from "@/lib/classroomsRegistry";
-import { buildTutorRoomNavLinks, defaultRoomScheduleSearch } from "@/lib/tutorRoomAccess";
+import { defaultRoomScheduleSearch, loadTutorRoomNavLinks } from "@/lib/tutorRoomAccess";
 
 type Props = {
   viewer: ViewerContext;
@@ -12,7 +12,7 @@ type Props = {
 
 export default async function SharedIpadHomePortal({ viewer }: Props) {
   const roomQuery = defaultRoomScheduleSearch(viewer);
-  const links = buildTutorRoomNavLinks(viewer.allowedRoomSlugs);
+  const links = await loadTutorRoomNavLinks(viewer);
   const [navViewer, ...enriched] = await Promise.all([
     buildAppTopNavViewer(viewer),
     ...links.map(async (item) => {

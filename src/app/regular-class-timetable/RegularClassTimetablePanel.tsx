@@ -111,7 +111,7 @@ export default function RegularClassTimetablePanel({ payload }: Props) {
           emptyMessage={regularTimetableEmptyMessage(flags)}
           showRegularCapacitySummary
           compactStudentNames
-          roomGroupsForTable={REGULAR_TIME_TABLE_ROOM_ORDER}
+          roomGroupsForTable={[...REGULAR_TIME_TABLE_ROOM_ORDER, ...(payload.extraRoomGroups ?? [])]}
         />
         <DayTimetableLegend timetableStyle={payload.timetableStyle} showCapacityLegend />
         <div className="mt-6">

@@ -1,6 +1,11 @@
 export const ROOM_GROUPS = ["B", "M前", "M後", "Hope", "Hope 2"] as const;
 
-export type RoomGroup = (typeof ROOM_GROUPS)[number];
+/** Builtin rooms plus extra classrooms from the `classrooms` table (e.g. Band). */
+export type RoomGroup = string;
+
+export function isBuiltinRoomGroup(room: string): room is (typeof ROOM_GROUPS)[number] {
+  return (ROOM_GROUPS as readonly string[]).includes(room);
+}
 
 /** Canonical room label for schedule matching (B, M前, M後, Hope, Hope 2). */
 export function normalizeScheduleRoom(roomRaw: string): RoomGroup | "" {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getViewerContext } from "@/lib/authz";
 import { getStudentPortalAccessState } from "@/lib/studentPortalAccess.server";
 import { normalizeStudentId } from "@/lib/studentId";
-import { buildTutorRoomNavLinks, defaultRoomScheduleSearch } from "@/lib/tutorRoomAccess";
+import { loadTutorRoomNavLinks, defaultRoomScheduleSearch } from "@/lib/tutorRoomAccess";
 
 /** 供導航列判斷 admin / tutor 與可見房間 */
 export async function GET() {
@@ -11,7 +11,7 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const isTutor = viewer.role === "tutor";
-  const roomNavLinks = isTutor ? buildTutorRoomNavLinks(viewer.allowedRoomSlugs) : null;
+  const roomNavLinks = isTutor ? await loadTutorRoomNavLinks(viewer) : null;
 
   let studentPortalAllowed: boolean | undefined;
   let studentPortalReactivateDate: string | null | undefined;

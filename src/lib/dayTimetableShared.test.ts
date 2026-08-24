@@ -41,6 +41,8 @@ function samplePayload(): DayTimetablePayload {
       "Hope 2": "Hope - Shelf",
     },
     feePaymentToneByStudentId: {},
+    extraRoomGroups: [],
+    roomSlugByGroup: {},
     timetableStyle: DEFAULT_DAY_TIMETABLE_STYLE,
   };
 }
@@ -213,6 +215,7 @@ describe("schedule room labels", () => {
     expect(resolveScheduleRoomPickerValue("Hope 1")).toBe("Hope");
     expect(resolveScheduleRoomPickerValue("Hope - Door")).toBe("Hope");
     expect(resolveScheduleRoomPickerValue("Hope - Shelf")).toBe("Hope 2");
-    expect(resolveScheduleRoomPickerValue("unknown")).toBe("B");
+    expect(resolveScheduleRoomPickerValue("unknown")).toBe("unknown");
+    expect(resolveScheduleRoomPickerValue("")).toBe("B");
   });
 });

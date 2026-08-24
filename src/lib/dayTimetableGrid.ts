@@ -52,6 +52,7 @@ import {
 } from "@/lib/studentFeeTierSettings";
 import {
   buildRoomDisplayRegistry,
+  listScheduleRoomGroups,
   resolveRoomGroupFromRegistry,
   SLUG_TO_ROOM_GROUP,
   type RoomDisplayRegistry,
@@ -419,11 +420,14 @@ export function buildRegularPeriodMaxByRoom(
   const out: Record<RoomGroup, number> = { ...DEFAULT_REGULAR_PERIOD_MAX_BY_ROOM };
   for (const row of classroomRows ?? []) {
     const slug = String(row.slug ?? "").trim().toLowerCase();
-    const group = SLUG_TO_ROOM_GROUP[slug] ?? resolveRoomGroupFromRegistry(String(row.name ?? ""));
-    if (!group || !ROOM_GROUPS.includes(group)) continue;
+    const name = String(row.name ?? "").trim();
+    const group = SLUG_TO_ROOM_GROUP[slug] || name;
+    if (!group) continue;
     const m = Number(row.regular_period_max);
     if (Number.isFinite(m) && m > 0) {
       out[group] = Math.min(99, Math.max(1, Math.floor(m)));
+    } else if (out[group] == null) {
+      out[group] = 5;
     }
   }
   return out;
@@ -455,6 +459,8 @@ type DayTimetableStaticBundle = {
   tutorColorByName: Record<string, string>;
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
   roomDisplayLabels: Record<RoomGroup, string>;
+  extraRoomGroups: RoomGroup[];
+  roomSlugByGroup: Record<string, string>;
   roomRegistry: RoomDisplayRegistry;
   examById: Record<string, string>;
   roomSlotTutorRules: RoomSlotTutorRule[];
@@ -504,13 +510,15 @@ const loadDayTimetableStaticBundle = unstable_cache(
         }> | null,
       ),
       roomDisplayLabels: roomRegistry.displayLabelByGroup,
+      extraRoomGroups: roomRegistry.extraGroups,
+      roomSlugByGroup: roomRegistry.slugByGroup,
       roomRegistry,
       examById,
       roomSlotTutorRules,
       feeTierBundle,
     };
   },
-  ["day-timetable-static-v6"],
+  ["day-timetable-static-v7"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
@@ -534,8 +542,19 @@ async function fetchDayTimetablePayloadUncached(
     loadDayTimetableStyleSettings(),
     supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
   ]);
-  const { regularPeriodMaxByRoom, roomDisplayLabels, roomRegistry, tutorColorByName, examById, roomSlotTutorRules, feeTierBundle } =
-    staticBundle;
+  const {
+    regularPeriodMaxByRoom,
+    roomDisplayLabels,
+    extraRoomGroups,
+    roomSlugByGroup,
+    roomRegistry,
+    tutorColorByName,
+    examById,
+    roomSlotTutorRules,
+    feeTierBundle,
+  } = staticBundle;
+  const timetableRooms = listScheduleRoomGroups(roomRegistry);
+  const timetableRoomSet = new Set(timetableRooms);
   const inactivePeriodsById = new Map(Object.entries(staticBundle.inactivePeriodsById));
 
   const activeStudentList = filterActiveStudentsOnDate(
@@ -618,7 +637,7 @@ async function fetchDayTimetablePayloadUncached(
         ) {
           return false;
         }
-        return ROOM_GROUPS.includes(r.normalizedRoom as RoomGroup);
+        return Boolean(r.normalizedRoom && timetableRoomSet.has(r.normalizedRoom));
       });
 
     for (const row of dayRows) {
@@ -676,7 +695,7 @@ async function fetchDayTimetablePayloadUncached(
   });
   const rowFrames = times.map((time) => {
     let maxRows = 1;
-    for (const room of ROOM_GROUPS) {
+    for (const room of timetableRooms) {
       const size = (byTimeRoom[`${time}::${room}`] ?? []).length;
       if (size > maxRows) maxRows = size;
     }
@@ -754,6 +773,8 @@ async function fetchDayTimetablePayloadUncached(
     rowFrames,
     regularPeriodMaxByRoom,
     roomDisplayLabels,
+    extraRoomGroups,
+    roomSlugByGroup,
     feePaymentToneByStudentId,
     timetableStyle,
   };
@@ -791,7 +812,7 @@ export async function fetchDayTimetablePayload(
         includePendingMakeupSlots,
       }),
     [
-      "day-timetable-payload-v22",
+      "day-timetable-payload-v23",
       String(year),
       String(month),
       String(day),

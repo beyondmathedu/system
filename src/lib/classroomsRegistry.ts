@@ -4,7 +4,7 @@ import {
   buildRoomDisplayRegistry,
   type RoomDisplayRegistry,
 } from "@/lib/roomDisplayRegistry";
-import { FALLBACK_ROOM_PAGE_META, FALLBACK_SLUG_TO_SCHEDULE_LABEL } from "@/lib/roomConstants";
+import { FALLBACK_ROOM_NAV_LINKS, FALLBACK_ROOM_PAGE_META, FALLBACK_SLUG_TO_SCHEDULE_LABEL, type RoomNavItem } from "@/lib/roomConstants";
 import { SCHEDULE_CACHE_TAG_CLASSROOMS } from "@/lib/scheduleCacheTags";
 
 export type ClassroomRow = {
@@ -95,7 +95,37 @@ async function fetchClassroomRegistryUncached(): Promise<RoomDisplayRegistry> {
 export async function fetchClassroomRegistry(): Promise<RoomDisplayRegistry> {
   return unstable_cache(
     async () => fetchClassroomRegistryUncached(),
-    ["classroom-registry-v3"],
+    ["classroom-registry-v4"],
     { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
+}
+
+async function fetchClassroomNavLinksUncached(): Promise<RoomNavItem[]> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("classrooms")
+    .select("id, name, slug, sort_order")
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+  if (error || !data?.length) return FALLBACK_ROOM_NAV_LINKS;
+  return data.map((r) => ({
+    href: `/rooms/${encodeURIComponent(String(r.slug).trim().toLowerCase())}`,
+    label: String(r.name).trim(),
+  }));
+}
+
+/** Nav room links in classrooms.sort_order (includes extra rooms such as Band). */
+export async function fetchClassroomNavLinks(): Promise<RoomNavItem[]> {
+  return unstable_cache(
+    async () => fetchClassroomNavLinksUncached(),
+    ["classroom-nav-links-v1"],
+    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
+  )();
+}
+
+export async function fetchClassroomSlugs(): Promise<string[]> {
+  const links = await fetchClassroomNavLinks();
+  return links
+    .map((item) => item.href.replace(/^\/rooms\//, "").trim().toLowerCase())
+    .filter(Boolean);
 }

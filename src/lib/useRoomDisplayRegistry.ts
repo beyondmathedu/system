@@ -7,6 +7,7 @@ import {
   buildRoomDisplayRegistry,
   DEFAULT_ROOM_DISPLAY_REGISTRY,
   formatRoomDisplayLabel,
+  listScheduleRoomGroups,
   roomGroupDisplayLabel,
   roomGroupStorageLabel,
   type RoomDisplayRegistry,
@@ -58,5 +59,6 @@ export function useRoomDisplayLabels() {
     },
     [registry],
   );
-  return { registry, formatRoom, pickerLabel, pickerToStorage };
+  const roomPickerOptions = listScheduleRoomGroups(registry);
+  return { registry, formatRoom, pickerLabel, pickerToStorage, roomPickerOptions };
 }

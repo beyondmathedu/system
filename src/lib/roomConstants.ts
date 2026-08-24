@@ -22,12 +22,16 @@ export const SCHEDULE_LABEL_TO_ROOM_SLUG: Record<string, string> = {
   "Hope 2": "hope-2",
 };
 
-export function buildRoomPageHref(scheduleLabel: string, query = ""): string | null {
+export function buildRoomPageHref(
+  scheduleLabel: string,
+  query = "",
+  slugByGroup?: Record<string, string>,
+): string | null {
   const trimmed = scheduleLabel.trim();
-  let slug = SCHEDULE_LABEL_TO_ROOM_SLUG[trimmed];
+  let slug = SCHEDULE_LABEL_TO_ROOM_SLUG[trimmed] ?? slugByGroup?.[trimmed];
   if (!slug) {
     const group = normalizeScheduleRoom(trimmed);
-    if (group) slug = SCHEDULE_LABEL_TO_ROOM_SLUG[group];
+    if (group) slug = SCHEDULE_LABEL_TO_ROOM_SLUG[group] ?? slugByGroup?.[group];
   }
   if (!slug) return null;
   const base = `/rooms/${encodeURIComponent(slug)}`;

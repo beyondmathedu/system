@@ -36,7 +36,6 @@ function LessonScheduleGridFallback() {
 }
 
 const WEEKDAY_OPTIONS = ["一", "二", "三", "四", "五", "六", "日"];
-const ROOM_OPTIONS = [...ROOM_GROUPS];
 const WEEKDAY_LABEL: Record<string, string> = {
   一: "Mon",
   二: "Tue",
@@ -121,7 +120,8 @@ export default function LessonScheduleGrid({
   initialRecords?: LessonScheduleRecord[] | null;
   onRecordsChange?: (records: LessonScheduleRecord[]) => void;
 }) {
-  const { formatRoom, pickerLabel, pickerToStorage, registry } = useRoomDisplayLabels();
+  const { formatRoom, pickerLabel, pickerToStorage, registry, roomPickerOptions } = useRoomDisplayLabels();
+  const ROOM_OPTIONS = roomPickerOptions;
   const [weeklyLessons, setWeeklyLessons] = useState<1 | 2>(1);
   const [weekday, setWeekday] = useState("一");
   const [time, setTime] = useState("03:00 PM");
@@ -245,7 +245,7 @@ export default function LessonScheduleGrid({
       if (canonical) set.add(canonical);
     }
     return Array.from(set);
-  }, [records]);
+  }, [records, ROOM_OPTIONS]);
   const filteredRecordsSortedDesc = useMemo(() => {
     return recordsSortedDesc.filter((r) => {
       const normalized = normalizeLessonRecord(r);

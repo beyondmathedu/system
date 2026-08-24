@@ -63,7 +63,11 @@ async function getViewerContextUncached(): Promise<ViewerContext> {
 
   let allowedRoomSlugs: string[] = [];
   if (isSharedIpadTutor) {
-    allowedRoomSlugs = [...ALL_CLASSROOM_SLUGS];
+    const { data: roomRows } = await supabase.from("classrooms").select("slug");
+    allowedRoomSlugs = (roomRows ?? [])
+      .map((r) => String((r as { slug?: string | null }).slug ?? "").trim().toLowerCase())
+      .filter(Boolean);
+    if (!allowedRoomSlugs.length) allowedRoomSlugs = [...ALL_CLASSROOM_SLUGS];
   } else if (role === "tutor" && tutorId) {
     const { data: roomPermRows } = await supabase
       .from("tutor_room_permissions")

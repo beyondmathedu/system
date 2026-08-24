@@ -12,17 +12,13 @@ export const SLUG_TO_ROOM_GROUP: Record<string, RoomGroup> = {
   "hope-2": "Hope 2",
 };
 
-export const ROOM_GROUP_TO_SLUG: Record<RoomGroup, string> = {
+export const ROOM_GROUP_TO_SLUG: Record<string, string> = {
   B: "b",
   M前: "m-qian",
   M後: "m-hou",
   Hope: "hope",
   "Hope 2": "hope-2",
 };
-
-export function roomGroupToSlug(group: RoomGroup): string {
-  return ROOM_GROUP_TO_SLUG[group] ?? SCHEDULE_LABEL_TO_ROOM_SLUG[group] ?? "b";
-}
 
 export function roomSlugToGroup(slug: string, fallback: RoomGroup = "B"): RoomGroup {
   const key = String(slug ?? "").trim().toLowerCase();
@@ -34,7 +30,21 @@ export type RoomDisplayRegistry = {
   /** Value stored in student schedule JSON when picking a room */
   storageLabelByGroup: Record<RoomGroup, string>;
   nameToGroup: Map<string, RoomGroup>;
+  slugByGroup: Record<string, string>;
+  /** Classrooms not in the builtin B / M / Hope set, in table order */
+  extraGroups: RoomGroup[];
 };
+
+export function listScheduleRoomGroups(registry: RoomDisplayRegistry): RoomGroup[] {
+  const seen = new Set<string>();
+  const out: RoomGroup[] = [];
+  for (const group of [...ROOM_GROUPS, ...registry.extraGroups]) {
+    if (!group || seen.has(group)) continue;
+    seen.add(group);
+    out.push(group);
+  }
+  return out;
+}
 
 function defaultLabelByGroup(): Record<RoomGroup, string> {
   return Object.fromEntries(ROOM_GROUPS.map((g) => [g, g])) as Record<RoomGroup, string>;
@@ -58,8 +68,32 @@ export const DEFAULT_ROOM_DISPLAY_REGISTRY: RoomDisplayRegistry = (() => {
   nameToGroup.set("hope door", "Hope");
   nameToGroup.set("hope - shelf", "Hope 2");
   nameToGroup.set("hope shelf", "Hope 2");
-  return { displayLabelByGroup, storageLabelByGroup, nameToGroup };
+  return {
+    displayLabelByGroup,
+    storageLabelByGroup,
+    nameToGroup,
+    slugByGroup: { ...ROOM_GROUP_TO_SLUG },
+    extraGroups: [],
+  };
 })();
+
+export function roomGroupToSlug(
+  group: RoomGroup,
+  registry: RoomDisplayRegistry = DEFAULT_ROOM_DISPLAY_REGISTRY,
+): string {
+  const fromRegistry = registry.slugByGroup[group];
+  if (fromRegistry) return fromRegistry;
+  const fromBuiltin = ROOM_GROUP_TO_SLUG[group];
+  if (fromBuiltin) return fromBuiltin;
+  const fromLabel = SCHEDULE_LABEL_TO_ROOM_SLUG[group];
+  if (fromLabel) return fromLabel;
+  const fromName = String(group)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
+  if (fromName) return fromName;
+  return "b";
+}
 
 export function buildRoomDisplayRegistry(
   rows: Array<{ name?: string | null; slug?: string | null }> | null | undefined,
@@ -67,6 +101,8 @@ export function buildRoomDisplayRegistry(
   const displayLabelByGroup = defaultLabelByGroup();
   const storageLabelByGroup = defaultLabelByGroup();
   const nameToGroup = new Map<string, RoomGroup>();
+  const slugByGroup: Record<string, string> = { ...ROOM_GROUP_TO_SLUG };
+  const extraGroups: RoomGroup[] = [];
 
   for (const g of ROOM_GROUPS) {
     nameToGroup.set(g.toLowerCase(), g);
@@ -79,14 +115,25 @@ export function buildRoomDisplayRegistry(
   for (const row of rows ?? []) {
     const slug = String(row.slug ?? "").trim().toLowerCase();
     const name = String(row.name ?? "").trim();
-    const group = SLUG_TO_ROOM_GROUP[slug];
-    if (!group || !name) continue;
-    displayLabelByGroup[group] = name;
-    // Keep schedule JSON on canonical group keys (Hope / Hope 2), not display
-    // names like "Hope - Door" — otherwise edits/normalization fight each other.
-    storageLabelByGroup[group] = group;
-    nameToGroup.set(name.toLowerCase(), group);
-    nameToGroup.set(group.toLowerCase(), group);
+    if (!name) continue;
+    const builtin = SLUG_TO_ROOM_GROUP[slug];
+    if (builtin) {
+      displayLabelByGroup[builtin] = name;
+      // Keep schedule JSON on canonical group keys (Hope / Hope 2), not display
+      // names like "Hope - Door" — otherwise edits/normalization fight each other.
+      storageLabelByGroup[builtin] = builtin;
+      if (slug) slugByGroup[builtin] = slug;
+      nameToGroup.set(name.toLowerCase(), builtin);
+      nameToGroup.set(builtin.toLowerCase(), builtin);
+      continue;
+    }
+    const extraGroup = name;
+    extraGroups.push(extraGroup);
+    displayLabelByGroup[extraGroup] = name;
+    storageLabelByGroup[extraGroup] = extraGroup;
+    if (slug) slugByGroup[extraGroup] = slug;
+    nameToGroup.set(name.toLowerCase(), extraGroup);
+    if (slug) nameToGroup.set(slug, extraGroup);
   }
 
   // Stable aliases so Door/Shelf (and legacy Hope 1) resolve even if a row is missing.
@@ -98,7 +145,7 @@ export function buildRoomDisplayRegistry(
   nameToGroup.set("hope shelf", "Hope 2");
   nameToGroup.set("hope2", "Hope 2");
 
-  return { displayLabelByGroup, storageLabelByGroup, nameToGroup };
+  return { displayLabelByGroup, storageLabelByGroup, nameToGroup, slugByGroup, extraGroups };
 }
 
 export function resolveRoomGroupFromRegistry(
