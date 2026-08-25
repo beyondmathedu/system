@@ -5,6 +5,8 @@ export type HomeReminderRow = {
   studentId: string;
   displayName: string;
   detail: string;
+  /** Used for sort priority when present. */
+  count?: number;
   /** Defaults to student year lessons page. */
   href?: string;
 };
@@ -14,12 +16,11 @@ type Props = {
   titleClassName: string;
   borderClassName: string;
   bgClassName: string;
-  logicTitle: string;
-  logicLines: string[];
+  /** One-line scope / meaning under the title (preferred over a logic box). */
+  subtitle?: string;
   rows: HomeReminderRow[];
   emptyTitle: string;
   emptyHint?: string;
-  footerLink?: { href: string; label: string };
 };
 
 export default function HomeReminderPanel({
@@ -27,24 +28,15 @@ export default function HomeReminderPanel({
   titleClassName,
   borderClassName,
   bgClassName,
-  logicTitle,
-  logicLines,
+  subtitle,
   rows,
   emptyTitle,
   emptyHint,
-  footerLink,
 }: Props) {
   return (
     <section className={`rounded-2xl border p-5 ${borderClassName} ${bgClassName}`}>
       <h2 className={`text-base font-bold ${titleClassName}`}>{title}</h2>
-      <div className="mt-3 rounded-lg border border-slate-200/80 bg-white/70 px-3 py-2.5">
-        <p className="text-xs font-semibold text-slate-700">{logicTitle}</p>
-        <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-xs leading-relaxed text-slate-600">
-          {logicLines.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      </div>
+      {subtitle ? <p className="mt-1 text-xs leading-relaxed text-slate-600">{subtitle}</p> : null}
       {rows.length > 0 ? (
         <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto text-sm">
           {rows.map((row) => (
@@ -68,14 +60,6 @@ export default function HomeReminderPanel({
           {emptyHint ? <p className="mt-1 text-xs text-slate-600">{emptyHint}</p> : null}
         </div>
       )}
-      {footerLink ? (
-        <Link
-          href={footerLink.href}
-          className="mt-3 inline-flex text-xs font-semibold text-[#1d76c2] hover:underline"
-        >
-          {footerLink.label}
-        </Link>
-      ) : null}
     </section>
   );
 }

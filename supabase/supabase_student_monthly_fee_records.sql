@@ -7,7 +7,6 @@
 -- - remarks（Remarks 欄）
 -- - makeup_remarks（Makeup 彈窗備註）
 -- - balance_due_remarks（Balance Due 彈窗備註）
--- - send_fee（月尾Send學費）
 
 create table if not exists public.student_monthly_fee_records (
   student_id text not null references public.students(id) on delete cascade,
@@ -19,7 +18,6 @@ create table if not exists public.student_monthly_fee_records (
   remarks text not null default '',
   makeup_remarks text not null default '',
   balance_due_remarks text not null default '',
-  send_fee boolean not null default false,
   updated_at timestamptz not null default now(),
   primary key (student_id, year, month)
 );

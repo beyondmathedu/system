@@ -98,7 +98,6 @@ const AMOUNT_OWING_COL_WIDTH = 92;
 const OPENING_COL_WIDTH = 112;
 const L_COL_WIDTH = 72;
 const MAKEUP_COL_WIDTH = 104;
-const SEND_FEE_COL_WIDTH = 88;
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** English copy for opening-balance column / tooltips (calendar month-end). */
 const OPENING_BALANCE_AS_OF_EN_PHRASE = `end of ${MONTH_SHORT[OPENING_BALANCE_AS_OF_MONTH - 1]} ${OPENING_BALANCE_AS_OF_YEAR}`;
@@ -557,7 +556,6 @@ const defaultRecordState = (): RecordState => ({
   remarks: "",
   makeupRemarks: "",
   balanceDueRemarks: "",
-  sendFee: false,
 });
 
 type RecordState = {
@@ -575,7 +573,6 @@ type RecordState = {
   remarks: string;
   makeupRemarks: string;
   balanceDueRemarks: string;
-  sendFee: boolean;
 };
 
 type LessonRecord = {
@@ -645,9 +642,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
   const [gradeFilter, setGradeFilter] = useState<string>("F.1");
   const [weekdayFilter, setWeekdayFilter] = useState<string>("all");
-  const [paymentFilter, setPaymentFilter] = useState<"all" | "underpaid" | "ok">("all");
   const [sessionFilter, setSessionFilter] = useState<"all" | "short" | "ok">("all");
-  const [sendFeeFilter, setSendFeeFilter] = useState<"all" | "yes" | "no">("all");
   const [balanceDueFilter, setBalanceDueFilter] = useState<"all" | "yes" | "no">("all");
   const [makeupFilter, setMakeupFilter] = useState<"all" | "yes" | "no">("all");
   const [searchText, setSearchText] = useState("");
@@ -701,9 +696,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   const resetAllFilters = useCallback(() => {
     setGradeFilter("all");
     setWeekdayFilter("all");
-    setPaymentFilter("all");
     setSessionFilter("all");
-    setSendFeeFilter("all");
     setBalanceDueFilter("all");
     setMakeupFilter("all");
     setSearchText("");
@@ -859,7 +852,6 @@ export default function StudentsLessonTimeFeeRecordPage({
         remarks: String(merged.remarks ?? ""),
         makeupRemarks: String(merged.makeupRemarks ?? ""),
         balanceDueRemarks: String(merged.balanceDueRemarks ?? ""),
-        sendFee: Boolean(merged.sendFee),
       });
     }, 600);
     saveTimersRef.set(key, t);
@@ -1017,14 +1009,6 @@ export default function StudentsLessonTimeFeeRecordPage({
     (studentId: string, balanceDueRemarks: string) => {
       updateStudentRecord(studentId, { balanceDueRemarks });
       scheduleSave(studentId, { balanceDueRemarks });
-    },
-    [scheduleSave],
-  );
-
-  const onSendFeeChange = useCallback(
-    (studentId: string, sendFee: boolean) => {
-      updateStudentRecord(studentId, { sendFee });
-      scheduleSave(studentId, { sendFee });
     },
     [scheduleSave],
   );
@@ -1350,16 +1334,11 @@ export default function StudentsLessonTimeFeeRecordPage({
       const matchesWeekday =
         weekdayFilter === "all" ||
         (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
-      const matchesPayment =
-        paymentFilter === "all" ||
-        (paymentFilter === "underpaid" ? r.submitted < r.expected : r.submitted >= r.expected);
       const matchesSession =
         sessionFilter === "all" ||
         (sessionFilter === "short"
           ? expectedSessions > 0 && attended < expectedSessions
           : expectedSessions === 0 || attended >= expectedSessions);
-      const matchesSendFee =
-        sendFeeFilter === "all" || (sendFeeFilter === "yes" ? Boolean(r.sendFee) : !r.sendFee);
       const hasMakeup = (makeupLiveCountByStudentId[st.id] ?? 0) > 0;
       const totalDue = Number(totalDueByStudentId[st.id] ?? 0) || 0;
       const owesMoney = totalDue - (Number(r.submitted) || 0) > 0.005;
@@ -1383,9 +1362,7 @@ export default function StudentsLessonTimeFeeRecordPage({
       return (
         matchesGrade &&
         matchesWeekday &&
-        matchesPayment &&
         matchesSession &&
-        matchesSendFee &&
         matchesBalanceDue &&
         matchesMakeup &&
         matchesSearch
@@ -1396,9 +1373,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     recordsByStudentId,
     gradeFilter,
     weekdayFilter,
-    paymentFilter,
     sessionFilter,
-    sendFeeFilter,
     balanceDueFilter,
     makeupFilter,
     searchText,
@@ -1439,7 +1414,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   const feePadTop = feeVirtualRows[0]?.start ?? 0;
   const feePadBottom =
     feeRowVirtualizer.getTotalSize() - (feeVirtualRows[feeVirtualRows.length - 1]?.end ?? 0);
-  const feeTableColSpan = 11 + L_COUNT + (sheetYear === OPENING_BALANCE_AS_OF_YEAR ? 1 : 0);
+  const feeTableColSpan = 10 + L_COUNT + (sheetYear === OPENING_BALANCE_AS_OF_YEAR ? 1 : 0);
 
   const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
@@ -1720,19 +1695,6 @@ export default function StudentsLessonTimeFeeRecordPage({
                   </select>
                 </label>
                 <label className="min-w-[140px]">
-                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">Payment Status</span>
-                  <select
-                    value={paymentFilter}
-                    onChange={(e) => setPaymentFilter(e.target.value as "all" | "underpaid" | "ok")}
-                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
-                    suppressHydrationWarning
-                  >
-                    <option value="all">All</option>
-                    <option value="underpaid">Underpaid</option>
-                    <option value="ok">Expected Met</option>
-                  </select>
-                </label>
-                <label className="min-w-[140px]">
                   <span className="mb-1 block text-[11px] font-semibold text-slate-600">Sessions（堂數）</span>
                   <select
                     value={sessionFilter}
@@ -1743,19 +1705,6 @@ export default function StudentsLessonTimeFeeRecordPage({
                     <option value="all">All</option>
                     <option value="short">未交齊（已上 &lt; 應堂）</option>
                     <option value="ok">已齊或無應堂</option>
-                  </select>
-                </label>
-                <label className="min-w-[120px]">
-                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">Send Fee</span>
-                  <select
-                    value={sendFeeFilter}
-                    onChange={(e) => setSendFeeFilter(e.target.value as "all" | "yes" | "no")}
-                    className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
-                    suppressHydrationWarning
-                  >
-                    <option value="all">All</option>
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
                   </select>
                 </label>
                 <label className="min-w-[150px]">
@@ -1950,12 +1899,6 @@ export default function StudentsLessonTimeFeeRecordPage({
                             </th>
                           ) : null}
                           <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-4 py-3 text-left">Remarks</th>
-                          <th
-                            className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-4 py-3 text-left"
-                            style={{ minWidth: SEND_FEE_COL_WIDTH }}
-                          >
-                            Send Fee
-                          </th>
                         </tr>
                       </thead>
 
@@ -1997,7 +1940,6 @@ export default function StudentsLessonTimeFeeRecordPage({
                               onOpeningBalanceChange={onOpeningBalanceChange}
                               onSubmittedChange={onSubmittedChange}
                               onRemarksChange={onRemarksChange}
-                              onSendFeeChange={onSendFeeChange}
                               currentMonthExpectedMoney={currentMonthExpectedTuitionByStudentId[st.id] ?? 0}
                               feeTierBundle={feeTierBundle}
                               onFeeDetailOpen={onFeeDetailOpen}
@@ -2262,7 +2204,6 @@ type StudentFeeRowProps = {
   onOpeningBalanceChange: (studentId: string, value: number) => void;
   onSubmittedChange: (studentId: string, submitted: number) => void;
   onRemarksChange: (studentId: string, remarks: string) => void;
-  onSendFeeChange: (studentId: string, sendFee: boolean) => void;
   /** 本月按階梯／劃一計出嘅應收港幣（同 Total Due − Prev 一致）。 */
   currentMonthExpectedMoney: number;
   /** 本月課表有日期嘅檔位數（用於 $xx(N堂) 顯示）。 */
@@ -2345,7 +2286,6 @@ const StudentFeeRow = memo(function StudentFeeRow({
   onOpeningBalanceChange,
   onSubmittedChange,
   onRemarksChange,
-  onSendFeeChange,
   currentMonthExpectedMoney,
   thisMonthDatedSlotCount,
   feeTierBundle,
@@ -2592,16 +2532,6 @@ const StudentFeeRow = memo(function StudentFeeRow({
           title="Enter 換行；可拖右下角拉高（與 Excel 多行備註相近）"
           spellCheck={false}
           className="min-h-[5.5rem] w-56 max-w-[min(18rem,36vw)] resize-y rounded border border-slate-200 bg-white px-2 py-1.5 text-xs leading-snug text-slate-800 outline-none transition focus:border-[#1d76c2] whitespace-pre-wrap break-words"
-        />
-      </td>
-
-      <td className="px-2 py-3 text-center">
-        <input
-          type="checkbox"
-          checked={record.sendFee}
-          onChange={(e) => onSendFeeChange(student.id, e.target.checked)}
-          className="h-4 w-4 accent-[#1d76c2]"
-          aria-label={`${studentIdDisplay} send fee`}
         />
       </td>
     </tr>

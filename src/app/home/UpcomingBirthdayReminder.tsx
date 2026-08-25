@@ -1,6 +1,10 @@
 "use client";
 
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+import {
+  HOME_BIRTHDAY_WHATSAPP_LABEL,
+  homeBirthdayWhatsappHref,
+} from "@/lib/homeBirthdayWhatsapp";
 import { useMemo, useState } from "react";
 
 type ReminderItem = {
@@ -38,7 +42,7 @@ export default function UpcomingBirthdayReminder({ items }: { items: ReminderIte
     const lines = selectedItems.map((i) => `${i.dayLabel} ${i.dateLabel}，${i.personLabel}`);
     return ["生日", ...lines].join("\n");
   }, [selectedItems]);
-  const whatsappHref = `https://wa.me/85251646814?text=${encodeURIComponent(message)}`;
+  const whatsappHref = homeBirthdayWhatsappHref(message);
 
   if (!items.length) {
     return <p className="text-sm text-slate-600">本週暫時冇生日提醒</p>;
@@ -61,7 +65,7 @@ export default function UpcomingBirthdayReminder({ items }: { items: ReminderIte
                   : "pointer-events-none border-slate-200 bg-slate-100 text-slate-400"
               }`}
             >
-              WhatsApp 提醒 51646814
+              {HOME_BIRTHDAY_WHATSAPP_LABEL}
             </a>
           </div>
         </div>

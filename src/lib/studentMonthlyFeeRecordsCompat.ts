@@ -4,10 +4,10 @@ export const FEE_RECORD_SELECT_PRICING =
   "student_id, year, month, lesson_unit_price, fee_pricing_grade";
 
 export const FEE_RECORD_SELECT_LEGACY_NO_PAID_COUNT =
-  "student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade, remarks, send_fee";
+  "student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade, remarks";
 
 export const FEE_RECORD_SELECT_BASE =
-  "student_id, year, month, submitted_amount, submitted_lesson_count, lesson_unit_price, fee_pricing_grade, remarks, send_fee";
+  "student_id, year, month, submitted_amount, submitted_lesson_count, lesson_unit_price, fee_pricing_grade, remarks";
 
 export const FEE_RECORD_SELECT_WITH_SPLIT_REMARKS =
   `${FEE_RECORD_SELECT_BASE}, makeup_remarks, balance_due_remarks`;
@@ -38,6 +38,5 @@ export function normalizeFeeRecordRow(row: Record<string, unknown>) {
     remarks: String(row.remarks ?? ""),
     makeup_remarks: String(row.makeup_remarks ?? ""),
     balance_due_remarks: String(row.balance_due_remarks ?? ""),
-    send_fee: Boolean(row.send_fee),
   };
 }
