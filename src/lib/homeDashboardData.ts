@@ -1,29 +1,16 @@
-import { unstable_cache } from "next/cache";
-import { getPriorMonthMakeupWindow } from "@/lib/priorMonthMakeupWindow";
-import {
-  formatPendingMakeupFromDateLabel,
-  formatPendingMakeupReminderZh,
-  isPendingMakeupVisible,
-  isPendingRescheduleEntry,
-} from "@/lib/pendingMakeup";
-import { SCHEDULE_CACHE_TAG_HOME } from "@/lib/scheduleCacheTags";
+import { homeBirthdayWhatsappHref } from "@/lib/homeBirthdayWhatsapp";
+import { listUntickedRegularMakeupExtraInRange } from "@/lib/lesson2026Summary";
+import { formatPendingMakeupFromDateLabel } from "@/lib/pendingMakeup";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import {
-  compareStudentReactivateReminders,
-  formatStudentReactivateReminderDetail,
   buildStudentInactivePeriodsById,
   isStudentInactiveOnDateFromPeriods,
   withAutoF6InactivePeriod,
 } from "@/lib/studentVisibility";
+import { loadYearScheduleData } from "@/lib/yearScheduleData.server";
 import type { HomeReminderRow } from "@/app/home/HomeReminderPanel";
-import { getActiveScheduleRulesForDate } from "@/lib/lessonScheduleVersions";
-import {
-  loadStudentFeeTierSettingsAdmin,
-  resolveFeeTierSettingsForStudent,
-} from "@/lib/studentFeeTierSettings";
-import { gradeForFeePricing, sumSlotTuitionHkdByLessonCount } from "@/lib/studentFeePricingGrade";
+import type { YearLessonState } from "@/lib/yearScheduleCore";
 
 export type HomeWeekBirthdayItem = {
   id: string;
@@ -41,13 +28,16 @@ export type HomeDashboardData = {
   todayWhatsappHref: string;
   weekBirthdayLines: string[];
   weekBirthdayReminderItems: HomeWeekBirthdayItem[];
-  unpaidRows: HomeReminderRow[];
-  reschedulePendingRows: HomeReminderRow[];
-  pendingLeaveRows: HomeReminderRow[];
-  inactiveReturnRows: HomeReminderRow[];
-  priorMakeupMonthLabel: string;
-  isMonthEndMakeupReminder: boolean;
-  daysLeftInMonth: number;
+  /** 6 月起至昨天，恆常／補堂／加堂已過期未打勾的學生 */
+  untickedFromJuneRows: HomeReminderRow[];
+};
+
+const EMPTY_YEAR_STATE: YearLessonState = {
+  attendance: {},
+  hiddenDates: {},
+  overrides: {},
+  rescheduleEntries: [],
+  extraEntries: [],
 };
 
 function hkTodayParts() {
@@ -67,136 +57,6 @@ function hkTodayParts() {
   return { ymdToday, mdToday, year, month };
 }
 
-type YearLessonRecord = {
-  effectiveDate?: string;
-  weekday: string;
-  time: string;
-  room: string;
-  tutor?: string;
-  lessonSummary?: string;
-  createdAt: number;
-  id?: string;
-};
-
-const HK_WEEKDAY_SHORT_TO_CN: Record<string, string> = {
-  Mon: "一",
-  Tue: "二",
-  Wed: "三",
-  Thu: "四",
-  Fri: "五",
-  Sat: "六",
-  Sun: "日",
-};
-
-const WEEKDAY_ORDER: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7 };
-
-function toHkIsoDateFromMs(ms: number) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(ms));
-  let y = "2026";
-  let m = "01";
-  let d = "01";
-  for (const p of parts) {
-    if (p.type === "year") y = p.value;
-    if (p.type === "month") m = p.value;
-    if (p.type === "day") d = p.value;
-  }
-  return `${y}-${m}-${d}`;
-}
-
-function normalizeWeekday(raw: unknown) {
-  const s = String(raw ?? "").trim();
-  if (!s) return "";
-  if (["一", "二", "三", "四", "五", "六", "日"].includes(s)) return s;
-  if (s.startsWith("星期")) {
-    const c = s.slice(2, 3);
-    if (["一", "二", "三", "四", "五", "六", "日"].includes(c)) return c;
-  }
-  const lower = s.toLowerCase();
-  if (lower === "mon" || lower === "monday") return "一";
-  if (lower === "tue" || lower === "tuesday") return "二";
-  if (lower === "wed" || lower === "wednesday") return "三";
-  if (lower === "thu" || lower === "thursday") return "四";
-  if (lower === "fri" || lower === "friday") return "五";
-  if (lower === "sat" || lower === "saturday") return "六";
-  if (lower === "sun" || lower === "sunday") return "日";
-  return s;
-}
-
-function normalizeLessonRecords(raw: unknown): YearLessonRecord[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      const o = item as Record<string, unknown>;
-      const weekday = normalizeWeekday(o.weekday ?? o.week_day ?? o.weekDay);
-      const room = String(o.room ?? o.classroom ?? o.room_name ?? "").trim();
-      const time = String(o.time ?? o.lesson_time ?? "").trim();
-      const effectiveDate =
-        typeof o.effectiveDate === "string"
-          ? o.effectiveDate
-          : typeof o.effective_date === "string"
-            ? o.effective_date
-            : undefined;
-      const createdAtRaw = o.createdAt ?? o.created_at ?? 0;
-      return {
-        id: typeof o.id === "string" ? o.id : undefined,
-        effectiveDate,
-        weekday,
-        time,
-        room,
-        tutor: typeof o.tutor === "string" ? o.tutor : undefined,
-        lessonSummary: typeof o.lessonSummary === "string" ? o.lessonSummary : undefined,
-        createdAt: Number(createdAtRaw) || 0,
-      } as YearLessonRecord;
-    })
-    .filter((r) => r.weekday && r.room);
-}
-
-function buildBaseLessonCountsByWeekdayForMonth(year: number, month1to12: number): Record<string, number> {
-  const out: Record<string, number> = { 一: 0, 二: 0, 三: 0, 四: 0, 五: 0, 六: 0, 日: 0 };
-  const daysInMonth = new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
-  const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Hong_Kong",
-    weekday: "short",
-  });
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dt = new Date(Date.UTC(year, month1to12 - 1, d, 12));
-    const short = weekdayFormatter.format(dt);
-    const cn = HK_WEEKDAY_SHORT_TO_CN[short];
-    if (cn) out[cn] += 1;
-  }
-  return out;
-}
-
-function getActiveWeekdaysForDate(records: YearLessonRecord[], dateIso: string): string[] {
-  const normalized = records.map((r) => ({
-    ...r,
-    effectiveDate: r.effectiveDate ?? toHkIsoDateFromMs(r.createdAt),
-    weekday: normalizeWeekday(r.weekday),
-  }));
-  const sorted = normalized.sort((a, b) => {
-    const ed = String(a.effectiveDate).localeCompare(String(b.effectiveDate));
-    if (ed !== 0) return ed;
-    return a.createdAt - b.createdAt;
-  });
-  const active = getActiveScheduleRulesForDate(sorted, dateIso);
-  const set = new Set<string>();
-  for (const r of active) {
-    const wd = normalizeWeekday(r.weekday);
-    if (wd) set.add(wd);
-  }
-  return [...set].sort((a, b) => (WEEKDAY_ORDER[a] ?? 99) - (WEEKDAY_ORDER[b] ?? 99));
-}
-
-function formatHkMoneyAmount(n: number): string {
-  const x = Math.round((Number(n) || 0) * 100) / 100;
-  return x.toLocaleString("en-HK", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
-
 async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   const { ymdToday, mdToday, year, month } = hkTodayParts();
   const supabase = getSupabaseAdmin();
@@ -205,57 +65,15 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     { data: studentRows },
     { data: tutorRows },
     { data: periodRows },
-    { data: feeRowsAll },
+    scheduleData,
   ] = await Promise.all([
     supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
     supabase.from("tutors").select("id, name_zh, name_en, birth_date, status"),
     supabase.from("student_visibility_periods").select("student_id, start_date, end_date, note"),
-    supabase
-      .from("student_monthly_fee_records")
-      .select("student_id, submitted_amount, lesson_unit_price, fee_pricing_grade")
-      .eq("year", year)
-      .eq("month", month),
+    loadYearScheduleData(year),
   ]);
 
   const inactivePeriodsById = buildStudentInactivePeriodsById(periodRows ?? []);
-  const inactiveReturnCandidates: Array<{ studentId: string; reactivateDate: string }> = [];
-  for (const [sid, periods] of Object.entries(inactivePeriodsById)) {
-    const mostRecentWithReturn = [...(periods ?? [])]
-      .filter((p) => p.startDate <= ymdToday && Boolean(p.endDate))
-      .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
-    if (mostRecentWithReturn?.endDate) {
-      inactiveReturnCandidates.push({ studentId: sid, reactivateDate: mostRecentWithReturn.endDate });
-    }
-  }
-
-  const studentDisplayNameById = new Map<string, string>();
-  for (const r of studentRows ?? []) {
-    const sid = String(r.id ?? "");
-    if (!sid) continue;
-    studentDisplayNameById.set(
-      sid,
-      formatStudentDisplayNameOrEmpty(
-        {
-          id: sid,
-          name_zh: (r as { name_zh?: string }).name_zh,
-          name_en: (r as { name_en?: string }).name_en,
-          nickname_en: (r as { nickname_en?: string }).nickname_en,
-        },
-        "full",
-        sid,
-      ),
-    );
-  }
-
-  inactiveReturnCandidates.sort((a, b) =>
-    compareStudentReactivateReminders(a.reactivateDate, b.reactivateDate, ymdToday),
-  );
-  const inactiveReturnRows: HomeReminderRow[] = inactiveReturnCandidates.map(({ studentId, reactivateDate }) => ({
-    studentId,
-    displayName: studentDisplayNameById.get(studentId) || studentId,
-    detail: formatStudentReactivateReminderDetail(reactivateDate, ymdToday),
-    href: `/students/${encodeURIComponent(studentId)}/lessons`,
-  }));
 
   const activeStudentRows = (studentRows ?? []).filter((r) => {
     const sid = String(r.id ?? "");
@@ -284,190 +102,62 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
         "full",
         sid,
       ),
+      grade: String((r as { grade?: string }).grade ?? ""),
     };
   });
-  const activeStudentMetaById = new Map(activeStudentMeta.map((s) => [s.id, s]));
 
-  const activeStudentIdSet = new Set(activeStudentMeta.map((s) => s.id));
-  const activeStudentIds = activeStudentMeta.map((s) => s.id);
+  const juneStartIso = `${year}-06-01`;
+  // 只計已過期的堂（昨天及更早）；今天未打勾唔列出。
+  const endExclusiveToday = new Date(`${ymdToday}T00:00:00+08:00`);
+  endExclusiveToday.setDate(endExclusiveToday.getDate() - 1);
+  const ymdYesterday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(endExclusiveToday);
 
-  const paidAmountByStudentId = new Map<string, number>();
-  const pricingByStudentId = new Map<string, { lessonUnitPrice: number; feePricingGrade: string }>();
-  for (const row of feeRowsAll ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    if (!activeStudentIdSet.has(sid)) continue;
-    paidAmountByStudentId.set(
-      sid,
-      Number((row as { submitted_amount?: number }).submitted_amount ?? 0) || 0,
+  const untickedFromJuneRows: HomeReminderRow[] = [];
+
+  for (const meta of activeStudentMeta) {
+    const periods = withAutoF6InactivePeriod({
+      periods: inactivePeriodsById[meta.id] ?? [],
+      studentId: meta.id,
+      grade: meta.grade,
+      year,
+    });
+    const records = scheduleData.normalizedRecordsById[meta.id] ?? [];
+    const state = scheduleData.stateById[meta.id] ?? EMPTY_YEAR_STATE;
+    const unticked = listUntickedRegularMakeupExtraInRange(
+      records,
+      state,
+      juneStartIso,
+      ymdYesterday,
+      year,
+      {
+        isDateInactive: (dateIso) =>
+          isStudentInactiveOnDateFromPeriods({ periods, dateIso }),
+      },
     );
-    pricingByStudentId.set(sid, {
-      lessonUnitPrice: Number((row as { lesson_unit_price?: number | null }).lesson_unit_price ?? 0) || 0,
-      feePricingGrade: String((row as { fee_pricing_grade?: string | null }).fee_pricing_grade ?? ""),
+    if (!unticked.length) continue;
+    const details = unticked.map(
+      (r) => `${formatPendingMakeupFromDateLabel(r.date)}（${r.lessonType}）`,
+    );
+    untickedFromJuneRows.push({
+      studentId: meta.id,
+      displayName: meta.displayName,
+      count: details.length,
+      detail: `${details.length} 堂：${details.join("、")}`,
     });
   }
 
-  const [feeTierBundle, recordsChunk, yearStateChunk] = await Promise.all([
-    loadStudentFeeTierSettingsAdmin(supabase),
-    activeStudentIds.length
-      ? fetchRowsInChunks<{ student_id?: string; records?: unknown }>({
-          ids: activeStudentIds,
-          concurrency: 8,
-          query: (chunk) =>
-            supabase.from("student_lesson_records").select("student_id, records").in("student_id", chunk),
-        })
-      : Promise.resolve({ data: [] as Array<{ student_id?: string; records?: unknown }>, error: null }),
-    activeStudentIds.length
-      ? fetchRowsInChunks<{
-          student_id?: string;
-          attendance?: Record<string, boolean>;
-          reschedule_entries?: unknown;
-          extra_entries?: unknown;
-        }>({
-          ids: activeStudentIds,
-          concurrency: 8,
-          query: (chunk) =>
-            supabase
-              .from("student_lessons_year_state")
-              .select("student_id, attendance, reschedule_entries, extra_entries")
-              .eq("year", year)
-              .in("student_id", chunk),
-        })
-      : Promise.resolve({
-          data: [] as Array<{
-            student_id?: string;
-            attendance?: Record<string, boolean>;
-            reschedule_entries?: unknown;
-            extra_entries?: unknown;
-          }>,
-          error: null,
-        }),
-  ]);
-
-  if (recordsChunk.error) throw new Error(recordsChunk.error);
-  if (yearStateChunk.error) throw new Error(yearStateChunk.error);
-
-  const recRows = recordsChunk.data;
-  const yearStateRowsRaw = yearStateChunk.data;
-
-  type YearStateRow = {
-    student_id?: string;
-    attendance?: Record<string, boolean>;
-    reschedule_entries?: unknown;
-    extra_entries?: unknown;
-  };
-  const yearStateRows: YearStateRow[] = Array.isArray(yearStateRowsRaw)
-    ? (yearStateRowsRaw as YearStateRow[])
-    : [];
-
-  const recordsById = new Map<string, YearLessonRecord[]>();
-  for (const row of recRows ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    if (!sid) continue;
-    recordsById.set(sid, normalizeLessonRecords((row as { records?: unknown }).records));
-  }
-
-  const extraCountByStudentId = new Map<string, number>();
-  for (const row of yearStateRows) {
-    const sid = String(row.student_id ?? "");
-    if (!sid) continue;
-    const extras = Array.isArray(row.extra_entries)
-      ? (row.extra_entries as Array<{ date?: string }>)
-      : [];
-    let c = 0;
-    for (const ex of extras) {
-      const iso = String(ex?.date ?? "").trim();
-      if (!iso) continue;
-      if (iso.startsWith(`${year}-${String(month).padStart(2, "0")}`)) c += 1;
-    }
-    extraCountByStudentId.set(sid, c);
-  }
-
-  const baseCounts = buildBaseLessonCountsByWeekdayForMonth(year, month);
-
-  const unpaidRows: HomeReminderRow[] = activeStudentMeta
-    .map((student) => {
-      const paid = paidAmountByStudentId.get(student.id) ?? 0;
-      const records = recordsById.get(student.id) ?? [];
-      const weekdays = getActiveWeekdaysForDate(records, ymdToday);
-      const extraCount = extraCountByStudentId.get(student.id) ?? 0;
-      const lessonCount = weekdays.reduce((sum, wd) => sum + (baseCounts[wd] ?? 0), 0) + extraCount;
-      const pricing = pricingByStudentId.get(student.id) ?? { lessonUnitPrice: 0, feePricingGrade: "" };
-      const gradeFor = gradeForFeePricing("", year, month, pricing.feePricingGrade);
-      const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student.id, year, month);
-      const expected = sumSlotTuitionHkdByLessonCount({
-        lessonCount,
-        gradeFor,
-        feeTierSettings: tier,
-      });
-      const due = Math.max(0, expected - paid);
-      return { student, paid, expected, due };
-    })
-    .filter(({ due }) => due > 0.005)
-    .map((student) => ({
-      studentId: student.student.id,
-      displayName: student.student.displayName,
-      detail: `${month} 月：應繳 $${formatHkMoneyAmount(student.expected)}，已繳 $${formatHkMoneyAmount(
-        student.paid,
-      )}，尚欠 $${formatHkMoneyAmount(student.due)}`,
-    }))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
-
-  const reschedulePendingByStudent = new Map<string, { displayName: string; details: string[] }>();
-  for (const row of yearStateRows) {
-    const sid = String(row.student_id ?? "");
-    if (!sid) continue;
-    const meta = activeStudentMetaById.get(sid);
-    if (!meta) continue;
-    const attendance = (row.attendance ?? {}) as Record<string, boolean>;
-    const entries = Array.isArray(row.reschedule_entries)
-      ? (row.reschedule_entries as unknown[])
-      : [];
-    for (const e of entries) {
-      if (isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;
-      const id = String((e as { id?: string })?.id ?? "");
-      const toDate = String((e as { toDate?: string })?.toDate ?? "");
-      if (!id || !toDate || toDate > ymdToday) continue;
-      if (attendance[`reschedule:${id}`] === true) continue;
-      const fromDate = String((e as { fromDate?: string })?.fromDate ?? "");
-      const line = fromDate
-        ? `補堂 ${formatPendingMakeupFromDateLabel(toDate)}（原課 ${formatPendingMakeupFromDateLabel(fromDate)}）尚未打勾`
-        : `補堂 ${formatPendingMakeupFromDateLabel(toDate)} 尚未打勾`;
-      const bucket = reschedulePendingByStudent.get(sid);
-      if (bucket) bucket.details.push(line);
-      else reschedulePendingByStudent.set(sid, { displayName: meta.displayName, details: [line] });
-    }
-  }
-
-  const reschedulePendingRows: HomeReminderRow[] = Array.from(reschedulePendingByStudent.entries())
-    .map(([studentId, { displayName, details }]) => ({
-      studentId,
-      displayName,
-      detail: `${details.length} 堂：${details.join("；")}`,
-    }))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
-
-  const pendingLeaveRows: HomeReminderRow[] = [];
-  for (const row of yearStateRows) {
-    const sid = String(row.student_id ?? "");
-    if (!sid) continue;
-    const meta = activeStudentMetaById.get(sid);
-    if (!meta) continue;
-    const entries = Array.isArray(row.reschedule_entries)
-      ? (row.reschedule_entries as unknown[])
-      : [];
-    for (const e of entries) {
-      if (!isPendingRescheduleEntry(e as { toDate?: string; pending?: boolean })) continue;
-      const fromDate = String((e as { fromDate?: string }).fromDate ?? "");
-      if (!fromDate) continue;
-      if (!isPendingMakeupVisible(fromDate, ymdToday)) continue;
-      pendingLeaveRows.push({
-        studentId: sid,
-        displayName: meta.displayName,
-        detail: `原課 ${formatPendingMakeupFromDateLabel(fromDate)}，${formatPendingMakeupReminderZh(fromDate, ymdToday)}`,
-      });
-    }
-  }
-  pendingLeaveRows.sort((a, b) => a.displayName.localeCompare(b.displayName, "zh-Hant"));
+  // Most overdue first (by unticked lesson count), then name.
+  untickedFromJuneRows.sort((a, b) => {
+    const countA = a.count ?? 0;
+    const countB = b.count ?? 0;
+    if (countB !== countA) return countB - countA;
+    return a.displayName.localeCompare(b.displayName, "zh-Hant");
+  });
 
   const tutorsBirthdayToday = (tutorRows ?? [])
     .filter((r) => {
@@ -493,7 +183,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   const todayWhatsappMessage = birthdayLines.length
     ? `${birthdaySummary} 今日生日`
     : "今日冇生日之星";
-  const todayWhatsappHref = `https://wa.me/85251646814?text=${encodeURIComponent(todayWhatsappMessage)}`;
+  const todayWhatsappHref = homeBirthdayWhatsappHref(todayWhatsappMessage);
 
   const allBirthdayRows = [
     ...activeStudentMeta.map((student) => ({
@@ -547,11 +237,6 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     if (d.getDay() === 0) break;
   }
 
-  const dayOfMonth = Number(ymdToday.slice(8, 10)) || 1;
-  const lastDayOfMonth = new Date(year, month, 0).getDate();
-  const daysLeftInMonth = lastDayOfMonth - dayOfMonth;
-  const priorMakeupWindow = getPriorMonthMakeupWindow();
-
   return {
     ymdToday,
     mdToday,
@@ -561,23 +246,12 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     todayWhatsappHref,
     weekBirthdayLines,
     weekBirthdayReminderItems,
-    unpaidRows,
-    reschedulePendingRows,
-    pendingLeaveRows,
-    inactiveReturnRows,
-    priorMakeupMonthLabel: `${Number(priorMakeupWindow.startIso.slice(5, 7))}月`,
-    isMonthEndMakeupReminder: daysLeftInMonth <= 6,
-    daysLeftInMonth,
+    untickedFromJuneRows,
   };
 }
 
-const fetchHomeDashboardCached = unstable_cache(
-  fetchHomeDashboardUncached,
-  ["home-dashboard-v2"],
-  // Home dashboard is read-mostly; rely on manual cache-bust tags after edits/sync.
-  { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_HOME] },
-);
-
 export async function fetchHomeDashboardData(): Promise<HomeDashboardData> {
-  return fetchHomeDashboardCached();
+  // Avoid unstable_cache here: field-shape renames + Data Cache caused
+  // stale payloads (missing untickedFromJuneRows) in local/prod.
+  return fetchHomeDashboardUncached();
 }

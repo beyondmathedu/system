@@ -126,3 +126,27 @@ export function getUpcomingUntickedDates(
     .map((r) => r.date)
     .sort();
 }
+
+/**
+ * 區間內未打勾的堂（恆常／補堂／加堂）。
+ * 不含請假待定、已取消原堂；inactive 日可排除。
+ */
+export function listUntickedRegularMakeupExtraInRange(
+  records: Lesson2026Record[],
+  state: Lesson2026State,
+  startIso: string,
+  endIso: string,
+  calendarYear = 2026,
+  options?: LessonUntickedOptions,
+): BuiltScheduleRow[] {
+  if (startIso > endIso) return [];
+  const rows = buildYearScheduleRowsForDateRange(records, state, calendarYear, startIso, endIso);
+  return rows
+    .filter((r) => {
+      if (r.date < startIso || r.date > endIso) return false;
+      if (options?.isDateInactive?.(r.date)) return false;
+      if (r.rowKind === "cancelled_original") return false;
+      return !isRowMarkedAttended(r, state);
+    })
+    .sort((a, b) => a.date.localeCompare(b.date) || a.sortTime.localeCompare(b.sortTime));
+}

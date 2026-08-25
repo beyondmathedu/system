@@ -44,7 +44,6 @@ export type FeeRecordBootstrapApiBody = {
     remarks: string;
     makeup_remarks: string;
     balance_due_remarks: string;
-    send_fee: boolean;
   }>;
   recordsMap?: Record<string, unknown[]>;
   yearStatesMap?: Record<string, StudentLesson2026State>;
@@ -68,7 +67,6 @@ export type FeeRecordRecordState = {
   remarks: string;
   makeupRemarks: string;
   balanceDueRemarks: string;
-  sendFee: boolean;
   lValues: number[];
 };
 
@@ -82,7 +80,6 @@ export function defaultFeeRecordState(lCount = 9): FeeRecordRecordState {
     remarks: "",
     makeupRemarks: "",
     balanceDueRemarks: "",
-    sendFee: false,
     lValues: Array.from({ length: lCount }, () => 0),
   };
 }
@@ -192,7 +189,6 @@ export function hydrateFeeRecordBootstrap(
       remarks: String(r.remarks ?? ""),
       makeupRemarks: String(r.makeup_remarks ?? ""),
       balanceDueRemarks: String(r.balance_due_remarks ?? ""),
-      sendFee: Boolean(r.send_fee),
     };
   }
 

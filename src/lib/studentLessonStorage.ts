@@ -564,7 +564,6 @@ export type StudentMonthlyFeeRecord = {
   remarks: string;
   makeup_remarks: string;
   balance_due_remarks: string;
-  send_fee: boolean;
 };
 
 export type StudentVisibilityMode = {
@@ -658,7 +657,6 @@ export async function upsertStudentMonthlyFeeRecord(input: {
   remarks: string;
   makeupRemarks: string;
   balanceDueRemarks: string;
-  sendFee: boolean;
 }) {
   const {
     studentId,
@@ -670,7 +668,6 @@ export async function upsertStudentMonthlyFeeRecord(input: {
     remarks,
     makeupRemarks,
     balanceDueRemarks,
-    sendFee,
   } = input;
   const unit = Number(lessonUnitPrice) || 0;
   const normalizedFeeGrade = normalizeFeePricingGradeForDb(feePricingGrade);
@@ -682,7 +679,6 @@ export async function upsertStudentMonthlyFeeRecord(input: {
     lesson_unit_price: unit > 0 ? unit : null,
     fee_pricing_grade: normalizedFeeGrade,
     remarks,
-    send_fee: sendFee,
     updated_at: new Date().toISOString(),
   };
   const fullPayload = {

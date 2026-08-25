@@ -75,7 +75,7 @@ create table if not exists public.student_visibility_modes (
   updated_at timestamptz not null default now()
 );
 
--- /students-lesson-time-fee-record：每月手填欄位（已交/Remarks/月尾Send學費）
+-- /students-lesson-time-fee-record：每月手填欄位（已交/Remarks）
 create table if not exists public.student_monthly_fee_records (
   student_id text not null references public.students(id) on delete cascade,
   year integer not null,
@@ -84,7 +84,6 @@ create table if not exists public.student_monthly_fee_records (
   lesson_unit_price numeric(10,2),
   fee_pricing_grade text,
   remarks text not null default '',
-  send_fee boolean not null default false,
   updated_at timestamptz not null default now(),
   primary key (student_id, year, month)
 );

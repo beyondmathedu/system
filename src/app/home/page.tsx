@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
@@ -8,8 +7,8 @@ import { getViewerContext } from "@/lib/authz";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { redirectStudentAwayFromAdminPages } from "@/lib/studentPortalAccess";
 import { redirectIfInactiveStudentPortalBlocked } from "@/lib/studentPortalAccess.server";
+import { HOME_BIRTHDAY_WHATSAPP_LABEL } from "@/lib/homeBirthdayWhatsapp";
 import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
-import { PENDING_MAKEUP_BUTTON_LABEL_ZH } from "@/lib/pendingMakeup";
 import HomeReminderPanel from "./HomeReminderPanel";
 import UpcomingBirthdayReminder from "./UpcomingBirthdayReminder";
 
@@ -200,21 +199,11 @@ function HomeDashboardSkeleton() {
 
 async function HomeDashboardBody() {
   const dashboard = await fetchHomeDashboardData();
-  const {
-    ymdToday,
-    month,
-    birthdaySummary,
-    todayWhatsappHref,
-    weekBirthdayLines,
-    weekBirthdayReminderItems,
-    unpaidRows,
-    reschedulePendingRows,
-    pendingLeaveRows,
-    inactiveReturnRows,
-    priorMakeupMonthLabel,
-    isMonthEndMakeupReminder,
-    daysLeftInMonth,
-  } = dashboard;
+  const birthdaySummary = dashboard.birthdaySummary;
+  const todayWhatsappHref = dashboard.todayWhatsappHref;
+  const weekBirthdayLines = dashboard.weekBirthdayLines ?? [];
+  const weekBirthdayReminderItems = dashboard.weekBirthdayReminderItems ?? [];
+  const untickedFromJuneRows = dashboard.untickedFromJuneRows ?? [];
 
   return (
     <>
@@ -235,7 +224,7 @@ async function HomeDashboardBody() {
                     rel="noreferrer"
                     className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
                   >
-                    WhatsApp 提醒 51646814
+                    {HOME_BIRTHDAY_WHATSAPP_LABEL}
                   </a>
                 </div>
               </section>
@@ -255,137 +244,15 @@ async function HomeDashboardBody() {
             </div>
           </div>
 
-          <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
-            <section
-              className={`rounded-xl border px-4 py-4 ${
-                isMonthEndMakeupReminder
-                  ? "border-amber-300 bg-amber-50"
-                  : "border-slate-200 bg-white"
-              }`}
-            >
-              <p
-                className={`text-sm font-bold ${
-                  isMonthEndMakeupReminder ? "text-amber-950" : "text-slate-800"
-                }`}
-              >
-                <span className="mr-1" aria-hidden>
-                  📋
-                </span>
-                首頁待辦說明（{month} 月 · 香港時間 {ymdToday}）
-              </p>
-              <div className="mt-3 grid gap-3 text-xs leading-relaxed text-slate-700 sm:grid-cols-2">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="font-semibold text-slate-800">A. 上月恆常課未打勾</p>
-                  <p className="mt-1">
-                    指 <span className="font-medium">{priorMakeupMonthLabel}</span>
-                    仍缺席、未在課表打勾的恆常堂（與學費頁 Makeup 欄一致）。請到學費頁逐日核對。
-                  </p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="font-semibold text-slate-800">B. 已排補堂但未打勾</p>
-                  <p className="mt-1">
-                    已在課表用 Reschedule 填好補堂日，且補堂日 ≤ 今天，但補堂列仍未打勾。見下方琥珀色列表
-                    {reschedulePendingRows.length > 0
-                      ? `（目前 ${reschedulePendingRows.length} 人）`
-                      : ""}
-                    。
-                  </p>
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:col-span-2">
-                  <p className="font-semibold text-slate-800">C. {PENDING_MAKEUP_BUTTON_LABEL_ZH}</p>
-                  <p className="mt-1">
-                    只在課表記了原課日、新日留空（按「{PENDING_MAKEUP_BUTTON_LABEL_ZH}」）。以原課日所在月
-                    M 計：可補至 M+1 月底（例：5 月請假 → 可補至 6 月底）；由 M+2 月 1 日起不可再改（例：7
-                    月 1 日起），顯示「已過補堂限期」；M+3 月 1 日起列表／課表不再顯示（例：8
-                    月起）。與 A、B 不同，唔會計入 B 列表。
-                  </p>
-                </div>
-              </div>
-              {isMonthEndMakeupReminder ? (
-                <p className="mt-3 text-sm font-medium text-amber-900">
-                  月尾提醒：本月尚餘 {daysLeftInMonth === 0 ? "最後一日" : `${daysLeftInMonth + 1} 日`}，請盡快處理 A、B、C。
-                </p>
-              ) : null}
-              <Link
-                href="/students-lesson-time-fee-record"
-                className="mt-3 inline-flex rounded-md border border-[#1d76c2]/30 bg-[#1d76c2]/5 px-3 py-1.5 text-xs font-semibold text-[#1d76c2] hover:bg-[#1d76c2]/10"
-              >
-                學費頁（Makeup 欄 · Zoho Tuition Paid）→
-              </Link>
-            </section>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-2">
+          <div className="p-6">
             <HomeReminderPanel
-              title={`未交學費（${month} 月）· ${unpaidRows.length} 人`}
-              titleClassName="text-rose-900"
-              borderClassName="border-rose-200"
-              bgClassName="bg-rose-50/60"
-              logicTitle="點解會出現？"
-              logicLines={[
-                "讀取 student_monthly_fee_records 當月 submitted_amount。",
-                "≤ $0 視為未交（含未填、Zoho 未同步）。",
-                "Zoho 同步：只計 F.1–F.6 / Math Course 課程行；Total HKD → Tuition Paid，quantity → 括號堂數（文具等不計）。",
-              ]}
-              rows={unpaidRows}
-              emptyTitle="本月全部已有 Tuition Paid 紀錄"
-              footerLink={{
-                href: "/students-lesson-time-fee-record",
-                label: "開啟學費紀錄表 →",
-              }}
-            />
-
-            <HomeReminderPanel
-              title={`已排補堂未打勾 · ${reschedulePendingRows.length} 人`}
+              title={`過期未打勾 · ${untickedFromJuneRows.length} 人`}
               titleClassName="text-amber-900"
               borderClassName="border-amber-200"
               bgClassName="bg-amber-50/70"
-              logicTitle="點解會出現？（≠ 上月 Makeup 未打勾）"
-              logicLines={[
-                "reschedule_entries 已有補堂日 toDate，且 toDate ≤ 今天。",
-                "attendance「reschedule:ID」仍未打勾。",
-                "補堂日係未來的唔會列出；請假待定（無 toDate）亦唔會列出。",
-              ]}
-              rows={reschedulePendingRows}
-              emptyTitle="暫時冇已過期未打勾的補堂"
-              emptyHint="若上月恆常課未打勾，請用學費頁 Makeup 欄，唔係此列表。"
-              footerLink={{
-                href: "/students-lesson-time-fee-record",
-                label: "學費頁 Makeup 欄（上月恆常未打勾）→",
-              }}
-            />
-
-            <HomeReminderPanel
-              title={`${PENDING_MAKEUP_BUTTON_LABEL_ZH} · ${pendingLeaveRows.length} 筆`}
-              titleClassName="text-orange-950"
-              borderClassName="border-orange-200"
-              bgClassName="bg-orange-50/80"
-              logicTitle="點樣建立？"
-              logicLines={[
-                `學生課表 2026 → 勾選恆常課 →「${PENDING_MAKEUP_BUTTON_LABEL_ZH}」。`,
-                "只記原課日；新日留空；pending 存入 reschedule_entries。",
-                "確定補堂日後改用 Reschedule 填新日期（會離開此列表）。",
-                "原課月 M：可補至 M+1 月底；M+2 起不可改；M+3 起此列表唔再顯示。",
-              ]}
-              rows={pendingLeaveRows}
-              emptyTitle={`目前沒有 ${PENDING_MAKEUP_BUTTON_LABEL_ZH}`}
-              emptyHint="有學生請假但補堂日未定時，在課表用上方按鈕登記，就會出現在此。"
-            />
-
-            <HomeReminderPanel
-              title={`Inactive 預計復課 · ${inactiveReturnRows.length} 人`}
-              titleClassName="text-violet-900"
-              borderClassName="border-violet-200"
-              bgClassName="bg-violet-50/70"
-              logicTitle="點樣設定？"
-              logicLines={[
-                "學生 Lessons 頁 → Student Mode 設 Inactive + 生效日。",
-                "選填「預計復課日」；Inactive 期間唔顯示於日課表、Room、學費表。",
-                "到復課日請改回 Active 並確認課表。",
-              ]}
-              rows={inactiveReturnRows}
-              emptyTitle="暫時冇 Inactive 復課提醒"
-              emptyHint="暫停上堂而知道幾時返嚟，可填預計復課日。"
+              subtitle="6 月 1 日～昨天 · 恆常／補堂／加堂仍未在課表打勾（今日堂唔計）"
+              rows={untickedFromJuneRows}
+              emptyTitle="暫時冇過期未打勾"
             />
           </div>
     </>
