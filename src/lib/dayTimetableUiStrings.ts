@@ -43,6 +43,8 @@ export const dayTimetableTableStrings = {
   remarkDotsShow: "Show remark dots",
   remarkDotsHide: "Hide remark dots",
   remarkDotsLabel: "Remark dots",
+  remarkAllShow: "Show all remarks",
+  remarkAllHide: "Hide all remarks",
   saving: "Saving…",
   autoSaved: "Saved",
   balanceRow: "Cap.",
