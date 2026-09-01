@@ -183,7 +183,7 @@ const loadScheduleStudentsContextCached = unstable_cache(
       inactivePeriodsById: buildStudentInactivePeriodsById(periodRows ?? []),
     };
   },
-  ["schedule-students-context-v1"],
+  ["schedule-students-context-v2"],
   { revalidate: 300, tags: SHARED_SCHEDULE_CACHE_TAGS },
 );
 

@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  autoF6InactivePeriod,
   getInactiveMonthGapsInYear,
   isStudentHiddenForFeeSheetMonth,
   isStudentHiddenForFeeSheetMonthFromPeriods,
+  isStudentInactiveOnDate,
   isStudentInactiveOnDateFromPeriods,
   isTemporarilyInactiveOnDateFromPeriods,
   makeStudentInactiveDateChecker,
   makeStudentInactiveDateCheckerFromPeriods,
   normalizeReactivateAsFirstActiveDay,
   shouldHideScheduledLessonForInactivePeriod,
+  withAutoF6InactivePeriod,
   type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import { collectBillableLessonDatesForMonth } from "@/lib/feeRecordLessonDates";
@@ -245,5 +248,79 @@ describe("getInactiveMonthGapsInYear", () => {
         reactivateDate: "2026-09-01",
       },
     ]);
+  });
+});
+
+describe("auto F.6 inactive window (1 Jul–1 Sep)", () => {
+  it("hides F.6 in July and August, then shows them again on 1 Sep after promotion", () => {
+    const period = autoF6InactivePeriod({ studentId: "00100", grade: "F.6", year: 2026 });
+    expect(period).toEqual({
+      studentId: "00100",
+      startDate: "2026-07-01",
+      endDate: "2026-09-01",
+      note: "auto: F6 graduation",
+    });
+
+    expect(
+      isStudentInactiveOnDate({
+        grade: "F6",
+        manualInactiveEffective: null,
+        year: 2026,
+        dateIso: "2026-05-01",
+      }),
+    ).toBe(false);
+    expect(
+      isStudentInactiveOnDate({
+        grade: "F6",
+        manualInactiveEffective: null,
+        year: 2026,
+        dateIso: "2026-07-01",
+      }),
+    ).toBe(true);
+    expect(
+      isStudentInactiveOnDate({
+        grade: "F6",
+        manualInactiveEffective: null,
+        year: 2026,
+        dateIso: "2026-08-31",
+      }),
+    ).toBe(true);
+    expect(
+      isStudentInactiveOnDate({
+        grade: "F6",
+        manualInactiveEffective: null,
+        year: 2026,
+        dateIso: "2026-09-01",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not hide September fee sheets for newly promoted F.6", () => {
+    expect(
+      isStudentHiddenForFeeSheetMonth({
+        grade: "F6",
+        manualInactiveEffective: null,
+        reactivateDate: null,
+        sheetYear: 2026,
+        sheetMonth: 7,
+      }),
+    ).toBe(true);
+    expect(
+      isStudentHiddenForFeeSheetMonth({
+        grade: "F6",
+        manualInactiveEffective: null,
+        reactivateDate: null,
+        sheetYear: 2026,
+        sheetMonth: 9,
+      }),
+    ).toBe(false);
+
+    const periods = withAutoF6InactivePeriod({
+      periods: [],
+      studentId: "00100",
+      grade: "F.5",
+      year: 2026,
+    });
+    expect(periods).toEqual([]);
   });
 });

@@ -203,7 +203,7 @@ const loadStudentsScheduleBundleCached = unstable_cache(
     }
     return { bundle: serializeScheduleBundle(result.bundle), error: null };
   },
-  ["students-schedule-bundle-v2"],
+  ["students-schedule-bundle-v3"],
   // Heavy bundle (students + records + states). Keep longer TTL; tags will bust after edits.
   { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
 );
