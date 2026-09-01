@@ -319,6 +319,7 @@ export default function DayTimetableTable({
   const [savingById, setSavingById] = useState<Record<string, boolean>>({});
   const [hiddenRooms, setHiddenRooms] = useState<RoomGroup[]>([]);
   const [showRemarkDots, setShowRemarkDots] = useState(true);
+  const [showAllRemarks, setShowAllRemarks] = useState(false);
   const saveTimersRef = useRef<Map<string, number>>(new Map());
   const hideHoverTimerRef = useRef<number | null>(null);
 
@@ -507,6 +508,21 @@ export default function DayTimetableTable({
     );
   }
 
+  function renderInlineAllRemarks(item: DayTimetableCell, isDarkBg: boolean) {
+    if (hideRemarks || !showAllRemarks) return null;
+    const note = (remarksById[item.studentId] ?? "").trim();
+    if (!note) return null;
+    return (
+      <p
+        className={`mt-0.5 whitespace-pre-wrap break-words text-[8px] font-normal leading-snug no-underline sm:text-[9px] ${
+          isDarkBg ? "text-white/85" : "text-slate-600"
+        }`}
+      >
+        {note}
+      </p>
+    );
+  }
+
   function effectiveRoomScheduleQuery(): string {
     if (roomScheduleQuery) return roomScheduleQuery;
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
@@ -618,6 +634,21 @@ export default function DayTimetableTable({
                 >
                   {renderEyeIcon(!showRemarkDots)}
                   {showRemarkDots ? t.remarkDotsHide : t.remarkDotsShow}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAllRemarks((v) => !v)}
+                  className={[
+                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition",
+                    showAllRemarks
+                      ? "border-sky-200 bg-sky-50 text-slate-800"
+                      : "border-slate-300 bg-slate-100 text-slate-500",
+                  ].join(" ")}
+                  aria-pressed={showAllRemarks}
+                  title={showAllRemarks ? t.remarkAllHide : t.remarkAllShow}
+                >
+                  {renderEyeIcon(!showAllRemarks)}
+                  {showAllRemarks ? t.remarkAllHide : t.remarkAllShow}
                 </button>
               </>
             ) : null}
@@ -779,7 +810,9 @@ export default function DayTimetableTable({
                         return (
                           <Fragment key={`${frame.time}-${idx}-${room}`}>
                             <td
-                              className={`${nameSurf.className} ${tdNameExtra} ${noGridCls} overflow-visible`}
+                              className={`${nameSurf.className} ${tdNameExtra} ${noGridCls} ${
+                                showAllRemarks ? "!overflow-visible" : "overflow-visible"
+                              }`}
                               style={nameSurf.style}
                             >
                               {item ? (
@@ -859,6 +892,7 @@ export default function DayTimetableTable({
                                       Inactive
                                     </p>
                                   ) : null}
+                                  {renderInlineAllRemarks(item, nameSurf.isDarkBg)}
                                   {hoverPanel?.studentId === item.studentId ? (
                                     <span className="sr-only">{t.remarkClickOpen}</span>
                                   ) : null}
