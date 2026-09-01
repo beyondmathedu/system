@@ -546,11 +546,10 @@ async function fetchDayTimetablePayloadUncached(
 
   const supabase = getSupabaseAdmin();
   const targetWeekday = weekdayCnFromIsoDateHk(dateIso);
-  const [staticBundle, yearSchedule, timetableStyle, { data: remarkRows }] = await Promise.all([
+  const [staticBundle, yearSchedule, timetableStyle] = await Promise.all([
     loadDayTimetableStaticBundle(),
     loadYearScheduleData(year),
     loadDayTimetableStyleSettings(),
-    supabase.from("student_timetable_day_remarks").select("student_id, remarks").eq("date_iso", dateIso),
   ]);
   const {
     regularPeriodMaxByRoom,
@@ -591,12 +590,6 @@ async function fetchDayTimetablePayloadUncached(
 
   const normalizedRecordsById = new Map(Object.entries(yearSchedule.normalizedRecordsById));
   const stateById = new Map(Object.entries(yearSchedule.stateById));
-  const timetableRemarksById: Record<string, string> = {};
-  for (const row of remarkRows ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    if (!sid) continue;
-    timetableRemarksById[sid] = String((row as { remarks?: string | null }).remarks ?? "");
-  }
   const byTimeRoom: Record<string, DayTimetableCell[]> = {};
   const timeSet = new Set<string>();
   let skippedStudents = 0;
@@ -778,7 +771,7 @@ async function fetchDayTimetablePayloadUncached(
     dateIso,
     titleDate,
     examById,
-    timetableRemarksById,
+    timetableRemarksById: {},
     timetablePermanentRemarksById: staticBundle.timetablePermanentRemarksById,
     byTimeRoom,
     rowFrames,
