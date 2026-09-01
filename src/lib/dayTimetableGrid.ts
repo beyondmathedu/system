@@ -455,6 +455,7 @@ export type FetchDayTimetableOptions = {
 
 type DayTimetableStaticBundle = {
   studentList: StudentRow[];
+  timetablePermanentRemarksById: Record<string, string>;
   inactivePeriodsById: Record<string, StudentInactivePeriod[]>;
   tutorColorByName: Record<string, string>;
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
@@ -479,7 +480,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
       roomSlotTutorRules,
       feeTierBundle,
     ] = await Promise.all([
-      supabase.from("students").select("id, name_zh, name_en, nickname_en, grade").order("id"),
+      supabase.from("students").select("id, name_zh, name_en, nickname_en, grade, timetable_permanent_remark").order("id"),
       supabase.from("student_exam_dates").select("student_id, exam_date"),
       supabase.from("student_visibility_periods").select("student_id, start_date, end_date, note"),
       supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
@@ -498,8 +499,17 @@ const loadDayTimetableStaticBundle = unstable_cache(
 
     const roomRegistry = buildRoomDisplayRegistry(classroomRows);
 
+    const timetablePermanentRemarksById: Record<string, string> = {};
+    for (const row of students ?? []) {
+      const sid = String((row as { id?: string }).id ?? "").trim();
+      if (!sid) continue;
+      const text = String((row as { timetable_permanent_remark?: string | null }).timetable_permanent_remark ?? "").trim();
+      if (text) timetablePermanentRemarksById[sid] = text;
+    }
+
     return {
       studentList: (students ?? []) as StudentRow[],
+      timetablePermanentRemarksById,
       inactivePeriodsById,
       tutorColorByName: Object.fromEntries(buildTutorColorByDisplayName(tutorRows ?? [])),
       regularPeriodMaxByRoom: buildRegularPeriodMaxByRoom(
@@ -518,7 +528,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
       feeTierBundle,
     };
   },
-  ["day-timetable-static-v9"],
+  ["day-timetable-static-v10"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
@@ -769,6 +779,7 @@ async function fetchDayTimetablePayloadUncached(
     titleDate,
     examById,
     timetableRemarksById,
+    timetablePermanentRemarksById: staticBundle.timetablePermanentRemarksById,
     byTimeRoom,
     rowFrames,
     regularPeriodMaxByRoom,

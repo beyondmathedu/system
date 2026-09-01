@@ -87,6 +87,8 @@ export type DayTimetablePayload = {
   titleDate: string;
   examById: Record<string, string>;
   timetableRemarksById: Record<string, string>;
+  /** Admin-only; same note on every day until edited. */
+  timetablePermanentRemarksById: Record<string, string>;
   byTimeRoom: Record<string, DayTimetableCell[]>;
   rowFrames: DayTimetableRowFrame[];
   regularPeriodMaxByRoom: Record<RoomGroup, number>;
@@ -227,6 +229,7 @@ export function redactDayTimetableRemarks(payload: DayTimetablePayload): DayTime
   return {
     ...payload,
     timetableRemarksById: {},
+    timetablePermanentRemarksById: {},
     byTimeRoom,
   };
 }
