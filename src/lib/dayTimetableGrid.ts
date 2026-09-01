@@ -518,7 +518,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
       feeTierBundle,
     };
   },
-  ["day-timetable-static-v8"],
+  ["day-timetable-static-v9"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 

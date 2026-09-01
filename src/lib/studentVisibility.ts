@@ -3,8 +3,8 @@ import { isF6Grade } from "@/lib/grade";
 /**
  * 學生可見性規則：
  * - 手動 Inactive（legacy: student_visibility_modes；new: student_visibility_periods）；
- * - F.6 學生每年 07-01 起自動 Inactive，至同年 09-01（新學年升班後再顯示）。
- *   咁先唔會喺 9/1 把舊 F.5（新 F.6）當成已畢業而喺 Room／學費表消失。
+ * - 今年升班嘅 F.6（ex-F.5）：每年 07-01 起自動 Inactive，至同年 09-01（新學年再顯示）。
+ * - 舊年已經係 F.6（畢業）：升班當刻寫入無結束日嘅 Inactive（1 Jul 起），1 Sept 後繼續隱藏。
  *
  * NOTE: The codebase previously assumed a single inactive effective date per student.
  * This module now supports multiple inactive periods while keeping legacy helpers
