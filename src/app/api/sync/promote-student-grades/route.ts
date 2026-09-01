@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { runStudentGradePromotion } from "@/lib/runStudentGradePromotion";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -46,20 +46,10 @@ export async function POST(request: Request) {
   const force = body.force === true;
 
   try {
-    const admin = getSupabaseAdmin();
-    const { data, error } = await admin.rpc("run_student_grade_promotion", {
-      p_year: year,
-      p_force: force,
-    });
-
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
-
-    const row = Array.isArray(data) ? data[0] : null;
+    const result = await runStudentGradePromotion({ year, force });
     return NextResponse.json({
       ok: true,
-      result: row ?? null,
+      result,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
