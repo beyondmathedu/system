@@ -13,11 +13,7 @@ import type {
   DayTimetableFeePaymentTone,
   DayTimetableStyleSettings,
 } from "@/lib/dayTimetableStyleSettings";
-import {
-  deleteTimetableDayRemark,
-  upsertTimetableDayRemark,
-  upsertTimetablePermanentRemark,
-} from "@/lib/studentLessonStorage";
+import { upsertTimetablePermanentRemark } from "@/lib/studentLessonStorage";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { normalizeStudentId } from "@/lib/studentId";
 import { buildRoomPageHref } from "@/lib/roomConstants";
@@ -317,13 +313,9 @@ export default function DayTimetableTable({
   } | null>(null);
   const hoverPanelRef = useRef<HTMLDivElement | null>(null);
   const [hoverPanelSize, setHoverPanelSize] = useState<{ w: number; h: number }>({ w: 288, h: 240 });
-  const [remarksById, setRemarksById] = useState<Record<string, string>>(
-    hideRemarks ? {} : (payload.timetableRemarksById ?? {}),
-  );
   const [permanentRemarksById, setPermanentRemarksById] = useState<Record<string, string>>(
     hideRemarks ? {} : (payload.timetablePermanentRemarksById ?? {}),
   );
-  const [savingById, setSavingById] = useState<Record<string, boolean>>({});
   const [savingPermanentById, setSavingPermanentById] = useState<Record<string, boolean>>({});
   const [hiddenRooms, setHiddenRooms] = useState<RoomGroup[]>([]);
   const [showRemarkDots, setShowRemarkDots] = useState(true);
@@ -332,10 +324,9 @@ export default function DayTimetableTable({
   const hideHoverTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setRemarksById(hideRemarks ? {} : (payload.timetableRemarksById ?? {}));
     setPermanentRemarksById(hideRemarks ? {} : (payload.timetablePermanentRemarksById ?? {}));
     setHoverPanel(null);
-  }, [hideRemarks, payload.timetableRemarksById, payload.timetablePermanentRemarksById, payload.dateIso]);
+  }, [hideRemarks, payload.timetablePermanentRemarksById, payload.dateIso]);
 
   useEffect(() => {
     setHiddenRooms((prev) => prev.filter((room) => roomsForTable.includes(room)));
@@ -375,28 +366,6 @@ export default function DayTimetableTable({
       void flushSavePermanent(studentId, nextText);
     }, 600);
     saveTimersRef.current.set(key, t);
-  }
-
-  const flushSave = useCallback(async (studentId: string, nextText: string) => {
-    if (readOnly) return;
-    setSavingById((prev) => ({ ...prev, [studentId]: true }));
-    try {
-      if (nextText.trim()) await upsertTimetableDayRemark(studentId, dateIso, nextText.trim());
-      else await deleteTimetableDayRemark(studentId, dateIso);
-    } finally {
-      setSavingById((prev) => ({ ...prev, [studentId]: false }));
-    }
-  }, [dateIso, readOnly]);
-
-  function scheduleSave(studentId: string, nextText: string) {
-    if (readOnly) return;
-    const old = saveTimersRef.current.get(studentId);
-    if (old) window.clearTimeout(old);
-    const t = window.setTimeout(() => {
-      saveTimersRef.current.delete(studentId);
-      void flushSave(studentId, nextText);
-    }, 600);
-    saveTimersRef.current.set(studentId, t);
   }
 
   useEffect(() => {
@@ -473,9 +442,7 @@ export default function DayTimetableTable({
   }
 
   function studentHasRemark(studentId: string): boolean {
-    return Boolean(
-      (permanentRemarksById[studentId] ?? "").trim() || (remarksById[studentId] ?? "").trim(),
-    );
+    return Boolean((permanentRemarksById[studentId] ?? "").trim());
   }
 
   function renderStudentNameLabel(
@@ -547,25 +514,16 @@ export default function DayTimetableTable({
 
   function renderInlineAllRemarks(item: DayTimetableCell, isDarkBg: boolean) {
     if (hideRemarks || !showAllRemarks) return null;
-    const permanent = (permanentRemarksById[item.studentId] ?? "").trim();
-    const today = (remarksById[item.studentId] ?? "").trim();
-    if (!permanent && !today) return null;
-    const textClass = isDarkBg ? "text-white/85" : "text-slate-600";
+    const note = (permanentRemarksById[item.studentId] ?? "").trim();
+    if (!note) return null;
     return (
-      <div className={`mt-0.5 space-y-0.5 text-[8px] font-normal leading-snug no-underline sm:text-[9px] ${textClass}`}>
-        {permanent ? (
-          <p className="whitespace-pre-wrap break-words">
-            <span className="font-medium">{t.permanentRemarkLabel}: </span>
-            {permanent}
-          </p>
-        ) : null}
-        {today ? (
-          <p className="whitespace-pre-wrap break-words">
-            {permanent ? <span className="font-medium">{t.todayRemarkLabel}: </span> : null}
-            {today}
-          </p>
-        ) : null}
-      </div>
+      <p
+        className={`mt-0.5 whitespace-pre-wrap break-words text-[8px] font-normal leading-snug no-underline sm:text-[9px] ${
+          isDarkBg ? "text-white/85" : "text-slate-600"
+        }`}
+      >
+        {note}
+      </p>
     );
   }
 
@@ -1038,15 +996,13 @@ export default function DayTimetableTable({
               {hoverPanel.scheduleRemarks.trim()}
             </p>
           ) : null}
-          <p className="text-[11px] font-semibold text-slate-700">{t.permanentRemarkLabel}</p>
-          <p className="mb-2 text-[10px] leading-relaxed text-slate-500">{t.permanentRemarkHint}</p>
           {readOnly ? (
             (permanentRemarksById[hoverPanel.studentId] ?? "").trim() ? (
-              <p className="mb-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs leading-relaxed text-slate-700">
+              <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs leading-relaxed text-slate-700">
                 {(permanentRemarksById[hoverPanel.studentId] ?? "").trim()}
               </p>
             ) : (
-              <p className="mb-2 text-[11px] text-slate-500">—</p>
+              <p className="text-[11px] text-slate-500">—</p>
             )
           ) : (
             <>
@@ -1061,42 +1017,11 @@ export default function DayTimetableTable({
                   scheduleSavePermanent(hoverPanel.studentId, v);
                 }}
                 placeholder={t.permanentRemarkPlaceholder}
-                rows={2}
-                className="mb-1 w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-800 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
-              />
-              <p className="mb-2 text-[11px] text-slate-500">
-                {savingPermanentById[hoverPanel.studentId] ? t.saving : t.autoSaved}
-              </p>
-            </>
-          )}
-          <p className="text-[11px] font-semibold text-slate-700">{t.todayRemarkLabel}</p>
-          <p className="mb-1 text-[10px] leading-relaxed text-slate-500">{t.todayRemarkHint}</p>
-          {readOnly ? (
-            (remarksById[hoverPanel.studentId] ?? "").trim() ? (
-              <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs leading-relaxed text-slate-700">
-                {(remarksById[hoverPanel.studentId] ?? "").trim()}
-              </p>
-            ) : (
-              <p className="text-[11px] text-slate-500">—</p>
-            )
-          ) : (
-            <>
-              <textarea
-                value={remarksById[hoverPanel.studentId] ?? ""}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setRemarksById((prev) => ({
-                    ...prev,
-                    [hoverPanel.studentId]: v,
-                  }));
-                  scheduleSave(hoverPanel.studentId, v);
-                }}
-                placeholder={t.remarkPlaceholder}
                 rows={3}
                 className="w-full resize-y rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-800 outline-none focus:border-[#1d76c2] focus:ring-2 focus:ring-[#1d76c2]/20"
               />
               <p className="mt-1 text-[11px] text-slate-500">
-                {savingById[hoverPanel.studentId] ? t.saving : t.autoSaved}
+                {savingPermanentById[hoverPanel.studentId] ? t.saving : t.autoSaved}
               </p>
             </>
           )}
