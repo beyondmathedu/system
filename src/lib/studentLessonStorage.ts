@@ -239,6 +239,21 @@ export async function deleteTimetableDayRemark(studentId: string, dateIso: strin
   notifyScheduleCachesStale();
 }
 
+/** Permanent admin remark (all timetable days for this student). */
+export async function upsertTimetablePermanentRemark(studentId: string, remarks: string) {
+  const { error } = await supabase
+    .from("students")
+    .update({ timetable_permanent_remark: remarks })
+    .eq("id", studentId);
+  if (error) {
+    if (/timetable_permanent_remark/i.test(error.message) && /does not exist/i.test(error.message)) {
+      throw new Error("請先在 Supabase 執行 migration 20260902_student_timetable_permanent_remark.sql");
+    }
+    throw new Error(error.message);
+  }
+  notifyScheduleCachesStale();
+}
+
 export async function loadLessonScheduleRecords(studentId: string) {
   const { data } = await supabase
     .from("student_lesson_records")

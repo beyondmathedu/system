@@ -19,6 +19,7 @@ function samplePayload(): DayTimetablePayload {
     titleDate: "15 Jul 2026",
     examById: {},
     timetableRemarksById: {},
+    timetablePermanentRemarksById: {},
     byTimeRoom: {
       "4:00 PM::B": [
         { studentId: "00001", name: "A", grade: "F.1", scheduleRemarks: "", lessonType: "恆常", tutorDisplay: "T1" },
