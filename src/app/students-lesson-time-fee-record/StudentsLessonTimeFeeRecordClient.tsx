@@ -83,7 +83,7 @@ type StudentRow = {
   created_at: string;
 };
 
-const L_COUNT = 9;
+const MIN_L_COLUMN_COUNT = 9;
 const OPENING_BALANCE_AS_OF_YEAR = FEE_OPENING_BALANCE_AS_OF_YEAR;
 const OPENING_BALANCE_AS_OF_MONTH = FEE_OPENING_BALANCE_AS_OF_MONTH; // balance as of end of 2026/04
 
@@ -551,7 +551,7 @@ const defaultRecordState = (): RecordState => ({
   submittedLessonCount: null,
   lessonUnitPrice: 0,
   feePricingGrade: "",
-  lValues: Array.from({ length: L_COUNT }, () => 0),
+  lValues: [],
   remedialCount: 0,
   remarks: "",
   makeupRemarks: "",
@@ -918,13 +918,13 @@ export default function StudentsLessonTimeFeeRecordPage({
       const vis = visibilityByStudentId[st.id];
       out[st.id] = makeStudentInactiveDateCheckerFromPeriods({
         studentId: st.id,
-        grade: st.grade,
+        grade: inferGradeAtSheetEnd(st.grade, sheetYear, sheetMonth),
         year: sheetYear,
         periods: vis?.periods ?? [],
       });
     }
     return out;
-  }, [students, visibilityByStudentId, sheetYear]);
+  }, [students, visibilityByStudentId, sheetYear, sheetMonth]);
 
   const isMonthInactiveForFeeByStudentId = useMemo(() => {
     const out: Record<string, (month1to12: number) => boolean> = {};
@@ -933,7 +933,7 @@ export default function StudentsLessonTimeFeeRecordPage({
       out[st.id] = (month1to12: number) =>
         isStudentHiddenForFeeSheetMonthFromPeriods({
           studentId: st.id,
-          grade: st.grade,
+          grade: inferGradeAtSheetEnd(st.grade, sheetYear, month1to12),
           periods: vis?.periods ?? [],
           sheetYear,
           sheetMonth: month1to12,
@@ -1107,9 +1107,10 @@ export default function StudentsLessonTimeFeeRecordPage({
     [sheetMonth, sheetYear],
   );
 
-  const { lessonDatesByStudentId, fullLessonDatesByStudentId } = useMemo(() => {
-    const capped: Record<string, string[]> = {};
+  const { lessonDatesByStudentId, fullLessonDatesByStudentId, lColumnCount } = useMemo(() => {
+    const byStudent: Record<string, string[]> = {};
     const full: Record<string, string[]> = {};
+    let maxAttended = MIN_L_COLUMN_COUNT;
     const currentMonth = Number(sheetMonth);
     for (const st of students) {
       const legacyWeekdays = weekdayTokensByStudentId[st.id] ?? [];
@@ -1126,9 +1127,14 @@ export default function StudentsLessonTimeFeeRecordPage({
       };
       full[st.id] = monthInactive ? [] : collectBillableLessonDatesForMonth(common);
       const attended = monthInactive ? [] : collectAttendedBillableLessonDatesForMonth(common);
-      capped[st.id] = attended.slice(0, L_COUNT);
+      byStudent[st.id] = attended;
+      if (attended.length > maxAttended) maxAttended = attended.length;
     }
-    return { lessonDatesByStudentId: capped, fullLessonDatesByStudentId: full };
+    return {
+      lessonDatesByStudentId: byStudent,
+      fullLessonDatesByStudentId: full,
+      lColumnCount: Math.max(MIN_L_COLUMN_COUNT, maxAttended),
+    };
   }, [
     students,
     weekdayTokensByStudentId,
@@ -1414,7 +1420,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   const feePadTop = feeVirtualRows[0]?.start ?? 0;
   const feePadBottom =
     feeRowVirtualizer.getTotalSize() - (feeVirtualRows[feeVirtualRows.length - 1]?.end ?? 0);
-  const feeTableColSpan = 10 + L_COUNT + (sheetYear === OPENING_BALANCE_AS_OF_YEAR ? 1 : 0);
+  const feeTableColSpan = 10 + lColumnCount + (sheetYear === OPENING_BALANCE_AS_OF_YEAR ? 1 : 0);
 
   const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
 
@@ -1858,7 +1864,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                             <span className="block">Balance Due</span>
                             <span className="block text-[10px] font-semibold text-slate-500">Due − Paid</span>
                           </th>
-                          {Array.from({ length: L_COUNT }, (_, i) => (
+                          {Array.from({ length: lColumnCount }, (_, i) => (
                             <th
                               key={i}
                               className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-2 py-3 text-center text-[11px]"
@@ -1930,6 +1936,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                               totalDue={totalDue}
                               balanceCarryForward={balanceCarryForward}
                               lessonDatesSerialized={lessonDatesSerialized}
+                              lColumnCount={lColumnCount}
                               thisMonthDatedSlotCount={thisMonthDatedSlotCount}
                               makeupLiveCount={makeupLiveCountByStudentId[st.id] ?? 0}
                               remedialCountDb={remedialCountByStudentId[st.id] ?? 0}
@@ -1990,7 +1997,7 @@ export default function StudentsLessonTimeFeeRecordPage({
 
               <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
                 <div className="text-sm font-bold text-amber-800">
-                  * L1–L9：本月已出席堂數（恆常／加堂按當月日期；補堂按原本取消日，例：1/6、10/6→11/6、30/6、12/6→2/7）。
+                  {`* L1–L${lColumnCount}：本月已出席堂數（恆常／加堂按當月日期；補堂按原本取消日，例：1/6、10/6→11/6、30/6、12/6→2/7）。欄數會按該月最多出席堂數自動加多（最少 ${MIN_L_COLUMN_COUNT} 欄）。`}
                 </div>
                 <div className="mt-2 text-sm text-amber-900">* After confirmation, I can connect these cells to the auto-calculation logic for lesson time and tuition.</div>
               </div>
@@ -2194,6 +2201,7 @@ type StudentFeeRowProps = {
   totalDue: number;
   balanceCarryForward: number;
   lessonDatesSerialized: string;
+  lColumnCount: number;
   makeupLiveCount: number;
   remedialCountDb: number;
   hasLessonPayload: boolean;
@@ -2277,6 +2285,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
   totalDue,
   balanceCarryForward,
   lessonDatesSerialized,
+  lColumnCount,
   makeupLiveCount,
   remedialCountDb,
   hasLessonPayload,
@@ -2456,7 +2465,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
           <span className="mt-0.5 block text-[9px] font-normal text-slate-500">查看明細</span>
         </button>
       </td>
-      {Array.from({ length: L_COUNT }, (_, i) => (
+      {Array.from({ length: lColumnCount }, (_, i) => (
         <td key={i} className="px-2 py-3 text-center">
           <div
             className="min-h-7 rounded bg-slate-50 px-0.5 text-center text-[10px] leading-snug text-slate-800"
