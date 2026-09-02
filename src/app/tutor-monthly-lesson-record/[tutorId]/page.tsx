@@ -284,7 +284,8 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
             <p className="mt-2 text-sm text-blue-100">
               {year}/{month}: expanded from all student schedules. Lessons are included when the tutor field matches
               any of this tutor&apos;s English name / Chinese name / nickname on the Tutor page (excluding cancelled
-              lessons), and only when attendance is ticked on the student schedule or room page.
+              lessons), and only when attendance is ticked on the student schedule or room page. Inactive or graduated
+              students are still counted if attendance was ticked.
             </p>
             <p className="mt-2 max-w-3xl text-xs leading-relaxed text-blue-100/95">
               Subtotal rule: same date + same schedule time = same timeslot. If there is <strong>1 student</strong>,
