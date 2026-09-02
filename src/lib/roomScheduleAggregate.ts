@@ -417,7 +417,7 @@ async function fetchTutorMonthLessonRowsUncached(
     return { rows: [], loadError: null };
   }
 
-  const { students, recMap, stateMap, inactivePeriodsById } = bundle;
+  const { students, recMap, stateMap } = bundle;
   const supabase = getSupabaseAdmin();
   const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(supabase);
   const out: TutorMonthLessonRow[] = [];
@@ -434,22 +434,11 @@ async function fetchTutorMonthLessonRowsUncached(
     const records = normalizedRecordsById.get(st.id) ?? [];
     const state = stateMap.get(st.id) ?? emptyState();
     if (!hasTutorCandidateById.get(st.id)) continue;
-    let filtered = buildYearScheduleRowsForMonth(records, state, year, month, {
+    const filtered = buildYearScheduleRowsForMonth(records, state, year, month, {
       roomSlotTutorRules,
     }).filter(
       (r) => r.lessonType !== "取消",
     );
-    const periods = inactivePeriodsById.get(st.id) ?? [];
-    if (periods.length) {
-      filtered = filtered.filter(
-        (r) =>
-          !shouldHideScheduledLessonForInactivePeriod({
-            periods,
-            dateIso: r.date,
-            lessonType: r.lessonType,
-          }),
-      );
-    }
     const studentName = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
       "full",
@@ -505,7 +494,7 @@ export async function fetchTutorMonthLessonRows(
   if (!nameKey) return { rows: [], loadError: null };
   return unstable_cache(
     async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
-    ["tutor-month-lessons-v1", nameKey, String(year), String(month)],
+    ["tutor-month-lessons-v2", nameKey, String(year), String(month)],
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }
