@@ -494,7 +494,7 @@ export async function fetchTutorMonthLessonRows(
   if (!nameKey) return { rows: [], loadError: null };
   return unstable_cache(
     async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
-    ["tutor-month-lessons-v2", nameKey, String(year), String(month)],
+    ["tutor-month-lessons-v3", nameKey, String(year), String(month)],
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }

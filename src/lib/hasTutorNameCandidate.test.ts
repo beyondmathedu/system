@@ -66,4 +66,20 @@ describe("hasTutorNameCandidate", () => {
     });
     expect(hasTutorNameCandidate([], state, new Set(["Leo"]), [leoSlot()])).toBe(true);
   });
+
+  it("matches when a day room override moves the student onto the tutor's slot", () => {
+    const records = [hopeSaturdayRule({ time: "11:30 AM", tutor: undefined })];
+    const state = emptyState();
+    state.overrides["2026-08-01"] = { room: "M前" };
+    const howardRoomSlot: RoomSlotTutorRule = {
+      id: "slot-howard",
+      room: "M前",
+      weekday: "六",
+      time: "11:30 AM",
+      tutor_name: "Howard",
+      effective_date: "2026-05-01",
+    };
+    expect(hasTutorNameCandidate(records, state, new Set(["Howard"]), [howardRoomSlot])).toBe(true);
+    expect(hasTutorNameCandidate(records, state, new Set(["Leo"]), [leoSlot()])).toBe(false);
+  });
 });

@@ -3,6 +3,7 @@ import {
   weekdayCnFromIsoDate,
   type RoomSlotTutorRule,
 } from "@/lib/roomSlotTutorRules";
+import { normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
 import type { YearLessonRecord, YearLessonState } from "@/lib/yearScheduleCore";
 
 /** True if this student might appear on a tutor month sheet (schedule tutor, override, or room-slot default). */
@@ -32,13 +33,26 @@ export function hasTutorNameCandidate(
   }
   if (tutorSlots.size === 0) return false;
 
+  const ruleMatchesTutorSlot = (weekday: string, time: string, room: string): boolean => {
+    const key = roomSlotScheduleKey({ weekday, time, room });
+    return Boolean(key && tutorSlots.has(key));
+  };
+
   for (const r of records) {
-    const key = roomSlotScheduleKey({
-      weekday: r.weekday,
-      time: r.time,
-      room: r.room,
-    });
-    if (key && tutorSlots.has(key)) return true;
+    const weekday = normalizeScheduleWeekday(r.weekday);
+    const time = String(r.time ?? "").trim();
+    const room = String(r.room ?? "").trim();
+    if (ruleMatchesTutorSlot(weekday, time, room)) return true;
+
+    // Day override may move the student to another room (and thus another tutor) on that weekday.
+    for (const [dateIso, ovRaw] of Object.entries(state.overrides ?? {})) {
+      const ov = ovRaw as { room?: string; time?: string };
+      const ovRoom = String(ov?.room ?? "").trim();
+      if (!ovRoom) continue;
+      if (weekdayCnFromIsoDate(dateIso) !== weekday) continue;
+      const ovTime = String(ov?.time ?? time).trim();
+      if (ruleMatchesTutorSlot(weekday, ovTime, ovRoom)) return true;
+    }
   }
   for (const e of state.rescheduleEntries ?? []) {
     const toDate = String(e.toDate ?? "").trim();
