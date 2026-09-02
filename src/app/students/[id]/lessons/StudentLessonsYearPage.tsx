@@ -836,6 +836,7 @@ export function StudentLessonsYearPage({
   );
   const EXTRA_STORAGE_KEY = `extra_lessons:${studentId}:${targetYear}`;
   const [editingRescheduleId, setEditingRescheduleId] = useState<string | null>(null);
+  const [editingExtraId, setEditingExtraId] = useState<string | null>(null);
   const [fromLessonDate, setFromLessonDate] = useState<string>("");
   const [fromOriginalLessonKey, setFromOriginalLessonKey] = useState<string>("");
   const [toLessonDate, setToLessonDate] = useState<string>("");
@@ -1823,6 +1824,33 @@ export function StudentLessonsYearPage({
     setShowRowEditPanel(false);
     setRowEditSession(null);
     setRowEditConfirm(null);
+    setEditingExtraId(null);
+    setEditingRescheduleId(null);
+
+    if (opts?.row?.extraEntryId) {
+      const entry = extraEntries.find((e) => String(e.id) === String(opts.row!.extraEntryId));
+      if (!entry) {
+        setSelectionError("Cannot find the corresponding extra lesson record.");
+        return;
+      }
+      setEditingExtraId(String(entry.id));
+      const fromDate = String(entry.originDate ?? "").trim() || String(entry.date ?? "").trim();
+      const pending = Boolean(entry.pending);
+      setFromLessonDate(fromDate);
+      setFromOriginalLessonKey("");
+      setToLessonDate(pending ? "" : String(entry.date ?? "").trim());
+      setLockFromLessonDate(true);
+      const wd = weekdayFromIsoDate(pending ? fromDate : String(entry.date ?? "").trim());
+      const timeOpts = wd === "六" ? SATURDAY_TIME_SUGGESTIONS : WEEKDAY_TIME_SUGGESTIONS;
+      setEditForm({
+        timePreset: timeOpts.includes(entry.time) ? entry.time : timeOpts[0],
+        timeCustom: timeOpts.includes(entry.time) ? "" : entry.time,
+        room: resolveScheduleRoomPickerValue(entry.room, ROOM_GROUPS[0], registry),
+        doubleEnabled: false,
+      });
+      setShowEditPanel(true);
+      return;
+    }
 
     if (opts?.row && opts.row.rowKind !== "normal") {
       const entry = opts.row.rescheduleEntryId
@@ -1971,7 +1999,11 @@ export function StudentLessonsYearPage({
     if (selectedRows.length === 1) {
       const row = selectedRows[0];
       if (row.extraEntryId) {
-        // Extra date moves use Edit (originDate), not classic regular reschedule.
+        if (row.lessonType === TYPE_PENDING || row.rowKind === "cancelled_original") {
+          openClassicReschedulePanel({ row });
+          return;
+        }
+        // Active extra date moves use Edit (originDate), not classic regular reschedule.
         openRowEditFromSelection();
         return;
       }
@@ -3566,7 +3598,8 @@ export function StudentLessonsYearPage({
                         <strong className="font-semibold text-slate-800">original lesson date</strong>;
                         leave the new date empty. Home and the daily timetable show a countdown
                         (e.g. &quot;Make up within 3 days&quot;). Later use Reschedule with a new
-                        date to complete the makeup lesson.
+                        date to complete the makeup lesson. Extra lessons can use the same flow
+                        without deleting the paid extra record.
                       </>
                     ) : (
                       <>
@@ -3714,7 +3747,7 @@ export function StudentLessonsYearPage({
                         <input
                           type="checkbox"
                           checked={editForm.doubleEnabled}
-                          disabled={Boolean(editingRescheduleId)}
+                          disabled={Boolean(editingRescheduleId || editingExtraId)}
                           onChange={(e) =>
                             setEditForm((p) => ({ ...p, doubleEnabled: e.target.checked }))
                           }
@@ -3740,6 +3773,7 @@ export function StudentLessonsYearPage({
                         setShowEditPanel(false);
                         setEditSaveStatus("");
                         setEditingRescheduleId(null);
+                        setEditingExtraId(null);
                         setFromLessonDate("");
                         setToLessonDate("");
                         setLockFromLessonDate(false);
@@ -3764,6 +3798,63 @@ export function StudentLessonsYearPage({
                           }
                           const from = fromLessonDate.trim();
                           const to = toLessonDate.trim();
+                          const finalTime = editForm.timeCustom.trim()
+                            ? editForm.timeCustom.trim()
+                            : editForm.timePreset.trim();
+                          if (!finalTime) {
+                            setEditSaveStatus("Please select or enter a new lesson time.");
+                            setSelectionError("Please select or enter a new lesson time.");
+                            return;
+                          }
+                          const finalRoom = pickerToStorage(editForm.room.trim());
+
+                          if (editingExtraId) {
+                            const entryId = editingExtraId;
+                            const nextExtra = extraEntries.map((e) => {
+                              if (String(e.id) !== entryId) return { ...e, id: String(e.id) };
+                              const prevOrigin = String(e.originDate ?? "").trim();
+                              const originDate = prevOrigin || from;
+                              const originTime =
+                                String(e.originTime ?? "").trim() || String(e.time ?? "").trim();
+                              const originRoom =
+                                String(e.originRoom ?? "").trim() || String(e.room ?? "").trim();
+                              const rest = { ...e, id: entryId };
+                              delete rest.pending;
+                              return {
+                                ...rest,
+                                date: to,
+                                time: finalTime,
+                                room: finalRoom,
+                                originDate,
+                                originTime,
+                                originRoom,
+                              };
+                            });
+                            if (!nextExtra.some((e) => String(e.id) === entryId)) {
+                              setEditSaveStatus("Could not find that extra lesson to update.");
+                              setSelectionError("Could not find that extra lesson to update.");
+                              return;
+                            }
+                            setExtraEntries(nextExtra);
+                            extraEntriesRef.current = nextExtra;
+                            window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(nextExtra));
+                            persistYearState({ extraEntries: nextExtra });
+                            setSelectionError("Saved.");
+                            setEditSaveStatus("Saved.");
+                            window.setTimeout(() => {
+                              setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+                              setEditSaveStatus((prev) => (prev === "Saved." ? "" : prev));
+                              setShowEditPanel(false);
+                              setEditingRescheduleId(null);
+                              setEditingExtraId(null);
+                              setFromLessonDate("");
+                              setToLessonDate("");
+                              setLockFromLessonDate(false);
+                              setSelectedRowIds([]);
+                            }, 1200);
+                            return;
+                          }
+
                           const editingEntry = editingRescheduleId
                             ? rescheduleEntries.find((e) => e.id === editingRescheduleId)
                             : undefined;
@@ -3800,15 +3891,6 @@ export function StudentLessonsYearPage({
                             setSelectionError("This original lesson already has a reschedule record.");
                             return;
                           }
-                          const finalTime = editForm.timeCustom.trim()
-                            ? editForm.timeCustom.trim()
-                            : editForm.timePreset.trim();
-                          if (!finalTime) {
-                            setEditSaveStatus("Please select or enter a new lesson time.");
-                            setSelectionError("Please select or enter a new lesson time.");
-                            return;
-                          }
-                          const finalRoom = pickerToStorage(editForm.room.trim());
                           const nextList = upsertRescheduleEntry(
                             rescheduleEntries,
                             {
@@ -3864,6 +3946,7 @@ export function StudentLessonsYearPage({
                             setEditSaveStatus((prev) => (prev === "Saved." ? "" : prev));
                             setShowEditPanel(false);
                             setEditingRescheduleId(null);
+                            setEditingExtraId(null);
                             setFromLessonDate("");
                             setToLessonDate("");
                             setLockFromLessonDate(false);
@@ -4708,7 +4791,7 @@ export function StudentLessonsYearPage({
                 disabled={readOnly}
                 onClick={() => {
                   if (selectedRowIds.length > 1) {
-                    setSelectionError("For pending leave, select only 1 regular lesson row.");
+                    setSelectionError("For pending leave, select only 1 regular or extra lesson row.");
                     return;
                   }
                   setShowBulkEditPanel(false);
@@ -4719,10 +4802,45 @@ export function StudentLessonsYearPage({
                   setReschedulePanelMode("pending");
                   setSelectionError("");
                   setEditingRescheduleId(null);
+                  setEditingExtraId(null);
                   if (selectedRowIds.length === 1) {
                     const row = scheduleRowById.get(selectedRowIds[0]);
+                    if (row?.extraEntryId && row.rowKind === "normal") {
+                      const entry = extraEntries.find((e) => String(e.id) === String(row.extraEntryId));
+                      if (!entry) {
+                        setSelectionError("Cannot find that extra lesson.");
+                        return;
+                      }
+                      if (entry.pending) {
+                        setSelectionError("This extra lesson is already pending makeup.");
+                        return;
+                      }
+                      if (String(entry.originDate ?? "").trim()) {
+                        setSelectionError(
+                          "This extra lesson was already moved. Use Reschedule or Edit to change the makeup date.",
+                        );
+                        return;
+                      }
+                      if (!isPendingMakeupEditable(entry.date, hkTodayYmd)) {
+                        setSelectionError(pendingMakeupLockedMessage(entry.date));
+                        return;
+                      }
+                      const nextExtra = extraEntries.map((e) =>
+                        String(e.id) === String(entry.id) ? { ...e, pending: true } : e,
+                      );
+                      setExtraEntries(nextExtra);
+                      extraEntriesRef.current = nextExtra;
+                      window.localStorage.setItem(EXTRA_STORAGE_KEY, JSON.stringify(nextExtra));
+                      persistYearState({ extraEntries: nextExtra });
+                      setSelectionError("Saved.");
+                      window.setTimeout(() => {
+                        setSelectionError((prev) => (prev === "Saved." ? "" : prev));
+                        setSelectedRowIds([]);
+                      }, 1200);
+                      return;
+                    }
                     if (!row || row.rowKind !== "normal") {
-                      setSelectionError("Select a regular lesson row to mark leave / pending makeup.");
+                      setSelectionError("Select a regular or extra lesson row to mark leave / pending makeup.");
                       return;
                     }
                     if (!isPendingMakeupEditable(row.date, hkTodayYmd)) {
