@@ -10,8 +10,15 @@ export type StudentNameFields = {
 };
 
 /** full：中文 +（暱稱優先，冇暱稱先至用英文全名）；唔會同時疊暱稱同英文 */
-/** compact：中文 + 暱稱（格仔窄、日課表；冇暱稱就只有中文） */
+/** compact：中文 + 暱稱（日課表格仔窄）；冇暱稱時用單詞英文名作後備（例：name_en=Ashley） */
 export type StudentDisplayNameVariant = "full" | "compact";
+
+function compactSecondaryName(nick: string, en: string): string {
+  if (nick) return nick;
+  // Avoid long English full names in narrow timetable cells.
+  if (en && !/\s/.test(en)) return en;
+  return "";
+}
 
 export function formatStudentDisplayName(
   st: StudentNameFields,
@@ -22,7 +29,7 @@ export function formatStudentDisplayName(
   const en = (st.name_en ?? "").trim();
 
   if (variant === "compact") {
-    const s = [zh, nick].filter(Boolean).join(" ").trim();
+    const s = [zh, compactSecondaryName(nick, en)].filter(Boolean).join(" ").trim();
     return s || st.id;
   }
 
