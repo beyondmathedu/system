@@ -18,7 +18,7 @@ import {
   formatLessonTimeRangeLine,
   gradeRank,
 } from "@/lib/tutorMonthlyPayroll";
-import { loadLatestTutorRates, loadMultiStudentFirstAmount } from "@/lib/payrollSettings";
+import { loadLatestTutorRates, loadPayrollSettings } from "@/lib/payrollSettings";
 import { readYmParts } from "@/lib/intlFormatParts";
 import DownloadTutorMonthlyPdfButton from "@/components/DownloadTutorMonthlyPdfButton";
 import { formatGradeDisplay } from "@/lib/grade";
@@ -26,8 +26,6 @@ import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 
 export const dynamic = "force-dynamic";
 
-/** 人工高於此金額時，MPF 導師顯示僱主供款（人工的 5%） */
-const MPF_RELEVANT_INCOME_THRESHOLD = 7100;
 const MPF_EMPLOYER_CONTRIBUTION_RATE = 0.05;
 
 function hkTodayYm() {
@@ -82,12 +80,14 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
   const entry = await fetchTutorNavEntryById(tutorId);
   if (!entry) notFound();
 
-  const [navViewer, { rows, loadError }, rates, multiStudentFirstAmount] = await Promise.all([
+  const [navViewer, { rows, loadError }, rates, payrollSettings] = await Promise.all([
     buildAppTopNavViewer(viewer),
     fetchTutorMonthLessonRows(entry.matchNames, year, month),
     loadLatestTutorRates(tutorId),
-    loadMultiStudentFirstAmount(),
+    loadPayrollSettings(),
   ]);
+  const multiStudentFirstAmount = payrollSettings.multiStudentFirstAmount;
+  const mpfRelevantIncomeThreshold = payrollSettings.mpfRelevantIncomeThreshold;
   const normalizedRowsForPay = (() => {
     const seen = new Set<string>();
     const out = [];
@@ -186,12 +186,12 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
   })();
   const monthTotal = groupedRows.reduce((sum, g) => sum + g.subtotal, 0);
   const showMpfEmployerLines =
-    entry.mpfEnabled && monthTotal > MPF_RELEVANT_INCOME_THRESHOLD;
+    entry.mpfEnabled && monthTotal >= mpfRelevantIncomeThreshold;
   const mpfEmployerAmount = showMpfEmployerLines
     ? Math.round(monthTotal * MPF_EMPLOYER_CONTRIBUTION_RATE * 100) / 100
     : 0;
-  const salaryPlusMpf = showMpfEmployerLines
-    ? Math.round((monthTotal + mpfEmployerAmount) * 100) / 100
+  const salaryMinusMpf = showMpfEmployerLines
+    ? Math.round((monthTotal - mpfEmployerAmount) * 100) / 100
     : monthTotal;
   const monthHourTotal = Math.round(groupedRows.reduce((sum, g) => sum + (Number(g.hours) || 0), 0) * 100) / 100;
   const ratesMissing = rates.single === 0 && rates.junior === 0 && rates.senior === 0;
@@ -232,7 +232,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
       "",
       "",
     ]);
-    csvRows.push(["", "", "Monthly Salary + Employer MPF Contribution", "—", salaryPlusMpf, "", ""]);
+    csvRows.push(["", "", "Monthly Salary - Employer MPF Contribution", "—", salaryMinusMpf, "", ""]);
   }
   csvRows.push(["", "", "", "", "", "", ""]);
   csvRows.push(["", "Beyond Math Education Centre Limited", "", "", "", "", ""]);
@@ -473,11 +473,11 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                           <td className="border border-slate-200 px-3 py-2" />
                           <td className="border border-slate-200 px-3 py-2" />
                           <td className="border border-slate-200 px-3 py-2 text-right">
-                            Monthly Salary + Employer MPF Contribution
+                            Monthly Salary - Employer MPF Contribution
                           </td>
                           <td className="border border-slate-200 px-2 py-2 text-right tabular-nums">—</td>
                           <td className="border border-slate-200 px-2 py-2 text-right tabular-nums">
-                            {salaryPlusMpf}
+                            {salaryMinusMpf}
                           </td>
                           <td className="border border-slate-200 px-3 py-2" />
                           <td className="border border-slate-200 px-3 py-2" />
