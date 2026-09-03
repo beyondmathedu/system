@@ -2,13 +2,12 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { unstable_cache } from "next/cache";
 import { SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
 import {
-  isPendingRescheduleEntry,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
 import {
   getActiveScheduleRulesForDate,
 } from "@/lib/lessonScheduleVersions";
-import { buildDayTimetableRowsForDate } from "@/lib/dayTimetableScheduleRows";
+import { buildDayTimetableRowsForDate, studentHasMakeupOrExtraOnDate } from "@/lib/dayTimetableScheduleRows";
 import {
   LESSON_TYPE_DISPLAY_PRIORITY,
   type YearLessonRecord,
@@ -387,20 +386,7 @@ function studentMayAppearOnTimetableDate(
 ): boolean {
   if (getActiveWeekdaysForDate(records, dateIso).includes(targetWeekday)) return true;
   if (regularOnly) return false;
-  for (const ex of state.extraEntries ?? []) {
-    const toDate = String((ex as { date?: string | null }).date ?? "").trim();
-    const originDate = String((ex as { originDate?: string | null }).originDate ?? "").trim();
-    if (toDate === dateIso || (originDate && originDate === dateIso)) {
-      return true;
-    }
-  }
-  for (const e of state.rescheduleEntries ?? []) {
-    const from = String(e.fromDate ?? "").trim();
-    const to = String(e.toDate ?? "").trim();
-    if (from === dateIso) return true;
-    if (to === dateIso && !isPendingRescheduleEntry(e)) return true;
-  }
-  return false;
+  return studentHasMakeupOrExtraOnDate(state, dateIso, { includePendingOnFromDate: true });
 }
 
 /** 未在 classrooms.regular_period_max 設定時的預設上限 */
@@ -452,6 +438,11 @@ export type FetchDayTimetableOptions = {
    * Regular Class Timetable Pending makeup tick; Daily Timetable does not.
    */
   includePendingMakeupSlots?: boolean;
+  /**
+   * Include paused students when they have 加堂 / 補堂 on this date (Daily Timetable).
+   * Does not show their regular 恆常 slots while paused.
+   */
+  includeInactiveMakeupSlots?: boolean;
 };
 
 type DayTimetableStaticBundle = {
@@ -543,7 +534,13 @@ async function fetchDayTimetablePayloadUncached(
   const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const dateIso = toDayIso(year, month, day);
   const titleDate = `${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
-  const { regularOnly, includeInactiveSlots = false, includeCancelledSlots = false, includePendingMakeupSlots = false } = options;
+  const {
+    regularOnly,
+    includeInactiveSlots = false,
+    includeCancelledSlots = false,
+    includePendingMakeupSlots = false,
+    includeInactiveMakeupSlots = false,
+  } = options;
 
   const supabase = getSupabaseAdmin();
   const targetWeekday = weekdayCnFromIsoDateHk(dateIso);
@@ -591,6 +588,14 @@ async function fetchDayTimetablePayloadUncached(
 
   const normalizedRecordsById = new Map(Object.entries(yearSchedule.normalizedRecordsById));
   const stateById = new Map(Object.entries(yearSchedule.stateById));
+  const inactiveMakeupStudentList =
+    includeInactiveMakeupSlots && !includeInactiveSlots
+      ? staticBundle.studentList.filter((st) => {
+          if (activeIdSet.has(st.id)) return false;
+          const state = stateById.get(st.id) ?? EMPTY_YEAR_STATE;
+          return studentHasMakeupOrExtraOnDate(state, dateIso);
+        })
+      : [];
   const byTimeRoom: Record<string, DayTimetableCell[]> = {};
   const timeSet = new Set<string>();
   let skippedStudents = 0;
@@ -601,11 +606,17 @@ async function fetchDayTimetablePayloadUncached(
     st: (typeof studentList)[number];
     onlyRegular: boolean;
     isInactive: boolean;
+    makeupOrExtraOnly?: boolean;
   }) {
-    const { st, onlyRegular, isInactive } = params;
+    const { st, onlyRegular, isInactive, makeupOrExtraOnly = false } = params;
     const records = normalizedRecordsById.get(st.id) ?? EMPTY_RECORDS;
     const state = stateById.get(st.id) ?? EMPTY_YEAR_STATE;
-    if (!studentMayAppearOnTimetableDate(records, state, dateIso, targetWeekday, onlyRegular)) {
+    if (makeupOrExtraOnly) {
+      if (!studentHasMakeupOrExtraOnDate(state, dateIso)) {
+        skippedStudents += 1;
+        return;
+      }
+    } else if (!studentMayAppearOnTimetableDate(records, state, dateIso, targetWeekday, onlyRegular)) {
       skippedStudents += 1;
       return;
     }
@@ -621,6 +632,9 @@ async function fetchDayTimetablePayloadUncached(
     })
       .map((r) => ({ ...r, normalizedRoom: resolveRoomGroupFromRegistry(r.room, roomRegistry) }))
       .filter((r) => {
+        if (makeupOrExtraOnly && r.lessonType !== "加堂" && r.lessonType !== "補堂") {
+          return false;
+        }
         // Daily: hide vacated cancelled-original. Regular Class Timetable may keep them.
         if (r.lessonType === "取消" && !includeCancelledSlots) return false;
         if (onlyRegular && r.lessonType === "取消") return false;
@@ -675,7 +689,10 @@ async function fetchDayTimetablePayloadUncached(
     pushStudentDayRows({ st, onlyRegular: regularOnly, isInactive: false });
   }
   for (const st of inactiveStudentList) {
-    pushStudentDayRows({ st, onlyRegular: true, isInactive: true });
+    pushStudentDayRows({ st, onlyRegular: false, isInactive: true });
+  }
+  for (const st of inactiveMakeupStudentList) {
+    pushStudentDayRows({ st, onlyRegular: false, isInactive: false, makeupOrExtraOnly: true });
   }
 
   for (const key of Object.keys(byTimeRoom)) {
@@ -807,6 +824,7 @@ export async function fetchDayTimetablePayload(
   const includeInactiveSlots = Boolean(options.includeInactiveSlots);
   const includeCancelledSlots = Boolean(options.includeCancelledSlots);
   const includePendingMakeupSlots = Boolean(options.includePendingMakeupSlots);
+  const includeInactiveMakeupSlots = Boolean(options.includeInactiveMakeupSlots);
 
   return unstable_cache(
     () =>
@@ -815,9 +833,10 @@ export async function fetchDayTimetablePayload(
         includeInactiveSlots,
         includeCancelledSlots,
         includePendingMakeupSlots,
+        includeInactiveMakeupSlots,
       }),
     [
-      "day-timetable-payload-v23",
+      "day-timetable-payload-v24",
       String(year),
       String(month),
       String(day),
@@ -825,6 +844,7 @@ export async function fetchDayTimetablePayload(
       includeInactiveSlots ? "1" : "0",
       includeCancelledSlots ? "1" : "0",
       includePendingMakeupSlots ? "1" : "0",
+      includeInactiveMakeupSlots ? "1" : "0",
     ],
     // Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips.
     { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },

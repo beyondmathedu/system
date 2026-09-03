@@ -22,6 +22,25 @@ export type DayTimetableBuiltRow = {
   pendingMakeupLabel?: string;
 };
 
+/** Intentional 加堂 / 補堂 on this calendar day (not regular weekday slots). */
+export function studentHasMakeupOrExtraOnDate(
+  state: YearLessonState,
+  dateIso: string,
+  options?: { includePendingOnFromDate?: boolean },
+): boolean {
+  for (const ex of state.extraEntries ?? []) {
+    const toDate = String((ex as { date?: string | null }).date ?? "").trim();
+    if (toDate === dateIso) return true;
+  }
+  for (const e of state.rescheduleEntries ?? []) {
+    const from = String(e.fromDate ?? "").trim();
+    const to = String(e.toDate ?? "").trim();
+    if (options?.includePendingOnFromDate && from === dateIso) return true;
+    if (to === dateIso && !isPendingRescheduleEntry(e)) return true;
+  }
+  return false;
+}
+
 function yearFromIso(dateIso: string): number {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
   return m ? Number(m[1]) : 2026;
