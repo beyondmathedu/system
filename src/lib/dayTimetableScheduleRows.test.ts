@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hiddenScheduleRuleStorageKey } from "@/lib/lessonScheduleHidden";
-import { buildDayTimetableRowsForDate } from "@/lib/dayTimetableScheduleRows";
+import { buildDayTimetableRowsForDate, studentHasMakeupOrExtraOnDate } from "@/lib/dayTimetableScheduleRows";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { type YearLessonRecord, type YearLessonState } from "@/lib/yearScheduleCore";
 
@@ -154,5 +154,43 @@ describe("dayTimetableScheduleRows", () => {
 
     const saturdayRows = buildDayTimetableRowsForDate(records, state, "2026-07-04", "2026-07-03");
     expect(saturdayRows.some((r) => r.lessonType === "加堂" && r.time === "11:30 AM")).toBe(true);
+  });
+});
+
+describe("studentHasMakeupOrExtraOnDate", () => {
+  it("returns true when reschedule makeup lands on the date", () => {
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "r1",
+      fromDate: "2026-08-15",
+      toDate: "2026-08-29",
+      time: "10:00",
+      room: "Hope",
+      pending: false,
+    });
+    expect(studentHasMakeupOrExtraOnDate(state, "2026-08-29")).toBe(true);
+    expect(studentHasMakeupOrExtraOnDate(state, "2026-08-15")).toBe(false);
+  });
+
+  it("returns true when extra lesson is on the date", () => {
+    const state = emptyState();
+    state.extraEntries.push({ id: "e1", date: "2026-08-29", room: "Hope", time: "10:00" });
+    expect(studentHasMakeupOrExtraOnDate(state, "2026-08-29")).toBe(true);
+  });
+
+  it("ignores pending reschedule without a makeup date", () => {
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "r1",
+      fromDate: "2026-08-15",
+      toDate: "",
+      time: "10:00",
+      room: "Hope",
+      pending: true,
+    });
+    expect(studentHasMakeupOrExtraOnDate(state, "2026-08-15", { includePendingOnFromDate: true })).toBe(
+      true,
+    );
+    expect(studentHasMakeupOrExtraOnDate(state, "2026-08-29")).toBe(false);
   });
 });

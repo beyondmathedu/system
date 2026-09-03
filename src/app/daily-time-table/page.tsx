@@ -33,7 +33,11 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
   const nextHref = `/daily-time-table?year=${year}&month=${month}&day=${day}`;
   const [viewer, payload] = await Promise.all([
     getViewerContext(),
-    fetchDayTimetablePayload(year, month, day, { regularOnly: false, includeCancelledSlots: false }),
+    fetchDayTimetablePayload(year, month, day, {
+      regularOnly: false,
+      includeCancelledSlots: false,
+      includeInactiveMakeupSlots: true,
+    }),
   ]);
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
