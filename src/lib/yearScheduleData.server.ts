@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
+import { inferGradeOnDate } from "@/lib/inferStudentGrade";
 import {
   buildStudentInactivePeriodsById,
   withAutoF6InactivePeriod,
@@ -193,12 +194,13 @@ export async function loadScheduleStudentsForYear(year: number): Promise<Schedul
   const inactivePeriodsById = new Map<string, StudentInactivePeriod[]>();
 
   for (const st of activeStudents) {
+    // Apply F6 summer hide only if they were F6 during that summer (not after Sept promotion).
     inactivePeriodsById.set(
       st.id,
       withAutoF6InactivePeriod({
         periods: periodsById[st.id] ?? [],
         studentId: st.id,
-        grade: st.grade,
+        grade: inferGradeOnDate(st.grade ?? "", `${year}-07-15`),
         year,
       }),
     );

@@ -28,6 +28,7 @@ import { monthsToLoadForScheduleRange } from "@/lib/roomScheduleMonths";
 import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
 import { hasTutorNameCandidate } from "@/lib/tutorMonthCandidate";
 import { hasRoomScheduleCandidate } from "@/lib/roomScheduleCandidate";
+import { inferGradeOnDate } from "@/lib/inferStudentGrade";
 import {
   loadScheduleStudentsForYear,
   loadYearScheduleData,
@@ -308,7 +309,7 @@ async function fetchRoomScheduleAggregateUncached(
         rowKey: `${st.id}:${r.rowId}:${r.date}:${r.time}:${idx}`,
         studentId: st.id,
         studentName: name,
-        grade: (st.grade ?? "").toString(),
+        grade: inferGradeOnDate((st.grade ?? "").toString(), r.date),
         attendanceKey: r.attendanceKey,
         scheduleRuleId: r.scheduleRuleId,
         attended: isScheduleAttendanceMarked(state.attendance, {
@@ -373,7 +374,7 @@ export async function fetchRoomScheduleAggregate(
   const slugKey = slug.trim().toLowerCase();
   return unstable_cache(
     async () => fetchRoomScheduleAggregateUncached(slug, year, month, { startIso, endIso }),
-    ["room-schedule-aggregate-v3", slugKey, String(year), String(month), startIso, endIso],
+    ["room-schedule-aggregate-v4", slugKey, String(year), String(month), startIso, endIso],
     // Heavy full-room expand; longer TTL + tag busting keeps UI snappy.
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
@@ -458,7 +459,7 @@ async function fetchTutorMonthLessonRowsUncached(
         rowKey: `${st.id}:${r.rowId}`,
         studentId: st.id,
         studentName,
-        grade: (st.grade ?? "").toString(),
+        grade: inferGradeOnDate((st.grade ?? "").toString(), r.date),
         dateIso: r.date,
         dateDisplay: formatDateSlash(r.date),
         weekdayDisplay: weekdayCnParen(r.date),
@@ -494,7 +495,7 @@ export async function fetchTutorMonthLessonRows(
   if (!nameKey) return { rows: [], loadError: null };
   return unstable_cache(
     async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
-    ["tutor-month-lessons-v3", nameKey, String(year), String(month)],
+    ["tutor-month-lessons-v6", nameKey, String(year), String(month)],
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }

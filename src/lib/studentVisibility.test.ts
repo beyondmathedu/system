@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   autoF6InactivePeriod,
   getInactiveMonthGapsInYear,
+  getInactiveMonthGapsInYearFromPeriods,
   isStudentHiddenForFeeSheetMonth,
   isStudentHiddenForFeeSheetMonthFromPeriods,
   isStudentInactiveOnDate,
@@ -74,6 +75,40 @@ describe("period-based inactivity", () => {
     expect(checker("2026-07-02")).toBe(true);
     expect(checker("2026-10-01")).toBe(false);
     expect(checker("2026-12-01")).toBe(true);
+  });
+
+  it("does not apply F6 summer hide to pre-promotion dates for newly promoted F6", () => {
+    // Student is F6 today (after 1 Sep), but was F5 during August — Aug lessons must stay editable.
+    const checker = makeStudentInactiveDateCheckerFromPeriods({
+      periods: [],
+      studentId: "00264",
+      grade: "F6",
+      year: 2026,
+    });
+    expect(checker("2026-08-15")).toBe(false);
+    expect(checker("2026-09-05")).toBe(false);
+  });
+
+  it("does not mark Jul/Aug as inactive gaps for newly promoted F6", () => {
+    const gaps = getInactiveMonthGapsInYearFromPeriods({
+      periods: [],
+      studentId: "00264",
+      grade: "F6",
+      year: 2026,
+      firstMonth: 5,
+    });
+    expect(gaps.some((g) => g.months.includes(7) || g.months.includes(8))).toBe(false);
+  });
+
+  it("isStudentInactiveOnDate uses grade-on-date for F6 summer window", () => {
+    expect(
+      isStudentInactiveOnDate({
+        grade: "F6",
+        manualInactiveEffective: null,
+        year: 2026,
+        dateIso: "2026-08-15",
+      }),
+    ).toBe(false);
   });
 
   it("hides a fee month only when fully covered by inactivity", () => {
@@ -252,7 +287,7 @@ describe("getInactiveMonthGapsInYear", () => {
 });
 
 describe("auto F.6 inactive window (1 Jul–1 Sep)", () => {
-  it("hides F.6 in July and August, then shows them again on 1 Sep after promotion", () => {
+  it("builds the Jul–Sep window for an F.6 grade label", () => {
     const period = autoF6InactivePeriod({ studentId: "00100", grade: "F.6", year: 2026 });
     expect(period).toEqual({
       studentId: "00100",
@@ -260,7 +295,10 @@ describe("auto F.6 inactive window (1 Jul–1 Sep)", () => {
       endDate: "2026-09-01",
       note: "auto: F6 graduation",
     });
+  });
 
+  it("after Sept promotion, Jul/Aug dates are not auto-inactive (student was still F5 then)", () => {
+    // Current grade F6 after 1 Sep → grade-on-date rolls Aug back to F5.
     expect(
       isStudentInactiveOnDate({
         grade: "F6",
@@ -276,7 +314,7 @@ describe("auto F.6 inactive window (1 Jul–1 Sep)", () => {
         year: 2026,
         dateIso: "2026-07-01",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isStudentInactiveOnDate({
         grade: "F6",
@@ -284,7 +322,7 @@ describe("auto F.6 inactive window (1 Jul–1 Sep)", () => {
         year: 2026,
         dateIso: "2026-08-31",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isStudentInactiveOnDate({
         grade: "F6",
@@ -293,6 +331,18 @@ describe("auto F.6 inactive window (1 Jul–1 Sep)", () => {
         dateIso: "2026-09-01",
       }),
     ).toBe(false);
+  });
+
+  it("still applies the window when grade-on-date is F6 (via withAutoF6InactivePeriod)", () => {
+    const periods = withAutoF6InactivePeriod({
+      periods: [],
+      studentId: "00100",
+      grade: "F6",
+      year: 2026,
+    });
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-07-01" })).toBe(true);
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-08-31" })).toBe(true);
+    expect(isStudentInactiveOnDateFromPeriods({ periods, dateIso: "2026-09-01" })).toBe(false);
   });
 
   it("does not hide September fee sheets for newly promoted F.6", () => {

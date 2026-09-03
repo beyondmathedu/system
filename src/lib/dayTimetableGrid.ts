@@ -17,6 +17,7 @@ import {
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { filterActiveStudentsOnDate } from "@/lib/activeStudentIds";
+import { inferGradeOnDate } from "@/lib/inferStudentGrade";
 import {
   buildStudentInactivePeriodsById,
   isTemporarilyInactiveOnDateFromPeriods,
@@ -579,8 +580,8 @@ async function fetchDayTimetablePayloadUncached(
         const periods = withAutoF6InactivePeriod({
           periods: inactivePeriodsById.get(st.id) ?? [],
           studentId: st.id,
-          grade: st.grade,
-          year,
+          grade: inferGradeOnDate(st.grade ?? "", dateIso),
+          year: Number(String(dateIso ?? "").slice(0, 4)) || year,
         });
         // Regular Class Timetable: only pauses with Expected return — skip graduated / open-ended inactive.
         return isTemporarilyInactiveOnDateFromPeriods({ periods, dateIso });

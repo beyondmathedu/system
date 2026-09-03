@@ -1,4 +1,5 @@
 import { isF6Grade } from "@/lib/grade";
+import { inferGradeOnDate } from "@/lib/inferStudentGrade";
 
 /**
  * 學生可見性規則：
@@ -281,10 +282,12 @@ export function isStudentInactiveOnDate(input: {
   year: number;
   dateIso: string;
 }): boolean {
+  const gradeOnDate = inferGradeOnDate(input.grade ?? "", input.dateIso);
+  const y = Number(String(input.dateIso ?? "").slice(0, 4)) || input.year;
   const eff = resolveStudentInactiveEffectiveDate({
-    grade: input.grade,
+    grade: gradeOnDate,
     manualInactiveEffective: input.manualInactiveEffective,
-    year: input.year,
+    year: y,
   });
   const manualPeriod: StudentInactivePeriod[] = eff
     ? [
@@ -298,8 +301,8 @@ export function isStudentInactiveOnDate(input: {
   const periods = withAutoF6InactivePeriod({
     periods: manualPeriod,
     studentId: "",
-    grade: input.grade,
-    year: input.year,
+    grade: gradeOnDate,
+    year: y,
   });
   return isStudentInactiveOnDateFromPeriods({ periods, dateIso: input.dateIso });
 }
@@ -335,20 +338,25 @@ export function getInactiveMonthGapsInYearFromPeriods(input: {
   year: number;
   firstMonth?: number;
 }): InactiveMonthGap[] {
-  const periods = withAutoF6InactivePeriod({
-    periods: input.periods,
-    studentId: input.studentId,
-    grade: input.grade,
-    year: input.year,
-  });
-  if (!periods.length) return [];
-
   const startMonth = input.firstMonth ?? 1;
   const fullyInactive: number[] = [];
+  const periodsByMonth = new Map<number, StudentInactivePeriod[]>();
+
   for (let m = startMonth; m <= 12; m++) {
     const monthStart = monthStartIsoDate(input.year, m);
     const monthEndExclusive = firstDayOfNextMonthIso(input.year, m);
-    if (isIsoRangeFullyInactive({ periods, startIso: monthStart, endExclusiveIso: monthEndExclusive })) {
+    // F6 summer hide must use grade-on-that-month (newly promoted F6 were F5 in Jul/Aug).
+    const periods = withAutoF6InactivePeriod({
+      periods: input.periods,
+      studentId: input.studentId,
+      grade: inferGradeOnDate(input.grade ?? "", monthStart),
+      year: input.year,
+    });
+    periodsByMonth.set(m, periods);
+    if (
+      periods.length > 0 &&
+      isIsoRangeFullyInactive({ periods, startIso: monthStart, endExclusiveIso: monthEndExclusive })
+    ) {
       fullyInactive.push(m);
     }
   }
@@ -359,7 +367,7 @@ export function getInactiveMonthGapsInYearFromPeriods(input: {
   let group: number[] = [fullyInactive[0]!];
 
   const pushGroup = () => {
-    const meta = inactiveGapMetaForMonth(periods, input.year, group[0]!);
+    const meta = inactiveGapMetaForMonth(periodsByMonth.get(group[0]!) ?? [], input.year, group[0]!);
     gaps.push({
       afterMonth: group[0]! - 1,
       months: group,
@@ -466,13 +474,17 @@ export function makeStudentInactiveDateCheckerFromPeriods(input: {
   grade?: string | null;
   year: number;
 }): (dateIso: string) => boolean {
-  const periods = withAutoF6InactivePeriod({
-    periods: input.periods,
-    studentId: input.studentId,
-    grade: input.grade,
-    year: input.year,
-  });
-  return (dateIso: string) => isStudentInactiveOnDateFromPeriods({ periods, dateIso });
+  const base = [...input.periods];
+  return (dateIso: string) => {
+    const y = Number(String(dateIso ?? "").slice(0, 4)) || input.year;
+    const periods = withAutoF6InactivePeriod({
+      periods: base,
+      studentId: input.studentId,
+      grade: inferGradeOnDate(input.grade ?? "", dateIso),
+      year: y,
+    });
+    return isStudentInactiveOnDateFromPeriods({ periods, dateIso });
+  };
 }
 
 /** Fee sheet month: hide only while pause covers that month; show again from reactivate month onward. */

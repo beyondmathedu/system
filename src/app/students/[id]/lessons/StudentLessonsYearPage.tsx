@@ -1562,12 +1562,10 @@ export function StudentLessonsYearPage({
     [inactivePeriods, studentId, studentSummary.grade, targetYear],
   );
 
-  /** Full-year regular lesson dates for reschedule validation (not month/range filtered). */
+  /** Full-year regular lesson dates for reschedule validation (not month/range/inactive filtered). */
   const validationBaseRowsByDate = useMemo(() => {
     if (!studentId) return new Map<string, ScheduleRow[]>();
-    const rows = buildStudentBaseScheduleRows(records, scheduleMapperState, targetYear, hkTodayYmd).filter(
-      (r) => !isLessonDateHiddenByInactivePeriod(r.date),
-    );
+    const rows = buildStudentBaseScheduleRows(records, scheduleMapperState, targetYear, hkTodayYmd);
     const map = new Map<string, ScheduleRow[]>();
     for (const r of rows) {
       const list = map.get(r.date) ?? [];
@@ -1575,14 +1573,7 @@ export function StudentLessonsYearPage({
       map.set(r.date, list);
     }
     return map;
-  }, [
-    records,
-    studentId,
-    scheduleMapperState,
-    targetYear,
-    hkTodayYmd,
-    isLessonDateHiddenByInactivePeriod,
-  ]);
+  }, [records, studentId, scheduleMapperState, targetYear, hkTodayYmd]);
 
   /** Prefer first regular row for a date (legacy single-slot helpers). */
   const validationBaseRowByDate = useMemo(() => {
@@ -3869,23 +3860,52 @@ export function StudentLessonsYearPage({
                             setSelectionError(msg);
                             return;
                           }
-                          if (!validationBaseRowByDate.has(from)) {
-                            setEditSaveStatus("Original date is not a regular lesson date.");
-                            setSelectionError("Original date must be an existing regular lesson date.");
-                            return;
+                          // Completing an existing pending/reschedule entry: trust stored from-slot
+                          // (pending rows stay visible during inactive/F6 windows even when base
+                          // validation would otherwise reject the original date).
+                          const entryHasFromSlot = Boolean(
+                            editingEntry &&
+                              (editingEntry.fromScheduleRuleId ||
+                                editingEntry.fromTime ||
+                                editingEntry.fromRoom),
+                          );
+                          let fromSlot: Pick<
+                            RescheduleEntry,
+                            "fromScheduleRuleId" | "fromTime" | "fromRoom"
+                          >;
+                          let fromSlotKey: string;
+                          if (entryHasFromSlot && editingEntry) {
+                            fromSlot = {
+                              ...(editingEntry.fromScheduleRuleId
+                                ? { fromScheduleRuleId: editingEntry.fromScheduleRuleId }
+                                : {}),
+                              ...(editingEntry.fromTime ? { fromTime: editingEntry.fromTime } : {}),
+                              ...(editingEntry.fromRoom ? { fromRoom: editingEntry.fromRoom } : {}),
+                            };
+                            fromSlotKey = originalLessonSlotKey(editingEntry);
+                          } else {
+                            if (!validationBaseRowByDate.has(from)) {
+                              setEditSaveStatus("Original date is not a regular lesson date.");
+                              setSelectionError(
+                                "Original date must be an existing regular lesson date.",
+                              );
+                              return;
+                            }
+                            const fromSlotRow =
+                              selectedFromOriginalLesson ??
+                              fromDateOriginalLessons[0] ??
+                              validationBaseRowByDate.get(from) ??
+                              null;
+                            if (!fromSlotRow) {
+                              setEditSaveStatus("Original date is not a regular lesson date.");
+                              setSelectionError(
+                                "Original date must be an existing regular lesson date.",
+                              );
+                              return;
+                            }
+                            fromSlot = fromSlotFieldsFromRow(fromSlotRow);
+                            fromSlotKey = scheduleRowSlotKey(fromSlotRow);
                           }
-                          const fromSlotRow =
-                            selectedFromOriginalLesson ??
-                            fromDateOriginalLessons[0] ??
-                            validationBaseRowByDate.get(from) ??
-                            null;
-                          if (!fromSlotRow) {
-                            setEditSaveStatus("Original date is not a regular lesson date.");
-                            setSelectionError("Original date must be an existing regular lesson date.");
-                            return;
-                          }
-                          const fromSlot = fromSlotFieldsFromRow(fromSlotRow);
-                          const fromSlotKey = scheduleRowSlotKey(fromSlotRow);
                           if (hasRescheduleSlotConflict(from, fromSlotKey, editingRescheduleId)) {
                             setEditSaveStatus("This original lesson already has a reschedule record.");
                             setSelectionError("This original lesson already has a reschedule record.");
