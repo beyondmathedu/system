@@ -7,7 +7,7 @@ type Props = {
   initialValue: number;
 };
 
-export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
+export default function MpfRelevantIncomeThresholdEditor({ initialValue }: Props) {
   const [value, setValue] = useState(String(initialValue));
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
@@ -27,7 +27,7 @@ export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
     const { error } = await supabase.from("app_payroll_settings").upsert(
       {
         id: 1,
-        multi_student_first_amount: n,
+        mpf_relevant_income_threshold: n,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "id" },
@@ -35,8 +35,10 @@ export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
     setSaving(false);
     if (error) {
       setStatus(
-        error.message.includes("relation") || error.message.includes("does not exist")
-          ? "Missing table"
+        error.message.includes("relation") ||
+          error.message.includes("does not exist") ||
+          /mpf_relevant_income_threshold/i.test(error.message)
+          ? "Missing column"
           : "Error",
       );
       return;
@@ -45,8 +47,11 @@ export default function MultiStudentFirstAmountEditor({ initialValue }: Props) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700" title="Multi-student slot: lowest grade uses this HKD; others use Tutor Junior/Senior. Solo = Single Rate.">
-      <span className="font-semibold text-slate-800">First-seat</span>
+    <div
+      className="flex flex-wrap items-center gap-2 text-sm text-slate-700"
+      title="If Tutor MPF is on and salary ≥ this, show 5% employer MPF and salary − MPF."
+    >
+      <span className="font-semibold text-slate-800">MPF if ≥</span>
       <span className="text-slate-500">HKD</span>
       <input
         type="number"

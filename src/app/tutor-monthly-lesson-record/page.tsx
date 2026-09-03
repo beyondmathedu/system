@@ -2,10 +2,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import MultiStudentFirstAmountEditor from "@/components/MultiStudentFirstAmountEditor";
+import MpfRelevantIncomeThresholdEditor from "@/components/MpfRelevantIncomeThresholdEditor";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
-import { loadMultiStudentFirstAmount } from "@/lib/payrollSettings";
+import { loadPayrollSettings } from "@/lib/payrollSettings";
 import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import {
   fetchTutorsForMonthlyLessonNav,
@@ -23,11 +24,12 @@ export default async function TutorMonthlyLessonRecordPage() {
   if (!viewer.userId) redirect("/login?next=/tutor-monthly-lesson-record");
   redirectTutorAwayFromAdminPages(viewer);
 
-  const [navViewer, { tutors }, firstSeatAmount] = await Promise.all([
+  const [navViewer, { tutors }, payrollSettings] = await Promise.all([
     buildAppTopNavViewer(viewer),
     fetchTutorsForMonthlyLessonNav(),
-    loadMultiStudentFirstAmount(),
+    loadPayrollSettings(),
   ]);
+  const { multiStudentFirstAmount: firstSeatAmount, mpfRelevantIncomeThreshold } = payrollSettings;
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">
@@ -38,24 +40,12 @@ export default async function TutorMonthlyLessonRecordPage() {
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
             <h1 className="text-2xl font-bold tracking-tight">Tutor Monthly Record</h1>
             <p className="mt-1 text-sm text-blue-100">
-              Choose a tutor to view monthly lesson details expanded from schedules. This page shows{" "}
-              <strong className="text-white">all tutors</strong>; MPF on the{" "}
+              Choose a tutor for monthly lesson pay. Status order matches{" "}
               <Link href="/teacher" className="underline hover:text-white">
                 Tutor
               </Link>{" "}
-              page is used for 5% calculations only.{" "}
-              Status groups follow the Tutor page (Active → Occasional → Inactive, then by ID).
+              (Active → Occasional → Inactive). Payroll settings are at the bottom.
             </p>
-            <p className="mt-2 text-xs text-blue-100/95">
-              Subtotal rule: single-student lessons use the Tutor page <strong>Single Student Rate</strong>; for
-              multi-student lessons, the <strong>lowest-grade student</strong> uses the setting below (currently
-              ${firstSeatAmount}), and others use that tutor&apos;s <strong>Junior/Senior Rate</strong> from the
-              grade in that month (1 Sept promotion: e.g. F.3 in August = Junior, F.4 from September = Senior).
-            </p>
-          </div>
-
-          <div className="border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
-            <MultiStudentFirstAmountEditor initialValue={firstSeatAmount} />
           </div>
 
           <div className="p-6">
@@ -93,6 +83,13 @@ export default async function TutorMonthlyLessonRecordPage() {
                 })}
               </div>
             )}
+          </div>
+
+          <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+              <MultiStudentFirstAmountEditor initialValue={firstSeatAmount} />
+              <MpfRelevantIncomeThresholdEditor initialValue={mpfRelevantIncomeThreshold} />
+            </div>
           </div>
         </div>
       </div>
