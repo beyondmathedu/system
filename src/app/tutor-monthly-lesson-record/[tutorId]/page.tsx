@@ -296,7 +296,8 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                 Tutor Monthly home
               </Link>{" "}
               ). Others use <strong>Junior {rates.junior}</strong> or <strong>Senior {rates.senior}</strong> by
-              grade. Unrecognized grade defaults to Junior. Hours are inferred from time range; otherwise 1.5.
+              that month&apos;s grade (before 1 Sept = last year&apos;s form; F.1–F.3 Junior, F.4–F.6 Senior).
+              Unrecognized grade defaults to Junior. Hours are inferred from time range; otherwise 1.5.
             </p>
           </div>
 

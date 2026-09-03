@@ -1,0 +1,91 @@
+import { describe, expect, it } from "vitest";
+import { inferGradeOnDate } from "@/lib/studentFeePricingGrade";
+import {
+  classifyGradeBand,
+  enrichTutorMonthRowsWithPay,
+  type TutorPayRates,
+} from "@/lib/tutorMonthlyPayroll";
+import type { TutorMonthLessonRow } from "@/lib/roomScheduleAggregate";
+
+const rates: TutorPayRates = { junior: 100, senior: 200, single: 150 };
+const FIRST_SEAT = 80;
+
+function row(partial: Partial<TutorMonthLessonRow> & Pick<TutorMonthLessonRow, "rowKey" | "studentId" | "grade">): TutorMonthLessonRow {
+  return {
+    studentName: partial.studentId,
+    dateIso: "2026-08-15",
+    dateDisplay: "15/8",
+    weekdayDisplay: "六",
+    time: "4:30 PM",
+    room: "A",
+    lessonType: "恆常",
+    note: "",
+    attended: true,
+    sortTime: "16:30",
+    ...partial,
+  };
+}
+
+describe("tutor monthly grade band after 1 Sept promotion", () => {
+  it("treats inferred pre-Sept F.3 as Junior and post-Sept F.4 as Senior", () => {
+    expect(classifyGradeBand(inferGradeOnDate("F4", "2026-08-15"))).toBe("junior");
+    expect(classifyGradeBand(inferGradeOnDate("F4", "2026-09-01"))).toBe("senior");
+  });
+
+  it("keeps F.1–F.2 junior and F.5–F.6 senior on both sides of 1 Sept", () => {
+    expect(classifyGradeBand(inferGradeOnDate("F2", "2026-08-01"))).toBe("junior");
+    expect(classifyGradeBand(inferGradeOnDate("F2", "2026-09-01"))).toBe("junior");
+    expect(classifyGradeBand(inferGradeOnDate("F5", "2026-08-01"))).toBe("senior");
+    expect(classifyGradeBand(inferGradeOnDate("F5", "2026-09-01"))).toBe("senior");
+    expect(classifyGradeBand(inferGradeOnDate("F6", "2026-08-01"))).toBe("senior");
+    expect(classifyGradeBand(inferGradeOnDate("F6", "2026-09-01"))).toBe("senior");
+  });
+
+  it("pays F.3→F.4 student junior in a shared August slot and senior in September", () => {
+    const august = enrichTutorMonthRowsWithPay(
+      [
+        row({
+          rowKey: "a",
+          studentId: "00001",
+          grade: inferGradeOnDate("F4", "2026-08-15"),
+          dateIso: "2026-08-15",
+        }),
+        row({
+          rowKey: "b",
+          studentId: "00002",
+          grade: inferGradeOnDate("F5", "2026-08-15"),
+          dateIso: "2026-08-15",
+        }),
+      ],
+      rates,
+      FIRST_SEAT,
+    );
+    const augPromoted = august.rowsWithPay.find((r) => r.studentId === "00001");
+    expect(augPromoted?.grade).toBe("F3");
+    expect(augPromoted?.subtotal).toBe(FIRST_SEAT);
+
+    const september = enrichTutorMonthRowsWithPay(
+      [
+        row({
+          rowKey: "c",
+          studentId: "00001",
+          grade: inferGradeOnDate("F4", "2026-09-05"),
+          dateIso: "2026-09-05",
+        }),
+        row({
+          rowKey: "d",
+          studentId: "00002",
+          grade: inferGradeOnDate("F5", "2026-09-05"),
+          dateIso: "2026-09-05",
+        }),
+      ],
+      rates,
+      FIRST_SEAT,
+    );
+    const sepPromoted = september.rowsWithPay.find((r) => r.studentId === "00001");
+    expect(sepPromoted?.grade).toBe("F4");
+    expect(sepPromoted?.subtotal).toBe(FIRST_SEAT);
+    const sepHigher = september.rowsWithPay.find((r) => r.studentId === "00002");
+    expect(sepHigher?.subtotal).toBe(rates.senior);
+  });
+});

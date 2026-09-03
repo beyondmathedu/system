@@ -49,7 +49,8 @@ export default async function TutorMonthlyLessonRecordPage() {
             <p className="mt-2 text-xs text-blue-100/95">
               Subtotal rule: single-student lessons use the Tutor page <strong>Single Student Rate</strong>; for
               multi-student lessons, the <strong>lowest-grade student</strong> uses the setting below (currently
-              ${firstSeatAmount}), and others use that tutor&apos;s <strong>Junior/Senior Rate</strong>.
+              ${firstSeatAmount}), and others use that tutor&apos;s <strong>Junior/Senior Rate</strong> from the
+              grade in that month (1 Sept promotion: e.g. F.3 in August = Junior, F.4 from September = Senior).
             </p>
           </div>
 

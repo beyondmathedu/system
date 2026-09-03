@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSlotPricesInLOrder,
+  inferGradeAtSheetEnd,
+  inferGradeOnDate,
   sumSlotTuitionHkdByLessonCount,
   sumSlotTuitionHkdFromDates,
 } from "@/lib/studentFeePricingGrade";
@@ -45,5 +47,41 @@ describe("monthly threshold tuition", () => {
     expect(sumSlotTuitionHkdFromDates({ fullLessonDates: eight, gradeFor: "F2", feeTierSettings: tier })).toBe(
       8 * 250,
     );
+  });
+});
+
+describe("inferGradeAtSheetEnd after 1 Sept promotion", () => {
+  it("rolls current F.4 back to F.3 for August 2026", () => {
+    expect(inferGradeAtSheetEnd("F.4", 2026, 8)).toBe("F3");
+    expect(inferGradeAtSheetEnd("F4", 2026, 9)).toBe("F4");
+  });
+
+  it("maps each current form to the pre-Sept form for May–August 2026", () => {
+    const before = [5, 6, 7, 8] as const;
+    for (const month of before) {
+      expect(inferGradeAtSheetEnd("F2", 2026, month)).toBe("F1");
+      expect(inferGradeAtSheetEnd("F3", 2026, month)).toBe("F2");
+      expect(inferGradeAtSheetEnd("F4", 2026, month)).toBe("F3");
+      expect(inferGradeAtSheetEnd("F5", 2026, month)).toBe("F4");
+      expect(inferGradeAtSheetEnd("F6", 2026, month)).toBe("F5");
+      expect(inferGradeAtSheetEnd("F1", 2026, month)).toBe("F1");
+    }
+  });
+
+  it("keeps the post-Sept form from September 2026 onward", () => {
+    for (const month of [9, 10, 11, 12] as const) {
+      expect(inferGradeAtSheetEnd("F2", 2026, month)).toBe("F2");
+      expect(inferGradeAtSheetEnd("F3", 2026, month)).toBe("F3");
+      expect(inferGradeAtSheetEnd("F4", 2026, month)).toBe("F4");
+      expect(inferGradeAtSheetEnd("F5", 2026, month)).toBe("F5");
+      expect(inferGradeAtSheetEnd("F6", 2026, month)).toBe("F6");
+    }
+  });
+
+  it("uses the lesson date's month on inferGradeOnDate", () => {
+    expect(inferGradeOnDate("F4", "2026-08-31")).toBe("F3");
+    expect(inferGradeOnDate("F4", "2026-09-01")).toBe("F4");
+    expect(inferGradeOnDate("F.6", "2026-06-15")).toBe("F5");
+    expect(inferGradeOnDate("F.6", "2026-09-02")).toBe("F6");
   });
 });
