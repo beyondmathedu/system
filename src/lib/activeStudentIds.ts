@@ -1,3 +1,4 @@
+import { inferGradeOnDate } from "@/lib/inferStudentGrade";
 import {
   isStudentInactiveOnDate,
   isStudentInactiveOnDateFromPeriods,
@@ -29,12 +30,13 @@ export function filterActiveStudentsOnDate<T extends StudentLike>(
       manualInactiveEffectiveById instanceof Map
         ? (manualInactiveEffectiveById as Map<string, StudentInactivePeriod[]>)
         : new Map(Object.entries(manualInactiveEffectiveById as Record<string, StudentInactivePeriod[]>));
+    const y = Number(String(dateIso ?? "").slice(0, 4)) || year;
     return students.filter((st) => {
       const periods = withAutoF6InactivePeriod({
         periods: periodsMap.get(st.id) ?? [],
         studentId: st.id,
-        grade: st.grade,
-        year,
+        grade: inferGradeOnDate(st.grade ?? "", dateIso),
+        year: y,
       });
       return !isStudentInactiveOnDateFromPeriods({ periods, dateIso });
     });
