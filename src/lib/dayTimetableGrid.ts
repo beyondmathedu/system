@@ -19,13 +19,18 @@ import { filterActiveStudentsOnDate } from "@/lib/activeStudentIds";
 import { inferGradeOnDate } from "@/lib/inferStudentGrade";
 import {
   buildStudentInactivePeriodsById,
+  isStudentInactiveOnDateFromPeriods,
   isTemporarilyInactiveOnDateFromPeriods,
   withAutoF6InactivePeriod,
   type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
 import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
-import { loadYearScheduleData } from "@/lib/yearScheduleData.server";
+import {
+  loadLessonScheduleRecordsBatchServer,
+  loadLessonYearStatesBatchServer,
+} from "@/lib/lessonDataServer";
+import { loadYearScheduleData, normalizeLessonRecords } from "@/lib/yearScheduleData.server";
 import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorConstants";
 import type { DayTimetableFeePaymentTone } from "@/lib/dayTimetableStyleSettings";
 import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings.server";
@@ -564,6 +569,15 @@ async function fetchDayTimetablePayloadUncached(
   const timetableRoomSet = new Set(timetableRooms);
   const inactivePeriodsById = new Map(Object.entries(staticBundle.inactivePeriodsById));
 
+  function mergedPeriodsForStudent(st: { id: string; grade?: string | null }) {
+    return withAutoF6InactivePeriod({
+      periods: inactivePeriodsById.get(st.id) ?? [],
+      studentId: st.id,
+      grade: inferGradeOnDate(st.grade ?? "", dateIso),
+      year: Number(String(dateIso ?? "").slice(0, 4)) || year,
+    });
+  }
+
   const activeStudentList = filterActiveStudentsOnDate(
     staticBundle.studentList,
     inactivePeriodsById,
@@ -574,24 +588,40 @@ async function fetchDayTimetablePayloadUncached(
   const inactiveStudentList = includeInactiveSlots
     ? staticBundle.studentList.filter((st) => {
         if (activeIdSet.has(st.id)) return false;
-        const periods = withAutoF6InactivePeriod({
-          periods: inactivePeriodsById.get(st.id) ?? [],
-          studentId: st.id,
-          grade: inferGradeOnDate(st.grade ?? "", dateIso),
-          year: Number(String(dateIso ?? "").slice(0, 4)) || year,
-        });
+        const periods = mergedPeriodsForStudent(st);
         // Regular Class Timetable: only pauses with Expected return — skip graduated / open-ended inactive.
         return isTemporarilyInactiveOnDateFromPeriods({ periods, dateIso });
+      })
+    : [];
+  const inactiveOnDateStudentList = includeInactiveMakeupSlots
+    ? staticBundle.studentList.filter((st) => {
+        if (activeIdSet.has(st.id)) return false;
+        return isStudentInactiveOnDateFromPeriods({
+          periods: mergedPeriodsForStudent(st),
+          dateIso,
+        });
       })
     : [];
   const studentList = activeStudentList;
 
   const normalizedRecordsById = new Map(Object.entries(yearSchedule.normalizedRecordsById));
   const stateById = new Map(Object.entries(yearSchedule.stateById));
+
+  if (includeInactiveMakeupSlots && !includeInactiveSlots && inactiveOnDateStudentList.length) {
+    const inactiveIds = inactiveOnDateStudentList.map((st) => st.id);
+    const [freshRecords, freshStates] = await Promise.all([
+      loadLessonScheduleRecordsBatchServer(supabase, inactiveIds),
+      loadLessonYearStatesBatchServer(supabase, inactiveIds, year),
+    ]);
+    for (const id of inactiveIds) {
+      normalizedRecordsById.set(id, normalizeLessonRecords(freshRecords[id] ?? []));
+      stateById.set(id, (freshStates[id] ?? EMPTY_YEAR_STATE) as YearLessonState);
+    }
+  }
+
   const inactiveMakeupStudentList =
     includeInactiveMakeupSlots && !includeInactiveSlots
-      ? staticBundle.studentList.filter((st) => {
-          if (activeIdSet.has(st.id)) return false;
+      ? inactiveOnDateStudentList.filter((st) => {
           const state = stateById.get(st.id) ?? EMPTY_YEAR_STATE;
           return studentHasMakeupOrExtraOnDate(state, dateIso);
         })
@@ -836,7 +866,7 @@ export async function fetchDayTimetablePayload(
         includeInactiveMakeupSlots,
       }),
     [
-      "day-timetable-payload-v24",
+      "day-timetable-payload-v25",
       String(year),
       String(month),
       String(day),
