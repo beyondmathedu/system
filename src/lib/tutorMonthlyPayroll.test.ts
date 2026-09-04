@@ -3,6 +3,8 @@ import { inferGradeOnDate } from "@/lib/studentFeePricingGrade";
 import {
   classifyGradeBand,
   enrichTutorMonthRowsWithPay,
+  materializeTutorMonthPayRows,
+  ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID,
   type TutorPayRates,
 } from "@/lib/tutorMonthlyPayroll";
 import type { TutorMonthLessonRow } from "@/lib/roomScheduleAggregate";
@@ -10,7 +12,9 @@ import type { TutorMonthLessonRow } from "@/lib/roomScheduleAggregate";
 const rates: TutorPayRates = { junior: 100, senior: 200, single: 150 };
 const FIRST_SEAT = 80;
 
-function row(partial: Partial<TutorMonthLessonRow> & Pick<TutorMonthLessonRow, "rowKey" | "studentId" | "grade">): TutorMonthLessonRow {
+function row(
+  partial: Partial<TutorMonthLessonRow> & Pick<TutorMonthLessonRow, "rowKey" | "studentId" | "grade">,
+): TutorMonthLessonRow {
   return {
     studentName: partial.studentId,
     dateIso: "2026-08-15",
@@ -87,5 +91,106 @@ describe("tutor monthly grade band after 1 Sept promotion", () => {
     expect(sepPromoted?.subtotal).toBe(FIRST_SEAT);
     const sepHigher = september.rowsWithPay.find((r) => r.studentId === "00002");
     expect(sepHigher?.subtotal).toBe(rates.senior);
+  });
+});
+
+describe("zero-attendance Single guarantee", () => {
+  it("emits one guarantee row for a past date+time+room with 0 ticks", () => {
+    const payRows = materializeTutorMonthPayRows(
+      [
+        row({
+          rowKey: "a",
+          studentId: "00001",
+          grade: "F3",
+          attended: false,
+          dateIso: "2026-09-03",
+          room: "B",
+        }),
+        row({
+          rowKey: "b",
+          studentId: "00002",
+          grade: "F4",
+          attended: false,
+          dateIso: "2026-09-03",
+          room: "B",
+        }),
+      ],
+      "2026-09-04",
+    );
+    expect(payRows).toHaveLength(1);
+    expect(payRows[0]?.zeroAttendanceGuarantee).toBe(true);
+    expect(payRows[0]?.studentId).toBe(ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID);
+    expect(payRows[0]?.room).toBe("B");
+  });
+
+  it("does not guarantee future slots", () => {
+    const payRows = materializeTutorMonthPayRows(
+      [
+        row({
+          rowKey: "a",
+          studentId: "00001",
+          grade: "F3",
+          attended: false,
+          dateIso: "2026-09-10",
+        }),
+      ],
+      "2026-09-04",
+    );
+    expect(payRows).toHaveLength(0);
+  });
+
+  it("keeps attended students and skips guarantee when anyone ticked", () => {
+    const payRows = materializeTutorMonthPayRows(
+      [
+        row({
+          rowKey: "a",
+          studentId: "00001",
+          grade: "F3",
+          attended: true,
+          dateIso: "2026-09-03",
+        }),
+        row({
+          rowKey: "b",
+          studentId: "00002",
+          grade: "F4",
+          attended: false,
+          dateIso: "2026-09-03",
+        }),
+      ],
+      "2026-09-04",
+    );
+    expect(payRows).toHaveLength(1);
+    expect(payRows[0]?.studentId).toBe("00001");
+    expect(payRows[0]?.zeroAttendanceGuarantee).toBeFalsy();
+  });
+
+  it("pays Single for a guarantee row and does not merge two empty rooms", () => {
+    const payRows = materializeTutorMonthPayRows(
+      [
+        row({
+          rowKey: "a",
+          studentId: "00001",
+          grade: "F3",
+          attended: false,
+          dateIso: "2026-09-03",
+          time: "4:30 PM",
+          room: "A",
+        }),
+        row({
+          rowKey: "b",
+          studentId: "00002",
+          grade: "F3",
+          attended: false,
+          dateIso: "2026-09-03",
+          time: "4:30 PM",
+          room: "B",
+        }),
+      ],
+      "2026-09-04",
+    );
+    expect(payRows).toHaveLength(2);
+    const { rowsWithPay, monthTotal } = enrichTutorMonthRowsWithPay(payRows, rates, FIRST_SEAT);
+    expect(rowsWithPay.every((r) => r.subtotal === rates.single)).toBe(true);
+    expect(monthTotal).toBe(rates.single * 2);
   });
 });

@@ -547,6 +547,58 @@ export default function RoomScheduleTable({
     queueSaveLessonYearState(row.studentId, year, nextState, ["attendance"], [row.attendanceKey]);
   }
 
+  /** Clear attendance for all currently filtered, editable, attended rows (same room page). */
+  function onMarkFilteredAbsent() {
+    if (attendanceLocked) return;
+    const targets = filteredRows.filter(
+      (r) =>
+        r.attended &&
+        isAttendanceOrSummaryEditableForDate(r.dateIso) &&
+        !isStudentSaving(r.studentId, r),
+    );
+    if (targets.length === 0) {
+      window.alert("No attended rows in the current filter can be cleared.");
+      return;
+    }
+    const slotHint =
+      targets.length <= 3
+        ? targets.map((r) => `${r.dateDisplay} ${r.time}`).join(", ")
+        : `${targets[0]?.dateDisplay} ${targets[0]?.time} … (+${targets.length - 1} more)`;
+    if (
+      !window.confirm(
+        `Mark ${targets.length} student row(s) as not attended?\n${slotHint}\n\nIf this tutor’s slot ends with 0 ticks (past/today), Tutor Monthly will still pay 1× Single Student Rate.`,
+      )
+    ) {
+      return;
+    }
+    setSaveError("");
+    // Group by student so one save merges all their attendance keys.
+    const byStudent = new Map<string, RoomScheduleRow[]>();
+    for (const r of targets) {
+      const list = byStudent.get(r.studentId) ?? [];
+      list.push(r);
+      byStudent.set(r.studentId, list);
+    }
+    const clearKeys = new Set(targets.map((t) => t.rowKey));
+    setLocalRows((prev) =>
+      prev.map((r) => (clearKeys.has(r.rowKey) ? { ...r, attended: false } : r)),
+    );
+    for (const [studentId, rowsForStudent] of byStudent) {
+      markStudentSaving(studentId);
+      savingRowKeyRef.current = rowsForStudent[0]?.rowKey ?? null;
+      let current = stateCache.current.get(studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
+      let attendance = { ...current.attendance };
+      const touchedKeys: string[] = [];
+      for (const r of rowsForStudent) {
+        attendance = attendanceAfterRegularToggle(attendance, r.attendanceKey, false);
+        touchedKeys.push(r.attendanceKey);
+      }
+      const nextState: StudentLesson2026State = { ...current, attendance };
+      stateCache.current.set(studentId, nextState);
+      queueSaveLessonYearState(studentId, year, nextState, ["attendance"], touchedKeys);
+    }
+  }
+
   async function onChangeTutor(row: RoomScheduleRow, displayTutor: string) {
     setSaveError("");
     const slot = slotKey(row);
@@ -783,6 +835,16 @@ export default function RoomScheduleTable({
               <option value="not_attended">Not attended</option>
             </select>
           </label>
+
+          <button
+            type="button"
+            onClick={onMarkFilteredAbsent}
+            disabled={attendanceLocked}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-amber-300 bg-amber-50 px-2.5 text-xs font-semibold text-amber-950 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Clear attendance for all attended rows in the current filter. Past/today slots with 0 ticks still pay Single on Tutor Monthly."
+          >
+            Mark filtered absent
+          </button>
 
           <button
             type="button"

@@ -5,6 +5,66 @@ export type TutorMonthLessonRowWithPay = TutorMonthLessonRow & {
   subtotal: number;
 };
 
+export const ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID = "__zero_attendance_guarantee__";
+export const ZERO_ATTENDANCE_GUARANTEE_LABEL = "No students attended (0 · Single rate)";
+
+function normalizePayTimeKey(time: string): string {
+  return time.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** date + time + room — one classroom session for zero-attendance guarantee. */
+export function tutorMonthSlotKey(dateIso: string, time: string, room: string): string {
+  return `${dateIso}|||${normalizePayTimeKey(time)}|||${String(room ?? "").trim().toLowerCase()}`;
+}
+
+/**
+ * From all scheduled (non-cancelled) tutor-matched lessons: keep attended rows;
+ * for past/today slots with zero ticks, emit one Single-rate guarantee row per date+time+room.
+ */
+export function materializeTutorMonthPayRows(
+  candidates: TutorMonthLessonRow[],
+  todayIso: string,
+): TutorMonthLessonRow[] {
+  const today = String(todayIso ?? "").trim();
+  const bySlot = new Map<string, TutorMonthLessonRow[]>();
+  for (const r of candidates) {
+    if (r.zeroAttendanceGuarantee) continue;
+    const k = tutorMonthSlotKey(r.dateIso, r.time, r.room);
+    const list = bySlot.get(k) ?? [];
+    list.push(r);
+    bySlot.set(k, list);
+  }
+
+  const out: TutorMonthLessonRow[] = [];
+  for (const [, list] of bySlot) {
+    const attended = list.filter((r) => r.attended);
+    if (attended.length > 0) {
+      out.push(...attended);
+      continue;
+    }
+    const sample = list[0];
+    if (!sample) continue;
+    if (!today || sample.dateIso > today) continue;
+    out.push({
+      rowKey: `guarantee:${tutorMonthSlotKey(sample.dateIso, sample.time, sample.room)}`,
+      studentId: ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID,
+      studentName: ZERO_ATTENDANCE_GUARANTEE_LABEL,
+      grade: "",
+      dateIso: sample.dateIso,
+      dateDisplay: sample.dateDisplay,
+      weekdayDisplay: sample.weekdayDisplay,
+      time: sample.time,
+      room: sample.room,
+      lessonType: sample.lessonType,
+      note: "",
+      attended: false,
+      sortTime: sample.sortTime,
+      zeroAttendanceGuarantee: true,
+    });
+  }
+  return out;
+}
+
 /** 來自 latest_tutor_rates／Tutor 頁 */
 export type TutorPayRates = {
   junior: number;
@@ -248,7 +308,12 @@ export function enrichTutorMonthRowsWithPay(
   }
 
   const groups = new Map<string, TutorMonthLessonRow[]>();
+  const guaranteeRows: TutorMonthLessonRow[] = [];
   for (const r of rows) {
+    if (r.zeroAttendanceGuarantee) {
+      guaranteeRows.push(r);
+      continue;
+    }
     const k = payGroupKey(r.dateIso, r.time);
     const list = groups.get(k) ?? [];
     list.push(r);
@@ -263,6 +328,10 @@ export function enrichTutorMonthRowsWithPay(
     sorted.forEach((r, i) => {
       subtotalByRowKey.set(r.rowKey, amounts[i] ?? 0);
     });
+  }
+  for (const r of guaranteeRows) {
+    // One classroom session with 0 ticks → Single Student Rate (never merged into multi-student pay).
+    subtotalByRowKey.set(r.rowKey, rates.single);
   }
 
   let monthTotal = 0;
