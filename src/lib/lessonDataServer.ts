@@ -628,7 +628,7 @@ export async function loadFeeRecordBootstrapCached(
       void openingResult;
       return rest;
     },
-    ["fee-record-bootstrap-v2", String(y), String(m)],
+    ["fee-record-bootstrap-v3", String(y), String(m)],
     { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
   )();
 

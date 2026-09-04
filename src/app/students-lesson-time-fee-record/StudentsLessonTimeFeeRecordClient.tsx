@@ -59,7 +59,7 @@ import {
   hydrateFeeRecordBootstrap,
   type FeeRecordBootstrapApiBody,
 } from "@/lib/feeRecordBootstrapHydrate";
-import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
+import { notifyScheduleCachesStale, revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
 import {
   isStudentHiddenForFeeSheetMonthFromPeriods,
   makeStudentInactiveDateCheckerFromPeriods,
@@ -648,6 +648,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   const [searchText, setSearchText] = useState("");
   const [syncingZoho, setSyncingZoho] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
+  const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [feeTierBundle, setFeeTierBundle] = useState<StudentFeeTierBundle>(() =>
     initialHydrated.feeTierBundle
@@ -746,11 +747,12 @@ export default function StudentsLessonTimeFeeRecordPage({
       return;
     }
     let mounted = true;
+    setBootstrapLoading(true);
     void (async () => {
       try {
         const res = await fetch(
           `/api/students-lesson-fee-record/bootstrap?year=${sheetYear}&month=${sheetMonth}`,
-          { credentials: "same-origin" },
+          { credentials: "same-origin", cache: "no-store" },
         );
         if (!res.ok) throw new Error("bootstrap failed");
         const body = (await res.json()) as FeeRecordBootstrapApiBody;
@@ -759,6 +761,8 @@ export default function StudentsLessonTimeFeeRecordPage({
       } catch {
         if (!mounted) return;
         setStudents([]);
+      } finally {
+        if (mounted) setBootstrapLoading(false);
       }
     })();
 
@@ -983,10 +987,17 @@ export default function StudentsLessonTimeFeeRecordPage({
 
   const onSubmittedChange = useCallback(
     (studentId: string, submitted: number) => {
-      updateStudentRecord(studentId, { submitted });
-      scheduleSave(studentId, { submitted });
+      const amount = Number(submitted) || 0;
+      updateStudentRecord(studentId, { submitted: amount });
+      // Keep prior-month arrears map in sync while staying on / switching away from this sheet month.
+      setSubmittedByStudentMonth((prev) => {
+        const byMonth = { ...(prev[studentId] ?? {}) };
+        byMonth[Number(sheetMonth)] = amount;
+        return { ...prev, [studentId]: byMonth };
+      });
+      scheduleSave(studentId, { submitted: amount });
     },
-    [scheduleSave],
+    [scheduleSave, sheetMonth],
   );
 
   const onRemarksChange = useCallback(
@@ -1059,9 +1070,24 @@ export default function StudentsLessonTimeFeeRecordPage({
         detailFetchEmpty?: number;
         detailFetchError?: number;
         detailErrorSamples?: string[];
+        preservedExistingMonths?: number;
+        preservedExistingSamples?: string[];
       };
       const monthMap = (json?.monthSubmittedByStudentId ?? {}) as Record<string, number>;
       const lessonCountMap = (json?.monthSubmittedLessonCountByStudentId ?? {}) as Record<string, number>;
+      const byStudentMonth = (json?.submittedByStudentMonth ?? {}) as Record<
+        string,
+        Record<number, number>
+      >;
+      if (Object.keys(byStudentMonth).length > 0) {
+        setSubmittedByStudentMonth((prev) => {
+          const next = { ...prev };
+          for (const [sid, months] of Object.entries(byStudentMonth)) {
+            next[sid] = { ...(next[sid] ?? {}), ...months };
+          }
+          return next;
+        });
+      }
       if (Object.keys(monthMap).length > 0) {
         setRecordsByStudentId((prev) => {
           const next = { ...prev };
@@ -1080,7 +1106,7 @@ export default function StudentsLessonTimeFeeRecordPage({
         });
       }
       setSyncNotice(
-        `Zoho synced (${sheetYear}). Fetched ${Number(json?.fetchedReceipts ?? 0)} receipts; updated ${Number(json?.syncedRows ?? 0)} rows; ${Number(json?.unmatchedReceipts ?? 0)} unmatched.${
+        `Zoho synced (${sheetYear}). Fetched ${Number(json?.fetchedReceipts ?? 0)} receipts; updated ${Number(json?.syncedRows ?? 0)} rows; ${Number(json?.unmatchedReceipts ?? 0)} unmatched; preserved ${Number(debug.preservedExistingMonths ?? 0)} existing month amount(s).${
           Array.isArray(json?.unmatchedExamples) && json.unmatchedExamples.length
             ? ` Unmatched examples: ${json.unmatchedExamples.join(" / ")}`
             : ""
@@ -1088,8 +1114,14 @@ export default function StudentsLessonTimeFeeRecordPage({
           Array.isArray(debug.detailErrorSamples) && debug.detailErrorSamples.length
             ? `, detail error samples: ${debug.detailErrorSamples.join(" / ")}`
             : ""
+        }${
+          Array.isArray(debug.preservedExistingSamples) && debug.preservedExistingSamples.length
+            ? `, preserved: ${debug.preservedExistingSamples.join(" / ")}`
+            : ""
         }.`,
       );
+      // Always bust fee bootstrap cache after sync (even 0 upserts) so Sep/Aug views stay consistent.
+      await revalidateScheduleCachesNow();
       if (Number(json?.syncedRows ?? 0) > 0) {
         window.location.reload();
       }
@@ -1606,6 +1638,9 @@ export default function StudentsLessonTimeFeeRecordPage({
                   <div>
                     <div className="text-sm font-bold text-slate-700">
                       {sheetYear} / {MONTH_SHORT[sheetMonth - 1]} / Record Sheet
+                      {bootstrapLoading ? (
+                        <span className="ml-2 text-xs font-semibold text-amber-700">Loading month…</span>
+                      ) : null}
                     </div>
                     <div className="mt-0.5 max-w-[52rem] text-[11px] text-slate-500">
                       {`Total Due = opening balance (as of ${OPENING_BALANCE_AS_OF_EN_PHRASE}) + carry-forward since ${FEE_SYSTEM_START_EN_PHRASE} + this month's tuition. Legacy pre-system months are not back-filled month-by-month.`}
