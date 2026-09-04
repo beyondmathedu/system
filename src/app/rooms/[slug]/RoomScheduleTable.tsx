@@ -586,7 +586,7 @@ export default function RoomScheduleTable({
     for (const [studentId, rowsForStudent] of byStudent) {
       markStudentSaving(studentId);
       savingRowKeyRef.current = rowsForStudent[0]?.rowKey ?? null;
-      let current = stateCache.current.get(studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
+      const current = stateCache.current.get(studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
       let attendance = { ...current.attendance };
       const touchedKeys: string[] = [];
       for (const r of rowsForStudent) {
