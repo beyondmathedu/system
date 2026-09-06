@@ -16,6 +16,7 @@ import {
 } from "@/lib/studentFeeOpeningBalance";
 import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
 import type { StudentInactivePeriod } from "@/lib/studentVisibility";
+import type { GradeHistoryByStudentId } from "@/lib/studentGradeHistory";
 
 const FEE_SYSTEM_START_YEAR = 2026;
 const FEE_SYSTEM_START_MONTH = 5;
@@ -59,6 +60,16 @@ export type FeeRecordBootstrapApiBody = {
   };
   adjustmentResult?: {
     adjustments: Record<string, StudentFeeBalanceAdjustment>;
+    error?: string;
+    tableMissing?: boolean;
+  };
+  heldBackYearsResult?: {
+    byStudentId: Record<string, number[]>;
+    error?: string;
+    tableMissing?: boolean;
+  };
+  gradeHistoryResult?: {
+    byStudentId: GradeHistoryByStudentId;
     error?: string;
     tableMissing?: boolean;
   };
@@ -120,6 +131,8 @@ export type HydratedFeeRecordBootstrap = {
   balanceAdjustmentByStudentId: Record<string, StudentFeeBalanceAdjustment>;
   balanceAdjustmentTableMissing: boolean;
   balanceAdjustmentSaveMsg: string;
+  heldBackYearsByStudentId: Record<string, number[]>;
+  gradeHistoryByStudentId: GradeHistoryByStudentId;
   lessonRecordsByStudentId: Record<string, unknown[]>;
   lessonYearStateByStudentId: Record<string, StudentLesson2026State>;
   feeTierBundle: StudentFeeTierBundle | null;
@@ -249,6 +262,13 @@ export function hydrateFeeRecordBootstrap(
       : `調整／優惠讀取失敗：${adjustmentResult.error}（已用本機備份）`;
   }
 
+  const heldBackYearsByStudentId: Record<string, number[]> = {
+    ...(body.heldBackYearsResult?.byStudentId ?? {}),
+  };
+  const gradeHistoryByStudentId: GradeHistoryByStudentId = {
+    ...(body.gradeHistoryResult?.byStudentId ?? {}),
+  };
+
   const lessonRecordsByStudentId: Record<string, unknown[]> = {};
   const lessonYearStateByStudentId: Record<string, StudentLesson2026State> = {};
   for (const st of mapped) {
@@ -272,6 +292,8 @@ export function hydrateFeeRecordBootstrap(
     balanceAdjustmentByStudentId,
     balanceAdjustmentTableMissing,
     balanceAdjustmentSaveMsg,
+    heldBackYearsByStudentId,
+    gradeHistoryByStudentId,
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
     feeTierBundle: body.feeTierBundle ?? null,

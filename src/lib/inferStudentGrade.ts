@@ -26,23 +26,43 @@ function hkTodayIso(): string {
   return `${y}-${m}-${d}`;
 }
 
+function toHeldBackSet(
+  heldBackYears: ReadonlySet<number> | readonly number[] | null | undefined,
+): Set<number> {
+  if (!heldBackYears) return new Set();
+  if (heldBackYears instanceof Set) return heldBackYears;
+  const out = new Set<number>();
+  for (const y of heldBackYears) {
+    if (Number.isFinite(y)) out.add(y);
+  }
+  return out;
+}
+
 /**
  * Infer form level (F1..F6) at end of fee sheet month from **current** `students.grade`,
- * assuming one promotion per Sept 1 (HK) after that month-end until today.
+ * assuming one promotion per Sept 1 (HK) after that month-end until today,
+ * except years listed in `heldBackYears` (留班：該年 9/1 不升班).
  * If the student is not F1–F6, returns normalized code unchanged.
  */
-export function inferGradeAtSheetEnd(currentGrade: string, sheetYear: number, sheetMonth: number): string {
+export function inferGradeAtSheetEnd(
+  currentGrade: string,
+  sheetYear: number,
+  sheetMonth: number,
+  heldBackYears?: ReadonlySet<number> | readonly number[] | null,
+): string {
   const code = normalizeGradeCode(currentGrade);
   const match = /^F([1-6])$/.exec(code);
   if (!match) return code;
   let level = Number(match[1]);
   const sheetEnd = monthEndIsoDate(sheetYear, sheetMonth);
   const today = hkTodayIso();
+  const heldBack = toHeldBackSet(heldBackYears);
 
   let promotionsAfterSheet = 0;
   const minY = Math.min(sheetYear - 2, Number(sheetEnd.slice(0, 4)) - 1);
   const maxY = Number(today.slice(0, 4)) + 1;
   for (let y = minY; y <= maxY; y++) {
+    if (heldBack.has(y)) continue;
     const sept = `${y}-09-01`;
     if (sept > sheetEnd && sept <= today) promotionsAfterSheet += 1;
   }
@@ -51,9 +71,13 @@ export function inferGradeAtSheetEnd(currentGrade: string, sheetYear: number, sh
 }
 
 /** Grade on a lesson date: same Sept-1 rollback as {@link inferGradeAtSheetEnd} for that date's month. */
-export function inferGradeOnDate(currentGrade: string, dateIso: string): string {
+export function inferGradeOnDate(
+  currentGrade: string,
+  dateIso: string,
+  heldBackYears?: ReadonlySet<number> | readonly number[] | null,
+): string {
   const iso = String(dateIso ?? "").trim().slice(0, 10);
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return normalizeGradeCode(currentGrade);
-  return inferGradeAtSheetEnd(currentGrade, Number(m[1]), Number(m[2]));
+  return inferGradeAtSheetEnd(currentGrade, Number(m[1]), Number(m[2]), heldBackYears);
 }
