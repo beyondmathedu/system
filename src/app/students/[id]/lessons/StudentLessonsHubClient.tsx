@@ -24,6 +24,15 @@ import type { LessonScheduleRecord } from "./LessonScheduleGrid";
 import { formatGradeDisplay } from "@/lib/grade";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getActiveScheduleVersionDate, normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
+import {
+  academicYearLabelZh,
+  ensureCurrentYearHistoryFallback,
+  getCurrentAcademicYear,
+  listGradeHistoryRows,
+  setCurrentAcademicYearStatus,
+  type GradeHistoryByAcademicYear,
+  type GradeHistoryStatus,
+} from "@/lib/studentGradeHistory";
 
 const LessonScheduleGrid = dynamic(() => import("./LessonScheduleGrid"), {
   ssr: false,
@@ -219,6 +228,54 @@ export default function StudentLessonsHubClient({
   const availableYears = useMemo(() => availableLessonYears(), []);
   const currentSettings = useMemo(() => currentSettingsFromRecords(scheduleRecords), [scheduleRecords]);
   const metricsSavedRef = useRef(false);
+  const currentAcademicYear = useMemo(() => getCurrentAcademicYear(), []);
+  const [gradeHistory, setGradeHistory] = useState<GradeHistoryByAcademicYear>(() =>
+    ensureCurrentYearHistoryFallback({
+      currentGrade: studentSummary.grade,
+      historyByAcademicYear: initialBootstrap.gradeHistory ?? {},
+      heldBackYears: initialBootstrap.heldBackYears ?? [],
+    }),
+  );
+  const [academicStatusSaving, setAcademicStatusSaving] = useState(false);
+  const [academicStatusError, setAcademicStatusError] = useState("");
+  const currentAyRow = gradeHistory[currentAcademicYear];
+  const currentAyStatus: GradeHistoryStatus = currentAyRow?.status ?? "normal";
+  const currentAyGrade = currentAyRow?.grade || studentSummary.grade;
+  const historyRows = useMemo(() => listGradeHistoryRows(gradeHistory), [gradeHistory]);
+
+  async function saveAcademicRepeating(repeating: boolean) {
+    if (!studentId || isTutorReadOnly || isStudentPortal) return;
+    setAcademicStatusSaving(true);
+    setAcademicStatusError("");
+    const prev = gradeHistory;
+    const nextStatus: GradeHistoryStatus = repeating ? "repeating" : "normal";
+    setGradeHistory((map) => ({
+      ...map,
+      [currentAcademicYear]: {
+        academicYear: currentAcademicYear,
+        grade: currentAyGrade,
+        status: nextStatus,
+        note: repeating ? "repeating" : "",
+      },
+    }));
+    try {
+      const res = await setCurrentAcademicYearStatus({
+        studentId,
+        currentGrade: currentAyGrade || studentSummary.grade,
+        repeating,
+      });
+      if (!res.ok) {
+        setGradeHistory(prev);
+        setAcademicStatusError(
+          res.tableMissing
+            ? "Grade History 表未建立：請在 Supabase 執行 supabase/supabase_student_grade_history.sql"
+            : res.error ?? "儲存失敗",
+        );
+      }
+    } finally {
+      setAcademicStatusSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (metricsSavedRef.current || !studentId || studentNotFound) return;
@@ -380,6 +437,11 @@ export default function StudentLessonsHubClient({
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">Grade</p>
                   <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(studentSummary.grade) || "—"}</p>
+                  {!isTutorReadOnly && !isStudentPortal && currentAyStatus === "repeating" ? (
+                    <p className="mt-0.5 text-[10px] font-medium text-amber-800">
+                      Repeating（{currentAcademicYear}）
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">School</p>
@@ -723,6 +785,95 @@ export default function StudentLessonsHubClient({
               <div className="h-48 animate-pulse rounded-xl bg-slate-100" aria-hidden />
             )}
           </div>
+          ) : null}
+
+          {!isTutorReadOnly && !isStudentPortal ? (
+            <div className="border-t border-slate-200 p-6">
+              <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-3">
+                <p className="text-xs font-semibold tracking-wider text-amber-900/80">Academic Status</p>
+                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900/70">
+                      Academic Year
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold text-amber-950">
+                      {academicYearLabelZh(currentAcademicYear)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900/70">
+                      Current Grade
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold text-amber-950">
+                      {formatGradeDisplay(currentAyGrade) || "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900/70">
+                      Status
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-3">
+                      <label className="inline-flex items-center gap-1.5 text-sm text-amber-950">
+                        <input
+                          type="radio"
+                          name="academic-status"
+                          disabled={academicStatusSaving}
+                          checked={currentAyStatus !== "repeating"}
+                          onChange={() => void saveAcademicRepeating(false)}
+                        />
+                        Normal
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-sm text-amber-950">
+                        <input
+                          type="radio"
+                          name="academic-status"
+                          disabled={academicStatusSaving}
+                          checked={currentAyStatus === "repeating"}
+                          onChange={() => void saveAcademicRepeating(true)}
+                        />
+                        Repeating
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-amber-900/80">
+                  Repeating = 本學年（{currentAcademicYear}）繼續讀同一級，不在 9/1 升班。會寫入 Grade History，並同步舊版留班標記以相容升班 cron。
+                </p>
+                {historyRows.length ? (
+                  <div className="mt-3 overflow-x-auto rounded-md border border-amber-200/80 bg-white">
+                    <p className="border-b border-amber-100 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900/70">
+                      Grade History
+                    </p>
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="bg-amber-50/80 text-amber-900/80">
+                        <tr>
+                          <th className="px-3 py-1.5 font-semibold">Academic Year</th>
+                          <th className="px-3 py-1.5 font-semibold">Grade</th>
+                          <th className="px-3 py-1.5 font-semibold">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historyRows.map((row) => (
+                          <tr key={row.academicYear} className="border-t border-amber-100">
+                            <td className="px-3 py-1.5 text-slate-800">{row.academicYear}</td>
+                            <td className="px-3 py-1.5 text-slate-800">
+                              {formatGradeDisplay(row.grade) || row.grade}
+                            </td>
+                            <td className="px-3 py-1.5 capitalize text-slate-700">{row.status}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+                {academicStatusError ? (
+                  <p className="mt-2 text-xs font-medium text-rose-700">{academicStatusError}</p>
+                ) : null}
+                {academicStatusSaving ? (
+                  <p className="mt-1 text-[10px] text-amber-900/70">儲存中…</p>
+                ) : null}
+              </div>
+            </div>
           ) : null}
         </div>
       </div>

@@ -34,12 +34,14 @@ import {
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { normalizeStudentId } from "@/lib/studentId";
-import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
+import { formatGradeDisplay, gradeRank } from "@/lib/grade";
 import {
-  inferGradeAtSheetEnd,
+  getStudentGradeForMonth,
+  gradeForFeePricing as gradeForFeePricingLib,
   isLowerFeeTier,
   sumSlotTuitionHkdFromDates,
 } from "@/lib/studentFeePricingGrade";
+import type { GradeHistoryByAcademicYear, GradeHistoryByStudentId } from "@/lib/studentGradeHistory";
 import {
   DEFAULT_FEE_TIER_BUNDLE,
   resolveFeeTierSettingsForStudent,
@@ -291,6 +293,8 @@ function buildMonthlyArrearsRows(params: {
   yearState: StudentLesson2026State | undefined;
   legacyWeekdays: string[];
   feeTierBundle: StudentFeeTierBundle;
+  heldBackYears?: readonly number[] | null;
+  gradeHistory?: GradeHistoryByAcademicYear | null;
   isMonthInactiveForFee?: (month1to12: number) => boolean;
   isDateInactive?: (dateIso: string) => boolean;
 }): MonthlyArrearsRow[] {
@@ -307,6 +311,8 @@ function buildMonthlyArrearsRows(params: {
     yearState,
     legacyWeekdays,
     feeTierBundle,
+    heldBackYears,
+    gradeHistory,
     isMonthInactiveForFee,
     isDateInactive,
   } = params;
@@ -354,6 +360,8 @@ function buildMonthlyArrearsRows(params: {
       sheetYear,
       m,
       m === sheetMonth ? currentRecord.feePricingGrade : String(hist?.feePricingGrade ?? ""),
+      heldBackYears,
+      gradeHistory,
     );
     const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student.id, sheetYear, m);
     const expected = sumSlotTuitionHkdFromDates({
@@ -742,9 +750,17 @@ function gradeForFeePricing(
   sheetYear: number,
   sheetMonth: number,
   feePricingGradeStored: string,
+  heldBackYears?: readonly number[] | null,
+  gradeHistory?: GradeHistoryByAcademicYear | null,
 ): string {
-  const fgRaw = normalizeGradeCode(feePricingGradeStored);
-  return /^F[1-6]$/.test(fgRaw) ? fgRaw : inferGradeAtSheetEnd(student.grade, sheetYear, sheetMonth);
+  return gradeForFeePricingLib(
+    student.grade,
+    sheetYear,
+    sheetMonth,
+    feePricingGradeStored,
+    heldBackYears,
+    gradeHistory,
+  );
 }
 
 const defaultRecordState = (): RecordState => ({
@@ -826,6 +842,12 @@ export default function StudentsLessonTimeFeeRecordPage({
   const [balanceAdjustmentByStudentId, setBalanceAdjustmentByStudentId] = useState<
     Record<string, StudentFeeBalanceAdjustment>
   >(() => initialHydrated.balanceAdjustmentByStudentId);
+  const [heldBackYearsByStudentId, setHeldBackYearsByStudentId] = useState<Record<string, number[]>>(
+    () => initialHydrated.heldBackYearsByStudentId ?? {},
+  );
+  const [gradeHistoryByStudentId, setGradeHistoryByStudentId] = useState<GradeHistoryByStudentId>(
+    () => initialHydrated.gradeHistoryByStudentId ?? {},
+  );
   /** 已存庫嘅「計價年級／劃一價」（fee_start..上月），用於重算以往月應收港幣。 */
   const [historicalMonthFeeByStudentId, setHistoricalMonthFeeByStudentId] = useState(
     () => initialHydrated.historicalMonthFeeByStudentId,
@@ -943,6 +965,8 @@ export default function StudentsLessonTimeFeeRecordPage({
     setOpeningBalanceTableMissing(hydrated.openingBalanceTableMissing);
     setOpeningBalanceSaveMsg(hydrated.openingBalanceSaveMsg);
     setBalanceAdjustmentByStudentId(hydrated.balanceAdjustmentByStudentId);
+    setHeldBackYearsByStudentId(hydrated.heldBackYearsByStudentId ?? {});
+    setGradeHistoryByStudentId(hydrated.gradeHistoryByStudentId ?? {});
     setBalanceAdjustmentTableMissing(hydrated.balanceAdjustmentTableMissing);
     setBalanceAdjustmentSaveMsg(hydrated.balanceAdjustmentSaveMsg);
     setLessonRecordsByStudentId(hydrated.lessonRecordsByStudentId as Record<string, LessonRecord[]>);
@@ -1135,10 +1159,16 @@ export default function StudentsLessonTimeFeeRecordPage({
   const sheetGradeByStudentId = useMemo(() => {
     const out: Record<string, string> = {};
     for (const st of students) {
-      out[st.id] = inferGradeAtSheetEnd(st.grade, sheetYear, sheetMonth);
+      out[st.id] = getStudentGradeForMonth({
+        currentGrade: st.grade,
+        sheetYear,
+        sheetMonth,
+        historyByAcademicYear: gradeHistoryByStudentId[st.id],
+        heldBackYears: heldBackYearsByStudentId[st.id],
+      });
     }
     return out;
-  }, [students, sheetYear, sheetMonth]);
+  }, [students, sheetYear, sheetMonth, heldBackYearsByStudentId, gradeHistoryByStudentId]);
 
   const sortedStudents = useMemo(() => {
     const getRec = (id: string) => recordsByStudentId[id];
@@ -1202,13 +1232,19 @@ export default function StudentsLessonTimeFeeRecordPage({
       const vis = visibilityByStudentId[st.id];
       out[st.id] = makeStudentInactiveDateCheckerFromPeriods({
         studentId: st.id,
-        grade: inferGradeAtSheetEnd(st.grade, sheetYear, sheetMonth),
+        grade: getStudentGradeForMonth({
+          currentGrade: st.grade,
+          sheetYear,
+          sheetMonth,
+          historyByAcademicYear: gradeHistoryByStudentId[st.id],
+          heldBackYears: heldBackYearsByStudentId[st.id],
+        }),
         year: sheetYear,
         periods: vis?.periods ?? [],
       });
     }
     return out;
-  }, [students, visibilityByStudentId, sheetYear, sheetMonth]);
+  }, [students, visibilityByStudentId, sheetYear, sheetMonth, heldBackYearsByStudentId, gradeHistoryByStudentId]);
 
   const isMonthInactiveForFeeByStudentId = useMemo(() => {
     const out: Record<string, (month1to12: number) => boolean> = {};
@@ -1217,14 +1253,20 @@ export default function StudentsLessonTimeFeeRecordPage({
       out[st.id] = (month1to12: number) =>
         isStudentHiddenForFeeSheetMonthFromPeriods({
           studentId: st.id,
-          grade: inferGradeAtSheetEnd(st.grade, sheetYear, month1to12),
+          grade: getStudentGradeForMonth({
+            currentGrade: st.grade,
+            sheetYear,
+            sheetMonth: month1to12,
+            historyByAcademicYear: gradeHistoryByStudentId[st.id],
+            heldBackYears: heldBackYearsByStudentId[st.id],
+          }),
           periods: vis?.periods ?? [],
           sheetYear,
           sheetMonth: month1to12,
         });
     }
     return out;
-  }, [students, visibilityByStudentId, sheetYear]);
+  }, [students, visibilityByStudentId, sheetYear, heldBackYearsByStudentId, gradeHistoryByStudentId]);
 
   const attendedLessonsInMonthByStudentId = useMemo(() => {
     const out: Record<string, number> = {};
@@ -1550,7 +1592,14 @@ export default function StudentsLessonTimeFeeRecordPage({
       }
       const r = recordsByStudentId[st.id] ?? defaultRecordState();
       const dates = fullLessonDatesByStudentId[st.id] ?? [];
-      const gradeFor = gradeForFeePricing(st, sheetYear, currentMonth, r.feePricingGrade);
+      const gradeFor = gradeForFeePricing(
+        st,
+        sheetYear,
+        currentMonth,
+        r.feePricingGrade,
+        heldBackYearsByStudentId[st.id],
+        gradeHistoryByStudentId[st.id],
+      );
       const tier = resolveFeeTierSettingsForStudent(feeTierBundle, st.id, sheetYear, currentMonth);
       out[st.id] = sumSlotTuitionHkdFromDates({
         fullLessonDates: dates,
@@ -1567,6 +1616,8 @@ export default function StudentsLessonTimeFeeRecordPage({
     sheetMonth,
     feeTierBundle,
     isMonthInactiveForFeeByStudentId,
+    heldBackYearsByStudentId,
+    gradeHistoryByStudentId,
   ]);
 
   const priorExpectedTuitionSumByStudentId = useMemo(() => {
@@ -1589,7 +1640,14 @@ export default function StudentsLessonTimeFeeRecordPage({
           isDateInactive: inactiveDateCheckerByStudentId[st.id],
         });
         const hist = historicalMonthFeeByStudentId[st.id]?.[m];
-        const gradeFor = gradeForFeePricing(st, sheetYear, m, hist?.feePricingGrade ?? "");
+        const gradeFor = gradeForFeePricing(
+          st,
+          sheetYear,
+          m,
+          hist?.feePricingGrade ?? "",
+          heldBackYearsByStudentId[st.id],
+          gradeHistoryByStudentId[st.id],
+        );
         const tier = resolveFeeTierSettingsForStudent(feeTierBundle, st.id, sheetYear, m);
         sum += sumSlotTuitionHkdFromDates({ fullLessonDates: dates, gradeFor, feeTierSettings: tier });
       }
@@ -1607,6 +1665,8 @@ export default function StudentsLessonTimeFeeRecordPage({
     historicalMonthFeeByStudentId,
     inactiveDateCheckerByStudentId,
     isMonthInactiveForFeeByStudentId,
+    heldBackYearsByStudentId,
+    gradeHistoryByStudentId,
   ]);
 
   const balanceBeforeByStudentId = useMemo(() => {
@@ -1764,6 +1824,8 @@ export default function StudentsLessonTimeFeeRecordPage({
       yearState: lessonYearStateByStudentId[st.id],
       legacyWeekdays: weekdayTokensByStudentId[st.id] ?? [],
       feeTierBundle,
+      heldBackYears: heldBackYearsByStudentId[st.id],
+      gradeHistory: gradeHistoryByStudentId[st.id],
       isMonthInactiveForFee: isMonthInactiveForFeeByStudentId[st.id],
       isDateInactive: inactiveDateCheckerByStudentId[st.id],
     });
@@ -1781,6 +1843,8 @@ export default function StudentsLessonTimeFeeRecordPage({
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
     feeTierBundle,
+    heldBackYearsByStudentId,
+    gradeHistoryByStudentId,
     inactiveDateCheckerByStudentId,
     isMonthInactiveForFeeByStudentId,
   ]);
@@ -1937,8 +2001,8 @@ export default function StudentsLessonTimeFeeRecordPage({
                         學費按該表月份的上課年級（9/1 升班前會顯示升班前年級）＋ F1–F3／F4–F6 價目計算。若資料庫曾鎖定計價年級或劃一價，仍會沿用。
                       </span>
                       <span className="mt-1.5 block rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-snug text-amber-950">
-                        <span className="font-semibold">留班（重讀同級）：</span>
-                        若會跑 9/1 全表升班，可於 8/31 將學籍暫改為低一級（例 F.3→F.2），升班後確認檔案仍回到 F.3。
+                        <span className="font-semibold">留班／學年年級：</span>
+                        在該生 <span className="font-semibold">Lesson Record</span> 的 Academic Status 設為 Repeating。費用表按該月份所屬 Academic Year 的 Grade History 顯示年級（不再只靠倒推）。
                       </span>
                       {sheetYear === OPENING_BALANCE_AS_OF_YEAR &&
                       (openingBalanceSaveMsg || openingBalanceTableMissing) ? (
@@ -2289,6 +2353,8 @@ export default function StudentsLessonTimeFeeRecordPage({
                               onRemarksChange={onRemarksChange}
                               currentMonthExpectedMoney={currentMonthExpectedTuitionByStudentId[st.id] ?? 0}
                               feeTierBundle={feeTierBundle}
+                              heldBackYears={heldBackYearsByStudentId[st.id]}
+                              gradeHistory={gradeHistoryByStudentId[st.id]}
                               onFeeDetailOpen={onFeeDetailOpen}
                             />
                           );
@@ -2569,6 +2635,8 @@ type StudentFeeRowProps = {
   /** 本月課表有日期嘅檔位數（用於 $xx(N堂) 顯示）。 */
   thisMonthDatedSlotCount: number;
   feeTierBundle: StudentFeeTierBundle;
+  heldBackYears?: readonly number[] | null;
+  gradeHistory?: GradeHistoryByAcademicYear | null;
   onFeeDetailOpen: (dialog: { kind: "arrears"; studentId: string; title: string } | { kind: "makeup"; studentId: string }) => void;
 };
 
@@ -2652,6 +2720,8 @@ const StudentFeeRow = memo(function StudentFeeRow({
   currentMonthExpectedMoney,
   thisMonthDatedSlotCount,
   feeTierBundle,
+  heldBackYears,
+  gradeHistory,
   onFeeDetailOpen,
 }: StudentFeeRowProps) {
   const lessonDates = lessonDatesSerialized ? lessonDatesSerialized.split("|") : [];
@@ -2683,11 +2753,13 @@ const StudentFeeRow = memo(function StudentFeeRow({
     expectedSessions: record.expected,
   });
 
-  const gradeForOpening = inferGradeAtSheetEnd(
-    student.grade,
-    OPENING_BALANCE_AS_OF_YEAR,
-    OPENING_BALANCE_AS_OF_MONTH,
-  );
+  const gradeForOpening = getStudentGradeForMonth({
+    currentGrade: student.grade,
+    sheetYear: OPENING_BALANCE_AS_OF_YEAR,
+    sheetMonth: OPENING_BALANCE_AS_OF_MONTH,
+    historyByAcademicYear: gradeHistory,
+    heldBackYears,
+  });
   const openingTier = resolveFeeTierSettingsForStudent(
     feeTierBundle,
     student.id,
