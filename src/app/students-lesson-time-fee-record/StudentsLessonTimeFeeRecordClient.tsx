@@ -1132,14 +1132,23 @@ export default function StudentsLessonTimeFeeRecordPage({
     saveTimersRef.set(key, t);
   }, [recordsByStudentId, saveTimersRef, sheetMonth, sheetYear]);
 
+  const sheetGradeByStudentId = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const st of students) {
+      out[st.id] = inferGradeAtSheetEnd(st.grade, sheetYear, sheetMonth);
+    }
+    return out;
+  }, [students, sheetYear, sheetMonth]);
+
   const sortedStudents = useMemo(() => {
     const getRec = (id: string) => recordsByStudentId[id];
+    const gradeOf = (st: StudentRow) => sheetGradeByStudentId[st.id] || st.grade;
 
     return [...students].sort((a, b) => {
-      // default: F1 -> F6, then by student ID
+      // default: F1 -> F6 (as of sheet month), then by student ID
       if (!sortConfig) {
-        const ga = gradeRank(a.grade);
-        const gb = gradeRank(b.grade);
+        const ga = gradeRank(gradeOf(a));
+        const gb = gradeRank(gradeOf(b));
         if (ga !== gb) return ga - gb;
         return a.id.localeCompare(b.id);
       }
@@ -1157,7 +1166,7 @@ export default function StudentsLessonTimeFeeRecordPage({
           result = (a.name_zh ?? "").localeCompare(b.name_zh ?? "", "zh-Hant");
           break;
         case "grade":
-          result = gradeRank(a.grade) - gradeRank(b.grade);
+          result = gradeRank(gradeOf(a)) - gradeRank(gradeOf(b));
           break;
         case "weekday":
           result = (ra?.weekday ?? "").localeCompare(rb?.weekday ?? "", "zh-Hant");
@@ -1174,7 +1183,7 @@ export default function StudentsLessonTimeFeeRecordPage({
 
       return result * multiplier;
     });
-  }, [students, recordsByStudentId, sortConfig]);
+  }, [students, recordsByStudentId, sortConfig, sheetGradeByStudentId]);
 
   const weekdayTokensByStudentId = useMemo(() => {
     const out: Record<string, string[]> = {};
@@ -1645,7 +1654,7 @@ export default function StudentsLessonTimeFeeRecordPage({
       const matchesGrade =
         normalizedSearch.length > 0 ||
         gradeFilter === "all" ||
-        formatGradeDisplay(st.grade) === gradeFilter;
+        formatGradeDisplay(sheetGradeByStudentId[st.id] || st.grade) === gradeFilter;
       const matchesWeekday =
         weekdayFilter === "all" ||
         (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
@@ -1696,6 +1705,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     attendedLessonsInMonthByStudentId,
     makeupLiveCountByStudentId,
     totalDueByStudentId,
+    sheetGradeByStudentId,
   ]);
 
   const {
@@ -1924,7 +1934,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                     <div className="mt-0.5 max-w-[52rem] text-[11px] text-slate-500">
                       {`Total Due = 期初結餘（截至 ${OPENING_BALANCE_AS_OF_EN_PHRASE}）＋ ${FEE_SYSTEM_START_EN_PHRASE} 起累計學費 − 已繳 ＋ 本月學費 ＋ 調整／優惠。舊系統月份不會逐月回填。`}
                       <span className="mt-0.5 block text-slate-600">
-                        學費按學籍年級＋9/1 升班推算（F1–F3／F4–F6 價目）。若資料庫曾鎖定計價年級或劃一價，仍會沿用。
+                        學費按該表月份的上課年級（9/1 升班前會顯示升班前年級）＋ F1–F3／F4–F6 價目計算。若資料庫曾鎖定計價年級或劃一價，仍會沿用。
                       </span>
                       <span className="mt-1.5 block rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-snug text-amber-950">
                         <span className="font-semibold">留班（重讀同級）：</span>
@@ -2143,6 +2153,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                           />
                           <SortableHeader
                             label="Grade"
+                            sublabel="as of month"
                             columnKey="grade"
                             sortConfig={sortConfig}
                             setSortConfig={setSortConfig}
@@ -2243,12 +2254,17 @@ export default function StudentsLessonTimeFeeRecordPage({
                           ).length;
                           const lessonDatesSerialized = (lessonDatesByStudentId[st.id] ?? []).join("|");
                           const prev = index > 0 ? filteredSortedStudents[index - 1] : null;
+                          const sheetGrade = sheetGradeByStudentId[st.id] || st.grade;
+                          const prevSheetGrade = prev
+                            ? sheetGradeByStudentId[prev.id] || prev.grade
+                            : "";
                           const showGradeSeparatorTop =
-                            prev != null && prev.grade.trim() !== st.grade.trim();
+                            prev != null && prevSheetGrade.trim() !== sheetGrade.trim();
                           return (
                             <StudentFeeRow
                               key={st.id}
                               student={st}
+                              sheetGrade={sheetGrade}
                               record={r}
                               underPaid={underPaid}
                               arrearsDue={arrearsDue}
@@ -2528,6 +2544,8 @@ type SortableHeaderProps = {
 
 type StudentFeeRowProps = {
   student: StudentRow;
+  /** Grade as of the fee sheet month (Sept-1 promotion rollback). */
+  sheetGrade: string;
   record: RecordState;
   underPaid: boolean;
   arrearsDue: number;
@@ -2613,6 +2631,7 @@ function FeeTierPriceFields({
 
 const StudentFeeRow = memo(function StudentFeeRow({
   student,
+  sheetGrade,
   record,
   underPaid,
   arrearsDue,
@@ -2724,8 +2743,9 @@ const StudentFeeRow = memo(function StudentFeeRow({
       <td
         className="sticky z-30 whitespace-nowrap bg-inherit px-4 py-4 text-sm text-slate-700"
         style={{ left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH, minWidth: STICKY_GRADE_WIDTH }}
+        title="該表月份的上課年級（9/1 升班前會顯示升班前年級）"
       >
-        {formatGradeDisplay(student.grade) || "—"}
+        {formatGradeDisplay(sheetGrade) || "—"}
       </td>
       <td
         className="sticky z-30 whitespace-nowrap border-r border-slate-200 bg-inherit px-4 py-4 text-sm text-slate-700"
