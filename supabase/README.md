@@ -7,13 +7,11 @@
 | 順序 | 檔案 | 說明 |
 |------|------|------|
 | 1 | `supabase-students.sql` | 建立 `students` 表與 RLS |
-| 2 | `supabase_student_lessons_schema.sql` | 學生考試日、課堂記錄、導師、課室、年度課表等核心表（開頭含 teacher→tutor 更名，可重複執行） |
+| 2 | `supabase_student_lessons_schema.sql` | 學生考試日、課堂記錄、導師、課室、年度課表等核心表（含 `tutors.color_hex`、`student_timetable_day_remarks`；開頭含 teacher→tutor 更名，可重複執行） |
 | 3 | `supabase_app_payroll_settings.sql` | 多人同時段「第一席位」金額（`app_payroll_settings`） |
-| 4 | `supabase_tutor_color_hex.sql` | 導師顯示色碼欄位 |
-| 5 | `supabase_classrooms_regular_period_max.sql` | 課室「恆常每時段上限」欄位（`/regular-class-timetable` 餘額） |
-| 6 | `supabase_timetable_day_remarks.sql` | 學生×日期 remarks（若仍使用相關功能） |
-| 7 | `supabase_student_monthly_fee_records.sql` | 學生每月手填欄位（學費記錄頁） |
-| 8 | `supabase_student_fee_opening_balances.sql` | 學費記錄頁「Opening balance（截至 2026/04 月底）」 |
+| 4 | `supabase_classrooms_regular_period_max.sql` | 課室「恆常每時段上限」欄位（`/regular-class-timetable` 餘額） |
+| 5 | `supabase_student_monthly_fee_records.sql` | 學生每月手填欄位（學費記錄頁） |
+| 6 | `supabase_student_fee_opening_balances.sql` | 學費記錄頁「Opening balance（截至 2026/04 月底）」 |
 
 ## 僅在「舊庫仍是 teachers / teacher_rates」時
 
@@ -52,7 +50,7 @@ PostgreSQL 常用做法（本 repo 腳本已盡量跟住）：
 
 ### 3. 兩條 remarks 腳本唔知用邊條
 
-- 對照 **表名**（本專案為 `student_timetable_day_remarks`，見 `supabase_timetable_day_remarks.sql`）。
+- 對照 **表名**（本專案為 `student_timetable_day_remarks`，見 `supabase_student_lessons_schema.sql`）。
 - 喺 Supabase **Table Editor** 睇該表是否已存在；已存在就只保留 **與 repo 一致** 嗰條，另一條刪除或改名。
 
 ## 檔案一覽
@@ -60,11 +58,9 @@ PostgreSQL 常用做法（本 repo 腳本已盡量跟住）：
 | 檔案 | 用途摘要 |
 |------|----------|
 | `supabase-students.sql` | 學生主表 |
-| `supabase_student_lessons_schema.sql` | 課程／導師／課室／JSON 課表等 |
+| `supabase_student_lessons_schema.sql` | 課程／導師／課室／JSON 課表等（含 `tutors.color_hex`、`student_timetable_day_remarks`） |
 | `supabase_app_payroll_settings.sql` | 薪資設定（多人第一席位金額） |
-| `supabase_tutor_color_hex.sql` | `tutors.color_hex` |
 | `supabase_classrooms_regular_period_max.sql` | `classrooms.regular_period_max` |
-| `supabase_timetable_day_remarks.sql` | `student_timetable_day_remarks` |
 | `supabase_student_monthly_fee_records.sql` | `student_monthly_fee_records` |
 | `supabase_student_fee_opening_balances.sql` | `student_fee_opening_balances`（期初結餘） |
 | `supabase_migrate_teacher_to_tutor.sql` | 舊表名遷移至 tutor（僅舊庫需要） |
