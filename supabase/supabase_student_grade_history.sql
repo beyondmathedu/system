@@ -1,5 +1,12 @@
 -- Student grade history by Academic Year (Sept 1 → next Aug 31).
 -- academic_year e.g. '2026-27'.
+--
+-- Apply order (Supabase SQL Editor):
+--   1) supabase_student_held_back_years.sql
+--   2) supabase_student_grade_history.sql  (this file)
+--   3) supabase_grade_promotion_write_history.sql
+--   4) supabase_migrate_held_back_to_grade_history.sql  (preview first)
+-- Optional one-time seed: seed_held_back_2026_elvin_ashley.sql (after step 1)
 
 create table if not exists public.student_grade_history (
   student_id text not null references public.students(id) on delete cascade,

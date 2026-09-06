@@ -1,5 +1,6 @@
 -- Seed 2026 留班 for 何焯傑 Elvin + 朱翠頤 Ashley.
 -- Run AFTER supabase_student_held_back_years.sql
+-- Then run supabase_migrate_held_back_to_grade_history.sql to copy into Grade History.
 -- promotion_year 2026 = skip 2026-09-01 promotion (stay same form for 2026/9–2027/8).
 
 insert into public.student_held_back_years (student_id, promotion_year, note)
