@@ -6,6 +6,11 @@
 import { normalizeGradeCode } from "@/lib/grade";
 import type { StudentFeeTierBundle } from "@/lib/studentFeeTierSettings";
 import {
+  coerceFeeBalanceAdjustment,
+  readFeeBalanceAdjustmentsFromLocal,
+  type StudentFeeBalanceAdjustment,
+} from "@/lib/studentFeeBalanceAdjustment";
+import {
   FEE_OPENING_BALANCE_AS_OF_YEAR,
   readFeeOpeningBalancesFromLocal,
 } from "@/lib/studentFeeOpeningBalance";
@@ -49,6 +54,11 @@ export type FeeRecordBootstrapApiBody = {
   yearStatesMap?: Record<string, StudentLesson2026State>;
   openingResult?: {
     balances: Record<string, number>;
+    error?: string;
+    tableMissing?: boolean;
+  };
+  adjustmentResult?: {
+    adjustments: Record<string, StudentFeeBalanceAdjustment>;
     error?: string;
     tableMissing?: boolean;
   };
@@ -107,6 +117,9 @@ export type HydratedFeeRecordBootstrap = {
   openingBalanceByStudentId: Record<string, number>;
   openingBalanceTableMissing: boolean;
   openingBalanceSaveMsg: string;
+  balanceAdjustmentByStudentId: Record<string, StudentFeeBalanceAdjustment>;
+  balanceAdjustmentTableMissing: boolean;
+  balanceAdjustmentSaveMsg: string;
   lessonRecordsByStudentId: Record<string, unknown[]>;
   lessonYearStateByStudentId: Record<string, StudentLesson2026State>;
   feeTierBundle: StudentFeeTierBundle | null;
@@ -116,9 +129,14 @@ export function hydrateFeeRecordBootstrap(
   body: FeeRecordBootstrapApiBody,
   sheetYear: number,
   sheetMonth: number,
-  options?: { mergeLocalOpeningBalances?: boolean; lCount?: number },
+  options?: {
+    mergeLocalOpeningBalances?: boolean;
+    mergeLocalBalanceAdjustments?: boolean;
+    lCount?: number;
+  },
 ): HydratedFeeRecordBootstrap {
   const mergeLocal = options?.mergeLocalOpeningBalances !== false;
+  const mergeLocalAdj = options?.mergeLocalBalanceAdjustments !== false;
   const lCount = options?.lCount ?? 9;
   const mapped = body.students ?? [];
   const visibilityByStudentId = body.visibilityByStudentId ?? {};
@@ -208,6 +226,29 @@ export function hydrateFeeRecordBootstrap(
     }
   }
 
+  const adjustmentResult = body.adjustmentResult ?? { adjustments: {} };
+  const localAdj =
+    mergeLocalAdj && typeof window !== "undefined" ? readFeeBalanceAdjustmentsFromLocal() : {};
+  // DB first, then local backup when cloud write failed or page reloaded before save finished.
+  const balanceAdjustmentByStudentId: Record<string, StudentFeeBalanceAdjustment> = {
+    ...Object.fromEntries(
+      Object.entries(adjustmentResult.adjustments ?? {}).map(([sid, adj]) => [
+        sid,
+        coerceFeeBalanceAdjustment(adj),
+      ]),
+    ),
+    ...Object.fromEntries(
+      Object.entries(localAdj).map(([sid, adj]) => [sid, coerceFeeBalanceAdjustment(adj)]),
+    ),
+  };
+  const balanceAdjustmentTableMissing = Boolean(adjustmentResult.tableMissing);
+  let balanceAdjustmentSaveMsg = "";
+  if (adjustmentResult.error) {
+    balanceAdjustmentSaveMsg = adjustmentResult.tableMissing
+      ? "調整／優惠表未建立：請在 Supabase 執行 supabase/supabase_student_fee_balance_adjustments.sql（已暫存本機）"
+      : `調整／優惠讀取失敗：${adjustmentResult.error}（已用本機備份）`;
+  }
+
   const lessonRecordsByStudentId: Record<string, unknown[]> = {};
   const lessonYearStateByStudentId: Record<string, StudentLesson2026State> = {};
   for (const st of mapped) {
@@ -228,6 +269,9 @@ export function hydrateFeeRecordBootstrap(
     openingBalanceByStudentId,
     openingBalanceTableMissing,
     openingBalanceSaveMsg,
+    balanceAdjustmentByStudentId,
+    balanceAdjustmentTableMissing,
+    balanceAdjustmentSaveMsg,
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
     feeTierBundle: body.feeTierBundle ?? null,

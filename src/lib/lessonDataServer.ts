@@ -457,6 +457,16 @@ function isMissingOpeningBalanceTableError(message: string): boolean {
   );
 }
 
+function isMissingBalanceAdjustmentTableError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("does not exist") ||
+    m.includes("schema cache") ||
+    (m.includes("student_fee_balance_adjustments") &&
+      (m.includes("could not find") || m.includes("not found")))
+  );
+}
+
 export async function loadStudentFeeOpeningBalancesServer(
   supabase: SupabaseClient,
   studentIds: string[],
@@ -490,6 +500,46 @@ export async function loadStudentFeeOpeningBalancesServer(
     balances[sid] = Number((row as { opening_balance?: number | null }).opening_balance ?? 0) || 0;
   }
   return { balances };
+}
+
+export async function loadStudentFeeBalanceAdjustmentsServer(
+  supabase: SupabaseClient,
+  studentIds: string[],
+): Promise<{
+  adjustments: Record<string, { amount: number; reason: string }>;
+  error?: string;
+  tableMissing?: boolean;
+}> {
+  if (!studentIds.length) return { adjustments: {} };
+
+  const { data, error } = await fetchRowsInChunks({
+    ids: studentIds,
+    concurrency: 8,
+    query: (chunk) =>
+      supabase
+        .from("student_fee_balance_adjustments")
+        .select("student_id, amount, reason")
+        .in("student_id", chunk),
+  });
+
+  if (error) {
+    return {
+      adjustments: {},
+      error,
+      tableMissing: isMissingBalanceAdjustmentTableError(error),
+    };
+  }
+
+  const adjustments: Record<string, { amount: number; reason: string }> = {};
+  for (const row of data ?? []) {
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    if (!sid) continue;
+    adjustments[sid] = {
+      amount: Number((row as { amount?: number | null }).amount ?? 0) || 0,
+      reason: String((row as { reason?: string | null }).reason ?? ""),
+    };
+  }
+  return { adjustments };
 }
 
 export type FeeRecordStudentVisibility = {
@@ -564,7 +614,7 @@ export async function loadFeeRecordBootstrap(
       ? loadStudentFeeOpeningBalancesServer(supabase, ids)
       : Promise.resolve({ balances: {} as Record<string, number> });
 
-  const [metricsResult, feeRows, recordsMap, yearStatesMap, openingResult, feeTierBundle] =
+  const [metricsResult, feeRows, recordsMap, yearStatesMap, openingResult, adjustmentResult, feeTierBundle] =
     await Promise.all([
       ids.length
         ? loadLessonMetricsBatchServer(supabase, ids, sheetYear)
@@ -580,6 +630,9 @@ export async function loadFeeRecordBootstrap(
       ids.length ? loadLessonScheduleRecordsBatchServer(supabase, ids) : Promise.resolve({}),
       ids.length ? loadLessonYearStatesBatchServer(supabase, ids, sheetYear) : Promise.resolve({}),
       openingPromise,
+      ids.length
+        ? loadStudentFeeBalanceAdjustmentsServer(supabase, ids)
+        : Promise.resolve({ adjustments: {} as Record<string, { amount: number; reason: string }> }),
       loadStudentFeeTierSettingsAdmin(supabase),
     ]);
 
@@ -599,6 +652,7 @@ export async function loadFeeRecordBootstrap(
     recordsMap,
     yearStatesMap,
     openingResult,
+    adjustmentResult,
     feeStartMonth,
     endMonthForPricing,
     visibilityByStudentId,
@@ -612,7 +666,10 @@ async function loadFeeRecordBootstrapUncached(sheetYear: number, sheetMonth: num
   return loadFeeRecordBootstrap(getSupabaseAdmin(), { sheetYear, sheetMonth });
 }
 
-type FeeRecordBootstrapCachedCore = Omit<FeeRecordBootstrapPayload, "openingResult">;
+type FeeRecordBootstrapCachedCore = Omit<
+  FeeRecordBootstrapPayload,
+  "openingResult" | "adjustmentResult"
+>;
 
 /** Cached fee-sheet bootstrap (students + schedules + fee rows + tiers). */
 export async function loadFeeRecordBootstrapCached(
@@ -624,8 +681,9 @@ export async function loadFeeRecordBootstrapCached(
   const cached = await unstable_cache(
     async (): Promise<FeeRecordBootstrapCachedCore> => {
       const payload = await loadFeeRecordBootstrapUncached(y, m);
-      const { openingResult, ...rest } = payload;
+      const { openingResult, adjustmentResult, ...rest } = payload;
       void openingResult;
+      void adjustmentResult;
       return rest;
     },
     ["fee-record-bootstrap-v3", String(y), String(m)],
@@ -633,12 +691,17 @@ export async function loadFeeRecordBootstrapCached(
   )();
 
   const ids = cached.students.map((s) => s.id);
-  const openingResult =
+  const supabase = getSupabaseAdmin();
+  const [openingResult, adjustmentResult] = await Promise.all([
     y === FEE_OPENING_BALANCE_AS_OF_YEAR
-      ? await loadStudentFeeOpeningBalancesServer(getSupabaseAdmin(), ids)
-      : { balances: {} as Record<string, number> };
+      ? loadStudentFeeOpeningBalancesServer(supabase, ids)
+      : Promise.resolve({ balances: {} as Record<string, number> }),
+    ids.length
+      ? loadStudentFeeBalanceAdjustmentsServer(supabase, ids)
+      : Promise.resolve({ adjustments: {} as Record<string, { amount: number; reason: string }> }),
+  ]);
 
-  return { ...cached, openingResult };
+  return { ...cached, openingResult, adjustmentResult };
 }
 
 export async function upsertStudentFeeOpeningBalanceAdmin(
@@ -658,6 +721,31 @@ export async function upsertStudentFeeOpeningBalanceAdmin(
   );
   if (error) {
     return { ok: false, error: error.message, tableMissing: isMissingOpeningBalanceTableError(error.message) };
+  }
+  return { ok: true };
+}
+
+export async function upsertStudentFeeBalanceAdjustmentAdmin(
+  studentId: string,
+  adjustment: { amount: number; reason: string },
+): Promise<{ ok: boolean; error?: string; tableMissing?: boolean }> {
+  const amount = Number(adjustment.amount) || 0;
+  const reason = String(adjustment.reason ?? "");
+  const { error } = await getSupabaseAdmin().from("student_fee_balance_adjustments").upsert(
+    {
+      student_id: studentId,
+      amount,
+      reason,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "student_id" },
+  );
+  if (error) {
+    return {
+      ok: false,
+      error: error.message,
+      tableMissing: isMissingBalanceAdjustmentTableError(error.message),
+    };
   }
   return { ok: true };
 }
