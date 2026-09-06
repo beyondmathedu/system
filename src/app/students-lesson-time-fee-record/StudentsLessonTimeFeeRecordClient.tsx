@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -20,6 +21,12 @@ import {
   upsertStudentFeeOpeningBalance,
   writeFeeOpeningBalanceToLocal,
 } from "@/lib/studentFeeOpeningBalance";
+import {
+  emptyFeeBalanceAdjustment,
+  upsertStudentFeeBalanceAdjustment,
+  writeFeeBalanceAdjustmentToLocal,
+  type StudentFeeBalanceAdjustment,
+} from "@/lib/studentFeeBalanceAdjustment";
 import {
   upsertStudentMonthlyFeeRecord,
   type StudentLesson2026State,
@@ -270,12 +277,13 @@ function countDatedLessonSlots(dates: string[]): number {
   return dates.filter((d) => String(d ?? "").trim()).length;
 }
 
-/** 欠款明細表：期初結餘（如有）＋ 系統起算月至當前表月份，每月應繳／已繳／尚欠。 */
+/** 欠款明細表：期初結餘（如有）＋ 系統起算月至當前表月份，每月應繳／已繳／尚欠＋調整／優惠。 */
 function buildMonthlyArrearsRows(params: {
   student: StudentRow;
   sheetYear: number;
   sheetMonth: number;
   openingBalance: number;
+  balanceAdjustment?: StudentFeeBalanceAdjustment;
   currentRecord: RecordState;
   historicalMonthFee: Partial<Record<number, { lessonUnitPrice: number; feePricingGrade: string }>>;
   submittedByMonth: Partial<Record<number, number>>;
@@ -291,6 +299,7 @@ function buildMonthlyArrearsRows(params: {
     sheetYear,
     sheetMonth,
     openingBalance,
+    balanceAdjustment,
     currentRecord,
     historicalMonthFee,
     submittedByMonth,
@@ -359,6 +368,19 @@ function buildMonthlyArrearsRows(params: {
       lessonCount,
       paid,
       outstanding: expected - paid,
+    });
+  }
+  const adjAmount = Number(balanceAdjustment?.amount) || 0;
+  const adjReason = String(balanceAdjustment?.reason ?? "").trim();
+  if (Math.abs(adjAmount) >= 0.005 || adjReason) {
+    rows.push({
+      key: "adjustment",
+      monthLabel: adjReason || "調整／優惠",
+      expected: adjAmount,
+      lessonCount: 0,
+      paid: 0,
+      outstanding: adjAmount,
+      isLegacyOpening: true,
     });
   }
   return rows;
@@ -459,23 +481,112 @@ function FeeMakeupDetailPanel({
   );
 }
 
+function isSpecialArrearsRow(row: MonthlyArrearsRow): boolean {
+  // 期初結餘仍在「只看尚欠」顯示；二人同行／調整只在「全部月份」出現。
+  return row.key === "opening";
+}
+
+function isOpenArrearsRow(row: MonthlyArrearsRow): boolean {
+  if (row.key === "adjustment") return false;
+  return Math.abs(row.outstanding) >= 0.005 || isSpecialArrearsRow(row);
+}
+
+function arrearsRowYearLabel(row: MonthlyArrearsRow): string | null {
+  const fromKey = row.key.match(/^(\d{4})-/);
+  if (fromKey) return `${fromKey[1]} 年`;
+  const fromLabel = row.monthLabel.match(/^(\d{4})\s*年/);
+  if (fromLabel) return `${fromLabel[1]} 年`;
+  return null;
+}
+
+const PAIR_DISCOUNT_PRESET_HKD = 300;
+const PAIR_DISCOUNT_PRESET_REASON = "二人同行";
+
 function FeeArrearsDetailTable({
   rows,
   totalOutstanding,
   balanceDueRemarks,
   onBalanceDueRemarksChange,
+  adjustmentAmount,
+  adjustmentReason,
+  onAdjustmentChange,
 }: {
   rows: MonthlyArrearsRow[];
   totalOutstanding: number;
   balanceDueRemarks: string;
   onBalanceDueRemarksChange: (value: string) => void;
+  adjustmentAmount: number;
+  adjustmentReason: string;
+  onAdjustmentChange: (next: StudentFeeBalanceAdjustment) => void;
 }) {
+  const [showAllMonths, setShowAllMonths] = useState(false);
+
+  const pairDiscountOn = Math.abs(Number(adjustmentAmount) || 0) >= 0.005;
+  const displayAmount = Math.abs(Number(adjustmentAmount) || 0);
+
+  const settledCount = useMemo(
+    () =>
+      rows.filter(
+        (row) => row.key !== "adjustment" && row.key !== "opening" && Math.abs(row.outstanding) < 0.005,
+      ).length,
+    [rows],
+  );
+  const visibleRows = useMemo(
+    () => (showAllMonths ? rows : rows.filter(isOpenArrearsRow)),
+    [rows, showAllMonths],
+  );
+  const yearCount = useMemo(() => {
+    const years = new Set<string>();
+    for (const row of rows) {
+      const y = arrearsRowYearLabel(row);
+      if (y) years.add(y);
+    }
+    return years.size;
+  }, [rows]);
+
+  let lastYearLabel: string | null = null;
+
   return (
-    <div className="space-y-4">
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold text-slate-600">
+          月份明細
+          <span className="ml-1 font-normal text-slate-500">
+            （{visibleRows.length}/{rows.length}）
+          </span>
+        </p>
+        <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-[11px]">
+          <button
+            type="button"
+            className={`rounded px-2 py-1 font-semibold transition ${
+              !showAllMonths ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-50"
+            }`}
+            onClick={() => setShowAllMonths(false)}
+          >
+            只看尚欠
+          </button>
+          <button
+            type="button"
+            className={`rounded px-2 py-1 font-semibold transition ${
+              showAllMonths ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-50"
+            }`}
+            onClick={() => setShowAllMonths(true)}
+          >
+            全部月份
+          </button>
+        </div>
+      </div>
+
+      {!showAllMonths && settledCount > 0 ? (
+        <p className="text-[10px] text-slate-500">
+          已隱藏 {settledCount} 個已結清月份；需要對賬時可切換「全部月份」。
+        </p>
+      ) : null}
+
+      <div className="max-h-[min(42vh,22rem)] overflow-auto rounded-lg border border-slate-200">
         <table className="w-full min-w-[20rem] border-collapse text-left text-xs">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-700">
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-700 shadow-sm">
               <th className="px-2.5 py-2">月份</th>
               <th className="px-2.5 py-2 text-right">應繳學費</th>
               <th className="px-2.5 py-2 text-right">已繳金額</th>
@@ -483,31 +594,55 @@ function FeeArrearsDetailTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.key} className="border-b border-slate-100 last:border-0">
-                <td className="px-2.5 py-2 text-slate-800">{row.monthLabel}</td>
-                <td className="px-2.5 py-2 text-right tabular-nums text-slate-800">
-                  {formatTuitionCell(row.expected, row.lessonCount, row.isLegacyOpening)}
-                </td>
-                <td className="px-2.5 py-2 text-right tabular-nums text-slate-700">
-                  ${formatHkMoneyAmount(row.paid)}
-                </td>
-                <td
-                  className={`px-2.5 py-2 text-right font-semibold tabular-nums ${
-                    row.outstanding > 0.005
-                      ? "text-rose-700"
-                      : row.outstanding < -0.005
-                        ? "text-emerald-700"
-                        : "text-slate-600"
-                  }`}
-                >
-                  ${formatHkMoneyAmount(row.outstanding)}
+            {visibleRows.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-2.5 py-4 text-center text-slate-500">
+                  目前沒有尚欠月份。
                 </td>
               </tr>
-            ))}
+            ) : (
+              visibleRows.map((row) => {
+                const yearLabel = arrearsRowYearLabel(row);
+                const showYearHeader =
+                  yearCount > 1 && yearLabel != null && yearLabel !== lastYearLabel;
+                if (showYearHeader) lastYearLabel = yearLabel;
+                return (
+                  <Fragment key={row.key}>
+                    {showYearHeader ? (
+                      <tr className="border-b border-slate-100 bg-slate-100/80">
+                        <td colSpan={4} className="px-2.5 py-1.5 text-[11px] font-bold text-slate-700">
+                          {yearLabel}
+                        </td>
+                      </tr>
+                    ) : null}
+                    <tr className="border-b border-slate-100 last:border-0">
+                      <td className="px-2.5 py-2 text-slate-800">{row.monthLabel}</td>
+                      <td className="px-2.5 py-2 text-right tabular-nums text-slate-800">
+                        {formatTuitionCell(row.expected, row.lessonCount, row.isLegacyOpening)}
+                      </td>
+                      <td className="px-2.5 py-2 text-right tabular-nums text-slate-700">
+                        ${formatHkMoneyAmount(row.paid)}
+                      </td>
+                      <td
+                        className={`px-2.5 py-2 text-right font-semibold tabular-nums ${
+                          row.outstanding > 0.005
+                            ? "text-rose-700"
+                            : row.outstanding < -0.005
+                              ? "text-emerald-700"
+                              : "text-slate-600"
+                        }`}
+                      >
+                        ${formatHkMoneyAmount(row.outstanding)}
+                      </td>
+                    </tr>
+                  </Fragment>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>
+
       <div className="rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-800">
         <p className="font-bold text-slate-900">
           總結尚欠總額：$
@@ -521,11 +656,79 @@ function FeeArrearsDetailTable({
           <p className="mt-1 text-slate-600">各月已結清。</p>
         ) : null}
       </div>
+
       <FeeRecordRemarksField
         label="欠款備註"
         remarks={balanceDueRemarks}
         onRemarksChange={onBalanceDueRemarksChange}
       />
+
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-3">
+        <p className="text-[11px] font-bold text-emerald-950">調整／優惠</p>
+        <label className="mt-2 flex cursor-pointer items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600"
+            checked={pairDiscountOn}
+            onChange={(e) => {
+              if (e.target.checked) {
+                const nextAbs =
+                  Math.abs(Number(adjustmentAmount) || 0) >= 0.005
+                    ? Math.abs(Number(adjustmentAmount) || 0)
+                    : PAIR_DISCOUNT_PRESET_HKD;
+                onAdjustmentChange({
+                  amount: -nextAbs,
+                  reason: adjustmentReason.trim() || PAIR_DISCOUNT_PRESET_REASON,
+                });
+                return;
+              }
+              onAdjustmentChange({ amount: 0, reason: "" });
+            }}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs font-semibold text-emerald-950">
+              二人同行優惠（預設 ${PAIR_DISCOUNT_PRESET_HKD}）
+            </span>
+            <span className="mt-0.5 block text-[10px] leading-snug text-emerald-900/80">
+              勾選即少收；金額可改。會計入 Total Due／Balance Due。
+            </span>
+          </span>
+        </label>
+        {pairDiscountOn ? (
+          <div className="mt-2 flex flex-wrap items-end gap-2 pl-6">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold text-slate-600">金額（港幣）</span>
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={displayAmount}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    onAdjustmentChange({
+                      amount: 0,
+                      reason: adjustmentReason.trim() || PAIR_DISCOUNT_PRESET_REASON,
+                    });
+                    return;
+                  }
+                  const num = Number(raw);
+                  if (!Number.isFinite(num)) return;
+                  onAdjustmentChange({
+                    amount: -Math.abs(num),
+                    reason: adjustmentReason.trim() || PAIR_DISCOUNT_PRESET_REASON,
+                  });
+                }}
+                className="w-[7.5rem] rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs tabular-nums text-slate-800 outline-none transition focus:border-[#1d76c2] focus:ring-1 focus:ring-[#1d76c2]/30"
+              />
+            </label>
+            <p className="pb-1.5 text-[10px] tabular-nums text-emerald-900/90">
+              實際少收 −${formatHkMoneyAmount(displayAmount)}
+              {adjustmentReason.trim() ? `（${adjustmentReason.trim()}）` : ""}
+            </p>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -620,6 +823,9 @@ export default function StudentsLessonTimeFeeRecordPage({
   const [openingBalanceByStudentId, setOpeningBalanceByStudentId] = useState(
     () => initialHydrated.openingBalanceByStudentId,
   );
+  const [balanceAdjustmentByStudentId, setBalanceAdjustmentByStudentId] = useState<
+    Record<string, StudentFeeBalanceAdjustment>
+  >(() => initialHydrated.balanceAdjustmentByStudentId);
   /** 已存庫嘅「計價年級／劃一價」（fee_start..上月），用於重算以往月應收港幣。 */
   const [historicalMonthFeeByStudentId, setHistoricalMonthFeeByStudentId] = useState(
     () => initialHydrated.historicalMonthFeeByStudentId,
@@ -638,6 +844,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   );
   const saveTimersRef = useState(() => new Map<string, number>())[0];
   const openingBalanceSaveTimersRef = useState(() => new Map<string, number>())[0];
+  const balanceAdjustmentSaveTimersRef = useState(() => new Map<string, number>())[0];
 
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
   const [gradeFilter, setGradeFilter] = useState<string>("F.1");
@@ -682,7 +889,14 @@ export default function StudentsLessonTimeFeeRecordPage({
   const [openingBalanceTableMissing, setOpeningBalanceTableMissing] = useState(
     () => initialHydrated.openingBalanceTableMissing,
   );
+  const [balanceAdjustmentSaveMsg, setBalanceAdjustmentSaveMsg] = useState(
+    () => initialHydrated.balanceAdjustmentSaveMsg,
+  );
+  const [balanceAdjustmentTableMissing, setBalanceAdjustmentTableMissing] = useState(
+    () => initialHydrated.balanceAdjustmentTableMissing,
+  );
   const pendingOpeningBalanceRef = useRef<Map<string, number>>(new Map());
+  const pendingBalanceAdjustmentRef = useRef<Map<string, StudentFeeBalanceAdjustment>>(new Map());
   const skipBootstrapFetchRef = useRef(true);
   type FeeDetailDialogState =
     | { kind: "arrears"; studentId: string; title: string }
@@ -727,6 +941,9 @@ export default function StudentsLessonTimeFeeRecordPage({
     setOpeningBalanceByStudentId(hydrated.openingBalanceByStudentId);
     setOpeningBalanceTableMissing(hydrated.openingBalanceTableMissing);
     setOpeningBalanceSaveMsg(hydrated.openingBalanceSaveMsg);
+    setBalanceAdjustmentByStudentId(hydrated.balanceAdjustmentByStudentId);
+    setBalanceAdjustmentTableMissing(hydrated.balanceAdjustmentTableMissing);
+    setBalanceAdjustmentSaveMsg(hydrated.balanceAdjustmentSaveMsg);
     setLessonRecordsByStudentId(hydrated.lessonRecordsByStudentId as Record<string, LessonRecord[]>);
     setLessonYearStateByStudentId(hydrated.lessonYearStateByStudentId);
     if (hydrated.feeTierBundle) {
@@ -823,16 +1040,70 @@ export default function StudentsLessonTimeFeeRecordPage({
     scheduleSaveOpeningBalance(studentId, nextValue);
   }, [scheduleSaveOpeningBalance]);
 
+  const flushPendingBalanceAdjustments = useCallback(() => {
+    for (const [studentId, value] of pendingBalanceAdjustmentRef.current) {
+      const existing = balanceAdjustmentSaveTimersRef.get(studentId);
+      if (existing) window.clearTimeout(existing);
+      balanceAdjustmentSaveTimersRef.delete(studentId);
+      void upsertStudentFeeBalanceAdjustment(studentId, value);
+    }
+    pendingBalanceAdjustmentRef.current.clear();
+  }, [balanceAdjustmentSaveTimersRef]);
+
+  const scheduleSaveBalanceAdjustment = useCallback(
+    (studentId: string, next: StudentFeeBalanceAdjustment) => {
+      pendingBalanceAdjustmentRef.current.set(studentId, next);
+      const existing = balanceAdjustmentSaveTimersRef.get(studentId);
+      if (existing) window.clearTimeout(existing);
+      const t = window.setTimeout(() => {
+        balanceAdjustmentSaveTimersRef.delete(studentId);
+        pendingBalanceAdjustmentRef.current.delete(studentId);
+        void upsertStudentFeeBalanceAdjustment(studentId, next).then((res) => {
+          if (res.ok) {
+            setBalanceAdjustmentTableMissing(false);
+            setBalanceAdjustmentSaveMsg("");
+            return;
+          }
+          setBalanceAdjustmentTableMissing(Boolean(res.tableMissing));
+          setBalanceAdjustmentSaveMsg(
+            res.tableMissing
+              ? "調整／優惠未能寫入雲端：請在 Supabase 執行 supabase/supabase_student_fee_balance_adjustments.sql（已暫存本機）"
+              : `調整／優惠儲存失敗：${res.error ?? "unknown"}（已暫存本機）`,
+          );
+        });
+      }, 600);
+      balanceAdjustmentSaveTimersRef.set(studentId, t);
+    },
+    [balanceAdjustmentSaveTimersRef],
+  );
+
+  const onBalanceAdjustmentChange = useCallback(
+    (studentId: string, next: StudentFeeBalanceAdjustment) => {
+      const normalized = {
+        amount: Number(next.amount) || 0,
+        reason: String(next.reason ?? ""),
+      };
+      writeFeeBalanceAdjustmentToLocal(studentId, normalized);
+      setBalanceAdjustmentByStudentId((prev) => ({ ...prev, [studentId]: normalized }));
+      scheduleSaveBalanceAdjustment(studentId, normalized);
+    },
+    [scheduleSaveBalanceAdjustment],
+  );
+
   useEffect(() => {
-    const onLeave = () => flushPendingOpeningBalances();
+    const onLeave = () => {
+      flushPendingOpeningBalances();
+      flushPendingBalanceAdjustments();
+    };
     window.addEventListener("beforeunload", onLeave);
     window.addEventListener("pagehide", onLeave);
     return () => {
       window.removeEventListener("beforeunload", onLeave);
       window.removeEventListener("pagehide", onLeave);
       flushPendingOpeningBalances();
+      flushPendingBalanceAdjustments();
     };
-  }, [flushPendingOpeningBalances]);
+  }, [flushPendingOpeningBalances, flushPendingBalanceAdjustments]);
 
   const scheduleSave = useCallback((studentId: string, patch: Partial<RecordState>) => {
     const key = `${studentId}:${sheetYear}:${sheetMonth}`;
@@ -1322,10 +1593,16 @@ export default function StudentsLessonTimeFeeRecordPage({
     for (const st of students) {
       const thisMonth = Number(currentMonthExpectedTuitionByStudentId[st.id] ?? 0) || 0;
       const balanceBefore = Number(balanceBeforeByStudentId[st.id] ?? 0) || 0;
-      out[st.id] = balanceBefore + thisMonth;
+      const adjustment = Number(balanceAdjustmentByStudentId[st.id]?.amount ?? 0) || 0;
+      out[st.id] = balanceBefore + thisMonth + adjustment;
     }
     return out;
-  }, [students, balanceBeforeByStudentId, currentMonthExpectedTuitionByStudentId]);
+  }, [
+    students,
+    balanceBeforeByStudentId,
+    currentMonthExpectedTuitionByStudentId,
+    balanceAdjustmentByStudentId,
+  ]);
 
   const filteredSortedStudents = useMemo(() => {
     const normalizedSearch = searchText.trim().toLowerCase();
@@ -1437,6 +1714,7 @@ export default function StudentsLessonTimeFeeRecordPage({
         sheetYear === OPENING_BALANCE_AS_OF_YEAR
           ? Number(openingBalanceByStudentId[st.id] ?? 0) || 0
           : 0,
+      balanceAdjustment: balanceAdjustmentByStudentId[st.id] ?? emptyFeeBalanceAdjustment(),
       currentRecord: recordsByStudentId[st.id] ?? defaultRecordState(),
       historicalMonthFee: historicalMonthFeeByStudentId[st.id] ?? {},
       submittedByMonth: submittedByStudentMonth[st.id] ?? {},
@@ -1454,6 +1732,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     sheetMonth,
     recordsByStudentId,
     openingBalanceByStudentId,
+    balanceAdjustmentByStudentId,
     historicalMonthFeeByStudentId,
     submittedByStudentMonth,
     weekdayTokensByStudentId,
@@ -1608,10 +1887,9 @@ export default function StudentsLessonTimeFeeRecordPage({
                       {sheetYear} / {MONTH_SHORT[sheetMonth - 1]} / Record Sheet
                     </div>
                     <div className="mt-0.5 max-w-[52rem] text-[11px] text-slate-500">
-                      {`Total Due = opening balance (as of ${OPENING_BALANCE_AS_OF_EN_PHRASE}) + carry-forward since ${FEE_SYSTEM_START_EN_PHRASE} + this month's tuition. Legacy pre-system months are not back-filled month-by-month.`}
+                      {`Total Due = 期初結餘（截至 ${OPENING_BALANCE_AS_OF_EN_PHRASE}）＋ ${FEE_SYSTEM_START_EN_PHRASE} 起累計學費 − 已繳 ＋ 本月學費 ＋ 調整／優惠。舊系統月份不會逐月回填。`}
                       <span className="mt-0.5 block text-slate-600">
-                        Tuition uses profile Grade + Sep 1 promotion inference (F1–F3 / F4–F6 tiers). Flat per-lesson or
-                        locked pricing grade in DB still apply if previously saved.
+                        學費按學籍年級＋9/1 升班推算（F1–F3／F4–F6 價目）。若資料庫曾鎖定計價年級或劃一價，仍會沿用。
                       </span>
                       <span className="mt-1.5 block rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-snug text-amber-950">
                         <span className="font-semibold">留班（重讀同級）：</span>
@@ -1622,6 +1900,12 @@ export default function StudentsLessonTimeFeeRecordPage({
                         <span className="mt-1.5 block rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-snug text-red-950">
                           {openingBalanceSaveMsg ||
                             "期初結餘表未建立：請在 Supabase 執行 supabase/supabase_student_fee_opening_balances.sql"}
+                        </span>
+                      ) : null}
+                      {balanceAdjustmentSaveMsg || balanceAdjustmentTableMissing ? (
+                        <span className="mt-1.5 block rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-snug text-red-950">
+                          {balanceAdjustmentSaveMsg ||
+                            "調整／優惠表未建立：請在 Supabase 執行 supabase/supabase_student_fee_balance_adjustments.sql"}
                         </span>
                       ) : null}
                     </div>
@@ -1945,6 +2229,11 @@ export default function StudentsLessonTimeFeeRecordPage({
                               showOpeningEditor={sheetYear === OPENING_BALANCE_AS_OF_YEAR}
                               openingBalance={openingBalanceByStudentId[st.id] ?? 0}
                               onOpeningBalanceChange={onOpeningBalanceChange}
+                              hasBalanceAdjustment={
+                                Math.abs(Number(balanceAdjustmentByStudentId[st.id]?.amount ?? 0) || 0) >=
+                                  0.005 ||
+                                Boolean(String(balanceAdjustmentByStudentId[st.id]?.reason ?? "").trim())
+                              }
                               onSubmittedChange={onSubmittedChange}
                               onRemarksChange={onRemarksChange}
                               currentMonthExpectedMoney={currentMonthExpectedTuitionByStudentId[st.id] ?? 0}
@@ -2162,6 +2451,15 @@ export default function StudentsLessonTimeFeeRecordPage({
                   onBalanceDueRemarksChange={(value) =>
                     onBalanceDueRemarksChange(feeDetailDialog.studentId, value)
                   }
+                  adjustmentAmount={
+                    Number(balanceAdjustmentByStudentId[feeDetailDialog.studentId]?.amount ?? 0) || 0
+                  }
+                  adjustmentReason={
+                    balanceAdjustmentByStudentId[feeDetailDialog.studentId]?.reason ?? ""
+                  }
+                  onAdjustmentChange={(next) =>
+                    onBalanceAdjustmentChange(feeDetailDialog.studentId, next)
+                  }
                 />
               ) : (
                 <FeeMakeupDetailPanel
@@ -2210,6 +2508,7 @@ type StudentFeeRowProps = {
   showOpeningEditor: boolean;
   openingBalance: number;
   onOpeningBalanceChange: (studentId: string, value: number) => void;
+  hasBalanceAdjustment: boolean;
   onSubmittedChange: (studentId: string, submitted: number) => void;
   onRemarksChange: (studentId: string, remarks: string) => void;
   /** 本月按階梯／劃一計出嘅應收港幣（同 Total Due − Prev 一致）。 */
@@ -2293,6 +2592,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
   showOpeningEditor,
   openingBalance,
   onOpeningBalanceChange,
+  hasBalanceAdjustment,
   onSubmittedChange,
   onRemarksChange,
   currentMonthExpectedMoney,
@@ -2463,6 +2763,9 @@ const StudentFeeRow = memo(function StudentFeeRow({
             {formatHkdWithLessons(balanceCarryForward, thisMonthDatedSlotCount)}
           </span>
           <span className="mt-0.5 block text-[9px] font-normal text-slate-500">查看明細</span>
+          {hasBalanceAdjustment ? (
+            <span className="mt-0.5 block text-[9px] font-medium text-emerald-700">含調整／優惠</span>
+          ) : null}
         </button>
       </td>
       {Array.from({ length: lColumnCount }, (_, i) => (
