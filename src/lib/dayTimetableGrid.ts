@@ -16,7 +16,10 @@ import {
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import { filterActiveStudentsOnDate } from "@/lib/activeStudentIds";
-import { inferGradeOnDate } from "@/lib/inferStudentGrade";
+import {
+  getStudentGradeForDate,
+  type GradeHistoryByStudentId,
+} from "@/lib/studentGradeHistory";
 import {
   buildStudentInactivePeriodsById,
   isStudentInactiveOnDateFromPeriods,
@@ -253,6 +256,8 @@ function buildFeePaymentToneByStudentId(
   }>,
   openingBalanceByStudentId: Record<string, number>,
   balanceAdjustmentByStudentId: Record<string, number>,
+  heldBackYearsByStudentId: Record<string, number[]>,
+  gradeHistoryByStudentId: GradeHistoryByStudentId,
   refYear: number,
   refMonth: number,
   dateIso: string,
@@ -334,7 +339,14 @@ function buildFeePaymentToneByStudentId(
       const lessonCount =
         weekdays.reduce((sum, wd) => sum + (base[wd] ?? 0), 0) + (extraCountByMonth.get(m) ?? 0);
       const pricing = pricingFor(key, refYear, m);
-      const gradeFor = gradeForFeePricing(String(st.grade ?? ""), refYear, m, pricing.feePricingGrade);
+      const gradeFor = gradeForFeePricing(
+        String(st.grade ?? ""),
+        refYear,
+        m,
+        pricing.feePricingGrade,
+        heldBackYearsByStudentId[key],
+        gradeHistoryByStudentId[key],
+      );
       const tier = resolveFeeTierSettingsForStudent(feeTierBundle, st.id, refYear, m);
       const expected = sumSlotTuitionHkdByLessonCount({
         lessonCount,
@@ -354,6 +366,8 @@ function buildFeePaymentToneByStudentId(
       refYear,
       refMonth,
       currentPricing.feePricingGrade,
+      heldBackYearsByStudentId[key],
+      gradeHistoryByStudentId[key],
     );
     const currentTier = resolveFeeTierSettingsForStudent(
       feeTierBundle,
@@ -556,6 +570,61 @@ async function fetchDayTimetablePayloadUncached(
     loadYearScheduleData(year),
     loadDayTimetableStyleSettings(),
   ]);
+  const allStudentIds = staticBundle.studentList.map((s) => s.id).filter(Boolean);
+  const [{ data: heldBackRows }, { data: gradeHistoryRows }] = allStudentIds.length
+    ? await Promise.all([
+        supabase
+          .from("student_held_back_years")
+          .select("student_id, promotion_year")
+          .in("student_id", allStudentIds),
+        supabase
+          .from("student_grade_history")
+          .select("student_id, academic_year, grade, status, note")
+          .in("student_id", allStudentIds),
+      ])
+    : [
+        { data: [] as Array<{ student_id?: string; promotion_year?: number }> },
+        {
+          data: [] as Array<{
+            student_id?: string;
+            academic_year?: string;
+            grade?: string;
+            status?: string;
+            note?: string;
+          }>,
+        },
+      ];
+  const heldBackYearsByStudentId: Record<string, number[]> = {};
+  for (const row of heldBackRows ?? []) {
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    const y = Math.trunc(
+      Number(
+        (row as { promotion_year?: number; academic_year?: number }).promotion_year ??
+          (row as { academic_year?: number }).academic_year,
+      ),
+    );
+    if (!sid || !Number.isFinite(y)) continue;
+    if (!heldBackYearsByStudentId[sid]) heldBackYearsByStudentId[sid] = [];
+    heldBackYearsByStudentId[sid].push(y);
+  }
+  const gradeHistoryByStudentId: GradeHistoryByStudentId = {};
+  for (const row of gradeHistoryRows ?? []) {
+    const sid = String((row as { student_id?: string }).student_id ?? "");
+    const academicYear = String((row as { academic_year?: string }).academic_year ?? "").trim();
+    const grade = String((row as { grade?: string }).grade ?? "").trim();
+    if (!sid || !/^\d{4}-\d{2}$/.test(academicYear) || !grade) continue;
+    if (!gradeHistoryByStudentId[sid]) gradeHistoryByStudentId[sid] = {};
+    gradeHistoryByStudentId[sid][academicYear] = {
+      academicYear,
+      grade,
+      status: (String((row as { status?: string }).status ?? "normal").toLowerCase() as
+        | "normal"
+        | "repeating"
+        | "promoted"
+        | "manual_adjustment"),
+      note: String((row as { note?: string }).note ?? ""),
+    };
+  }
   const {
     regularPeriodMaxByRoom,
     roomDisplayLabels,
@@ -575,7 +644,12 @@ async function fetchDayTimetablePayloadUncached(
     return withAutoF6InactivePeriod({
       periods: inactivePeriodsById.get(st.id) ?? [],
       studentId: st.id,
-      grade: inferGradeOnDate(st.grade ?? "", dateIso),
+      grade: getStudentGradeForDate({
+        currentGrade: st.grade ?? "",
+        dateIso,
+        historyByAcademicYear: gradeHistoryByStudentId[st.id],
+        heldBackYears: heldBackYearsByStudentId[st.id],
+      }),
       year: Number(String(dateIso ?? "").slice(0, 4)) || year,
     });
   }
@@ -816,6 +890,8 @@ async function fetchDayTimetablePayloadUncached(
       }>) ?? [],
       openingBalanceByStudentId,
       balanceAdjustmentByStudentId,
+      heldBackYearsByStudentId,
+      gradeHistoryByStudentId,
       year,
       month,
       dateIso,
@@ -879,7 +955,7 @@ export async function fetchDayTimetablePayload(
         includeInactiveMakeupSlots,
       }),
     [
-      "day-timetable-payload-v26",
+      "day-timetable-payload-v27",
       String(year),
       String(month),
       String(day),

@@ -78,10 +78,19 @@ describe("inferGradeAtSheetEnd after 1 Sept promotion", () => {
     }
   });
 
+  it("skips held-back Sept years when rolling back", () => {
+    // Current F4 stayed F4 through 2026/9 留班 → Aug 2026 is still F4 (not F3).
+    expect(inferGradeAtSheetEnd("F4", 2026, 8, [2026])).toBe("F4");
+    expect(inferGradeAtSheetEnd("F4", 2026, 9, [2026])).toBe("F4");
+    // Still rolls across an earlier real promotion (2025/9).
+    expect(inferGradeAtSheetEnd("F4", 2025, 8, [2026])).toBe("F3");
+  });
+
   it("uses the lesson date's month on inferGradeOnDate", () => {
     expect(inferGradeOnDate("F4", "2026-08-31")).toBe("F3");
     expect(inferGradeOnDate("F4", "2026-09-01")).toBe("F4");
     expect(inferGradeOnDate("F.6", "2026-06-15")).toBe("F5");
     expect(inferGradeOnDate("F.6", "2026-09-02")).toBe("F6");
+    expect(inferGradeOnDate("F4", "2026-08-15", [2026])).toBe("F4");
   });
 });

@@ -1,13 +1,22 @@
 import { gradeRank, normalizeGradeCode } from "@/lib/grade";
 import { studentIdInCurrentPriceList } from "@/lib/studentId";
 import type { StudentFeeTierBundle, StudentFeeTierSettings } from "@/lib/studentFeeTierSettings";
-import { inferGradeAtSheetEnd, monthEndIsoDate } from "@/lib/inferStudentGrade";
+import { monthEndIsoDate } from "@/lib/inferStudentGrade";
+import {
+  getStudentGradeForMonth,
+  type GradeHistoryByAcademicYear,
+} from "@/lib/studentGradeHistory";
 
 export {
   inferGradeAtSheetEnd,
   inferGradeOnDate,
   monthEndIsoDate,
 } from "@/lib/inferStudentGrade";
+
+export {
+  getStudentGradeForDate,
+  getStudentGradeForMonth,
+} from "@/lib/studentGradeHistory";
 
 /** HK calendar YYYY-MM-DD from ISO timestamp or date string. */
 export function studentCreatedAtToHkIsoDate(createdAt: string | number | Date | null | undefined): string {
@@ -58,9 +67,18 @@ export function gradeForFeePricing(
   sheetYear: number,
   sheetMonth: number,
   feePricingGradeStored: string,
+  heldBackYears?: ReadonlySet<number> | readonly number[] | null,
+  historyByAcademicYear?: GradeHistoryByAcademicYear | null,
 ): string {
   const fgRaw = normalizeGradeCode(feePricingGradeStored);
-  return /^F[1-6]$/.test(fgRaw) ? fgRaw : inferGradeAtSheetEnd(currentGrade, sheetYear, sheetMonth);
+  if (/^F[1-6]$/.test(fgRaw)) return fgRaw;
+  return getStudentGradeForMonth({
+    currentGrade,
+    sheetYear,
+    sheetMonth,
+    historyByAcademicYear,
+    heldBackYears,
+  });
 }
 
 /** F1–F3 / F4–F6 Normal unit price；供提示用。 */

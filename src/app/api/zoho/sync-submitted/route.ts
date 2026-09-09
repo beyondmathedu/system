@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { getViewerContext } from "@/lib/authz";
 import { gradeForFeePricing, sumSlotTuitionHkdByLessonCount } from "@/lib/studentFeePricingGrade";
 import {
   loadStudentFeeTierSettingsAdmin,
   resolveFeeTierSettingsForStudent,
 } from "@/lib/studentFeeTierSettings";
-import { FEE_RECORD_SELECT_PRICING } from "@/lib/studentMonthlyFeeRecordsCompat";
+import { SCHEDULE_CACHE_TAG_FEE_RECORD } from "@/lib/scheduleCacheTags";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { parseFeeMonthFromText } from "@/lib/zohoFeeMonthParse";
 
 type ZohoSalesReceipt = {
   sales_receipt_id?: string;
@@ -38,7 +40,14 @@ type ZohoSalesReceiptDetailResponse = {
   salesreceipt?: ZohoSalesReceipt;
   sales_receipt_details?: ZohoSalesReceipt;
 };
-type SyncRequestBody = { year?: number; month?: number; studentIds?: string[]; idOnly?: boolean };
+type SyncRequestBody = {
+  year?: number;
+  month?: number;
+  studentIds?: string[];
+  idOnly?: boolean;
+  /** When true, sync receipts for the whole calendar year (can overwrite older months). Default: target month ±1. */
+  fullYear?: boolean;
+};
 type StudentNameRow = {
   id: string;
   name_zh: string | null;
@@ -50,35 +59,9 @@ type ExistingFeeRow = {
   student_id: string;
   year: number;
   month: number;
+  submitted_amount: number | null;
   lesson_unit_price: number | null;
   fee_pricing_grade: string | null;
-};
-
-const MONTH_MAP: Record<string, number> = {
-  jan: 1,
-  january: 1,
-  feb: 2,
-  february: 2,
-  mar: 3,
-  march: 3,
-  apr: 4,
-  april: 4,
-  may: 5,
-  jun: 6,
-  june: 6,
-  jul: 7,
-  july: 7,
-  aug: 8,
-  august: 8,
-  sep: 9,
-  sept: 9,
-  september: 9,
-  oct: 10,
-  october: 10,
-  nov: 11,
-  november: 11,
-  dec: 12,
-  december: 12,
 };
 
 function normalizeName(s: string): string {
@@ -102,17 +85,6 @@ function studentIdFromBillToCode(code: string, studentIdSet: Set<string>): strin
     if (studentIdSet.has(c)) return c;
   }
   return null;
-}
-
-function monthFromText(text: string): number | null {
-  const t = text.toLowerCase();
-  const zh = /([1-9]|1[0-2])\s*月/.exec(t);
-  if (zh) return Number(zh[1]);
-  const en = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.exec(
-    text,
-  );
-  if (!en) return null;
-  return MONTH_MAP[en[1].toLowerCase()] ?? null;
 }
 
 /** Zoho 行 quantity＝已繳堂數（括號提示）；Total HKD（item_total 等）＝ Tuition Paid 金額。 */
@@ -536,7 +508,10 @@ export async function POST(request: Request) {
     }
 
     const accessToken = await getZohoAccessToken();
-    const widenWindow = Boolean(requestedStudentIds?.length);
+    // Only widen to the full calendar year when explicitly requested.
+    // Passing studentIds used to force full-year sync and overwrite older months (e.g. May)
+    // while viewing September — that wiped manual Tuition Paid edits.
+    const widenWindow = Boolean(body?.fullYear);
     const { dateStart, dateEnd } = buildSyncWindow(year, targetMonth, widenWindow);
     const receipts = await fetchAllReceipts(accessToken, orgId, dateStart, dateEnd);
     const maxDetailCalls = 500;
@@ -626,7 +601,7 @@ export async function POST(request: Request) {
         const text = [li.item_name, li.name, li.description, receiptNotes, JSON.stringify(li)]
           .map((x) => String(x ?? "").trim())
           .join(" ");
-        const month = monthFromText(text) ?? receiptMonthFallback;
+        const month = parseFeeMonthFromText(text) ?? receiptMonthFallback;
         if (!month) continue;
         parsedMonthLineItems += 1;
         const lessonCount = lineItemLessonCountWithFallback(liRec, receiptNotes);
@@ -678,7 +653,7 @@ export async function POST(request: Request) {
     const { data: existing } = studentIds.length
       ? await admin
           .from("student_monthly_fee_records")
-          .select(FEE_RECORD_SELECT_PRICING)
+          .select("student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade")
           .eq("year", year)
           .in("student_id", studentIds)
           .returns<ExistingFeeRow[]>()
@@ -686,13 +661,18 @@ export async function POST(request: Request) {
 
     const existingMap = new Map<
       string,
-      { lesson_unit_price: number | null; fee_pricing_grade: string | null }
+      {
+        submitted_amount: number;
+        lesson_unit_price: number | null;
+        fee_pricing_grade: string | null;
+      }
     >();
     for (const row of existing ?? []) {
       const sid = String(row.student_id ?? "");
       const mo = Number(row.month ?? 0);
       if (!sid || !mo) continue;
       existingMap.set(`${sid}:${mo}`, {
+        submitted_amount: Number(row.submitted_amount ?? 0) || 0,
         lesson_unit_price:
           row.lesson_unit_price == null || Number.isNaN(Number(row.lesson_unit_price))
             ? null
@@ -708,6 +688,7 @@ export async function POST(request: Request) {
       submitted_amount: number;
       submitted_lesson_count: number | null;
     }> = [];
+    const skippedPreserveExisting: string[] = [];
     const allKeys = new Set([
       ...Array.from(lessonsByStudentMonth.keys()),
       ...Array.from(amountByStudentMonth.keys()),
@@ -717,16 +698,24 @@ export async function POST(request: Request) {
       const month = Number(mStr);
       const lessonCount = lessonsByStudentMonth.get(key) ?? 0;
       let submitted = amountByStudentMonth.get(key) ?? 0;
+      const existingRow = existingMap.get(key);
+      const existingAmt = Number(existingRow?.submitted_amount ?? 0) || 0;
+      // Sync window is target ±1 month, so Sep sync can also see May/Jul line items on nearby
+      // receipts and wipe manual Tuition Paid. Only overwrite the sheet month being synced;
+      // for other months, fill empty cells but never clobber a non-zero existing amount.
+      if (month !== targetMonth && existingAmt > 0.005) {
+        skippedPreserveExisting.push(`${student_id}:${month}:keep$${existingAmt}`);
+        continue;
+      }
       if (submitted <= 0 && lessonCount > 0) {
         if (zohoMatchedKeys.has(key)) {
           continue;
         }
-        const ex = existingMap.get(key);
         const gradeFor = gradeForFeePricing(
           gradeByStudentId.get(student_id) ?? "",
           year,
           month,
-          ex?.fee_pricing_grade ?? "",
+          existingRow?.fee_pricing_grade ?? "",
         );
         const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student_id, year, month);
         submitted =
@@ -761,19 +750,23 @@ export async function POST(request: Request) {
       if (upErr) {
         return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
       }
+      // Bust fee-sheet bootstrap cache so Sep view immediately sees updated Aug (etc.) paid amounts.
+      revalidateTag(SCHEDULE_CACHE_TAG_FEE_RECORD, "max");
     }
 
     const monthSubmittedByStudentId: Record<string, number> = {};
     const monthSubmittedLessonCountByStudentId: Record<string, number> = {};
-    if (Number.isFinite(targetMonth) && targetMonth >= 1 && targetMonth <= 12) {
-      for (const row of upserts) {
-        if (row.month !== targetMonth) continue;
-        monthSubmittedByStudentId[row.student_id] =
-          (monthSubmittedByStudentId[row.student_id] ?? 0) + row.submitted_amount;
-        if (row.submitted_lesson_count != null && row.submitted_lesson_count > 0) {
-          monthSubmittedLessonCountByStudentId[row.student_id] =
-            (monthSubmittedLessonCountByStudentId[row.student_id] ?? 0) + row.submitted_lesson_count;
-        }
+    const submittedByStudentMonth: Record<string, Record<number, number>> = {};
+    for (const row of upserts) {
+      if (!submittedByStudentMonth[row.student_id]) submittedByStudentMonth[row.student_id] = {};
+      submittedByStudentMonth[row.student_id]![row.month] =
+        (submittedByStudentMonth[row.student_id]![row.month] ?? 0) + row.submitted_amount;
+      if (row.month !== targetMonth) continue;
+      monthSubmittedByStudentId[row.student_id] =
+        (monthSubmittedByStudentId[row.student_id] ?? 0) + row.submitted_amount;
+      if (row.submitted_lesson_count != null && row.submitted_lesson_count > 0) {
+        monthSubmittedLessonCountByStudentId[row.student_id] =
+          (monthSubmittedLessonCountByStudentId[row.student_id] ?? 0) + row.submitted_lesson_count;
       }
     }
 
@@ -792,6 +785,8 @@ export async function POST(request: Request) {
         detailFetchPreDiscount,
         zohoMatchedKeys: zohoMatchedKeys.size,
         zohoMissingNetKeys: zohoMissingNetKeys.size,
+        preservedExistingMonths: skippedPreserveExisting.length,
+        preservedExistingSamples: skippedPreserveExisting.slice(0, 8),
         tierAmountSamples: upserts.slice(0, 5).map((row) => {
           const lessons = row.submitted_lesson_count ?? 0;
           return `${row.student_id}:${row.month}:${lessons}堂=$${row.submitted_amount}`;
@@ -815,6 +810,7 @@ export async function POST(request: Request) {
         ),
       monthSubmittedByStudentId,
       monthSubmittedLessonCountByStudentId,
+      submittedByStudentMonth,
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);

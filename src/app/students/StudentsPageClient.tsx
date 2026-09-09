@@ -17,6 +17,10 @@ import {
 } from "@/lib/studentPortalCredentials";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 
+import {
+  loadHeldBackYearsByStudentIds,
+} from "@/lib/studentHeldBackYears";
+
 type Student = {
   id: string;
   nameZh: string;
@@ -31,6 +35,7 @@ type Student = {
   mathLanguage: string;
   birthTs: number;
   searchBlob: string;
+  heldBackYears: number[];
 };
 type SortDirection = "asc" | "desc";
 type SortConfig = { key: keyof Student; direction: SortDirection } | null;
@@ -68,7 +73,7 @@ export type StudentsPageInitialList = {
   portalStatusById: Record<string, StudentPortalStatus>;
 };
 
-type StudentForm = Omit<Student, "id" | "birthTs" | "searchBlob">;
+type StudentForm = Omit<Student, "id" | "birthTs" | "searchBlob" | "heldBackYears">;
 
 const emptyForm: StudentForm = {
   nameZh: "",
@@ -280,7 +285,7 @@ export default function StudentsPageClient({
           let hasMore = true;
           while (hasMore) {
             const body = await fetchBatch(offset, 200);
-            const mapped = (body.students ?? []).map(mapRowToStudent);
+            const mapped = await attachHeldBackYears((body.students ?? []).map(mapRowToStudent));
             merged.push(...mapped);
             Object.assign(mergedPortal, body.portalStatusById ?? {});
             total = body.total ?? merged.length;
@@ -296,7 +301,7 @@ export default function StudentsPageClient({
         }
 
         const body = await fetchBatch((page - 1) * STUDENTS_PAGE_SIZE, STUDENTS_PAGE_SIZE);
-        const mapped = (body.students ?? []).map(mapRowToStudent);
+        const mapped = await attachHeldBackYears((body.students ?? []).map(mapRowToStudent));
         setStudents(mapped);
         setPortalStatusById(body.portalStatusById ?? {});
         setSelectedIds((prev) => prev.filter((id) => mapped.some((s) => s.id === id)));
@@ -1251,6 +1256,16 @@ export default function StudentsPageClient({
                         </td>
                         <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
                           {formatGradeDisplay(student.grade)}
+                          {student.heldBackYears?.length ? (
+                            <span className="mt-0.5 block text-[10px] font-medium text-amber-800">
+                              留班
+                              {student.heldBackYears.length === 1
+                                ? `（${student.heldBackYears[0]}-${String(student.heldBackYears[0] + 1).slice(-2)}）`
+                                : ` ${student.heldBackYears
+                                    .map((y) => `${y}-${String(y + 1).slice(-2)}`)
+                                    .join(", ")}`}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
                           {student.mathLanguage}
@@ -1797,9 +1812,19 @@ function mapRowToStudent(row: StudentRow): Student {
     textbookPublisher: row.textbook_publisher ?? "",
     grade: normalizeGradeCode(row.grade),
     mathLanguage: row.math_language ?? "English",
+    heldBackYears: [] as number[],
     birthTs: Number.isFinite(parsedBirthTs) ? parsedBirthTs : Number.MAX_SAFE_INTEGER,
   };
   return { ...base, searchBlob: buildStudentSearchBlob(base) };
+}
+
+async function attachHeldBackYears(students: Student[]): Promise<Student[]> {
+  if (!students.length) return students;
+  const { byStudentId } = await loadHeldBackYearsByStudentIds(students.map((s) => s.id));
+  return students.map((s) => ({
+    ...s,
+    heldBackYears: byStudentId[s.id] ?? [],
+  }));
 }
 
 function mapFormToRow(form: StudentForm) {

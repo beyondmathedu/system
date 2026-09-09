@@ -17,6 +17,8 @@ import {
   enrichTutorMonthRowsWithPay,
   formatLessonTimeRangeLine,
   gradeRank,
+  ZERO_ATTENDANCE_GUARANTEE_LABEL,
+  ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID,
 } from "@/lib/tutorMonthlyPayroll";
 import { loadLatestTutorRates, loadPayrollSettings } from "@/lib/payrollSettings";
 import { readYmParts } from "@/lib/intlFormatParts";
@@ -108,21 +110,27 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
   );
 
   // 合併：同一「日期 + 時間」視為同一時段（同頁說明的 payGroupKey 規則）
+  // 零出勤保底列：按 date+time+room 獨立成組，永遠 1× Single，不與有出勤學生合併。
   const groupedRows = (() => {
     type Group = {
       groupKey: string;
       dateIso: string;
       dateDisplay: string;
       time: string;
+      room: string;
       hours: number;
       subtotal: number;
+      zeroAttendanceGuarantee: boolean;
       studentIdSet: Set<string>;
       students: Array<{ studentId: string; studentName: string; grade: string; amount: number }>;
     };
     const byKey = new Map<string, Group>();
     const ordered: Group[] = [];
     for (const r of rowsWithPay) {
-      const groupKey = `${r.dateIso}|||${r.time.trim().toLowerCase().replace(/\s+/g, " ")}`;
+      const timeKey = r.time.trim().toLowerCase().replace(/\s+/g, " ");
+      const groupKey = r.zeroAttendanceGuarantee
+        ? `guarantee|||${r.dateIso}|||${timeKey}|||${r.room.trim().toLowerCase()}`
+        : `${r.dateIso}|||${timeKey}`;
       const found = byKey.get(groupKey);
       if (!found) {
         const next: Group = {
@@ -130,8 +138,10 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           dateIso: r.dateIso,
           dateDisplay: r.dateDisplay,
           time: r.time,
+          room: r.room,
           hours: r.hours,
           subtotal: 0,
+          zeroAttendanceGuarantee: Boolean(r.zeroAttendanceGuarantee),
           studentIdSet: new Set([r.studentId]),
           students: [{ studentId: r.studentId, studentName: r.studentName, grade: r.grade, amount: 0 }],
         };
@@ -139,49 +149,60 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
         ordered.push(next);
         continue;
       }
-      // 同一時段若同一學生重複出現，只保留一次，且不重複計小計
       if (!found.studentIdSet.has(r.studentId)) {
         found.studentIdSet.add(r.studentId);
         found.students.push({ studentId: r.studentId, studentName: r.studentName, grade: r.grade, amount: 0 });
       }
     }
-      // 以「畫面實際顯示學生（已去重）」重算每時段小計，避免原始列重覆造成誤差
-      for (const g of ordered) {
-        const sorted = g.students
-          .map((st) => ({ ...st, band: classifyGradeBand(st.grade) }))
-          .sort((a, b) => {
-            const ra = gradeRank(a.grade);
-            const rb = gradeRank(b.grade);
-            if (ra !== rb) return ra - rb;
-            return a.studentId.localeCompare(b.studentId);
-          });
-        if (sorted.length === 0) {
-          g.subtotal = 0;
-          g.students = [];
-        } else if (sorted.length === 1) {
-          sorted[0].amount = rates.single;
-          g.subtotal = sorted[0].amount;
-          g.students = sorted.map(({ studentId, studentName, grade, amount }) => ({
-            studentId,
-            studentName,
-            grade,
-            amount,
-          }));
-        } else {
-          sorted[0].amount = multiStudentFirstAmount;
-          for (let i = 1; i < sorted.length; i++) {
-            sorted[i].amount = sorted[i].band === "senior" ? rates.senior : rates.junior;
-          }
-          g.students = sorted.map(({ studentId, studentName, grade, amount }) => ({
-            studentId,
-            studentName,
-            grade,
-            amount,
-          }));
-          g.subtotal = g.students.reduce((sum, st) => sum + (Number(st.amount) || 0), 0);
-        }
+    for (const g of ordered) {
+      if (g.zeroAttendanceGuarantee) {
+        g.subtotal = rates.single;
+        g.students = [
+          {
+            studentId: ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID,
+            studentName: ZERO_ATTENDANCE_GUARANTEE_LABEL,
+            grade: "",
+            amount: rates.single,
+          },
+        ];
         g.studentIdSet.clear();
+        continue;
       }
+      const sorted = g.students
+        .map((st) => ({ ...st, band: classifyGradeBand(st.grade) }))
+        .sort((a, b) => {
+          const ra = gradeRank(a.grade);
+          const rb = gradeRank(b.grade);
+          if (ra !== rb) return ra - rb;
+          return a.studentId.localeCompare(b.studentId);
+        });
+      if (sorted.length === 0) {
+        g.subtotal = 0;
+        g.students = [];
+      } else if (sorted.length === 1) {
+        sorted[0].amount = rates.single;
+        g.subtotal = sorted[0].amount;
+        g.students = sorted.map(({ studentId, studentName, grade, amount }) => ({
+          studentId,
+          studentName,
+          grade,
+          amount,
+        }));
+      } else {
+        sorted[0].amount = multiStudentFirstAmount;
+        for (let i = 1; i < sorted.length; i++) {
+          sorted[i].amount = sorted[i].band === "senior" ? rates.senior : rates.junior;
+        }
+        g.students = sorted.map(({ studentId, studentName, grade, amount }) => ({
+          studentId,
+          studentName,
+          grade,
+          amount,
+        }));
+        g.subtotal = g.students.reduce((sum, st) => sum + (Number(st.amount) || 0), 0);
+      }
+      g.studentIdSet.clear();
+    }
     return ordered;
   })();
   const monthTotal = groupedRows.reduce((sum, g) => sum + g.subtotal, 0);
@@ -205,17 +226,21 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
     const g = groupedRows[gi];
     const prevG = gi > 0 ? groupedRows[gi - 1] : null;
     const showDate = !prevG || prevG.dateIso !== g.dateIso;
-    const students = g.students.length > 0 ? g.students : [{ studentId: "", studentName: "—", grade: "—", amount: 0 }];
+    const students =
+      g.students.length > 0
+        ? g.students
+        : [{ studentId: "", studentName: "—", grade: "—", amount: 0 }];
     for (let si = 0; si < students.length; si++) {
       const st = students[si];
+      const isGuarantee = g.zeroAttendanceGuarantee || st.studentId === ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID;
       csvRows.push([
         !csvYearShown ? `${year}` : "",
         si === 0 && showDate ? csvDateText(g.dateIso) : "",
         si === 0 ? formatLessonTimeRangeLine(g.time, g.hours) ?? g.time : "",
         si === 0 ? g.hours : "",
-        st.studentId ? st.amount : "—",
-        st.grade || "—",
-        st.studentName || "—",
+        isGuarantee || st.studentId ? st.amount : "—",
+        isGuarantee ? "0 students" : st.grade || "—",
+        isGuarantee ? `${ZERO_ATTENDANCE_GUARANTEE_LABEL} · ${g.room}` : st.studentName || "—",
       ]);
       csvYearShown = true;
     }
@@ -284,20 +309,23 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
             <p className="mt-2 text-sm text-blue-100">
               {year}/{month}: expanded from all student schedules. Lessons are included when the tutor field matches
               any of this tutor&apos;s English name / Chinese name / nickname on the Tutor page (excluding cancelled
-              lessons), and only when attendance is ticked on the student schedule or room page. Inactive or graduated
-              students are still counted if attendance was ticked.
+              lessons). Attended ticks on the student schedule or room page count as normal pay. If a past or today
+              date+time+room still has this tutor scheduled but <strong>no student was ticked</strong>, the session
+              still pays <strong>1× Single Student Rate</strong> (0 students). Inactive or graduated students are
+              still counted if attendance was ticked.
             </p>
             <p className="mt-2 max-w-3xl text-xs leading-relaxed text-blue-100/95">
-              Subtotal rule: same date + same schedule time = same timeslot. If there is <strong>1 student</strong>,
-              use the tutor <strong>Single Student Rate {rates.single}</strong>. If there are <strong>2 or more
-              students</strong>, the <strong>lowest-grade student</strong> uses
+              Subtotal rule: same date + same schedule time = same timeslot for attended students. If there is{" "}
+              <strong>1 student</strong>, use the tutor <strong>Single Student Rate {rates.single}</strong>. If there
+              are <strong>2 or more students</strong>, the <strong>lowest-grade student</strong> uses
               <strong> {multiStudentFirstAmount}</strong> (editable in{" "}
               <Link href="/tutor-monthly-lesson-record" className="underline hover:text-white">
                 Tutor Monthly home
               </Link>{" "}
               ). Others use <strong>Junior {rates.junior}</strong> or <strong>Senior {rates.senior}</strong> by
               that month&apos;s grade (before 1 Sept = last year&apos;s form; F.1–F.3 Junior, F.4–F.6 Senior).
-              Unrecognized grade defaults to Junior. Hours are inferred from time range; otherwise 1.5.
+              Unrecognized grade defaults to Junior. Zero-attendance guarantee sessions always use Single and are not
+              merged into multi-student slots. Hours are inferred from time range; otherwise 1.5.
             </p>
           </div>
 
@@ -321,7 +349,12 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               </div>
               <div className="text-right text-xs text-slate-600">
                 <p>
-                  {groupedRows.length} sessions ({normalizedRowsForPay.length} student-slots)
+                  {groupedRows.length} sessions (
+                  {normalizedRowsForPay.filter((r) => !r.zeroAttendanceGuarantee).length} student-slots
+                  {normalizedRowsForPay.some((r) => r.zeroAttendanceGuarantee)
+                    ? ` · ${normalizedRowsForPay.filter((r) => r.zeroAttendanceGuarantee).length} zero-attendance`
+                    : ""}
+                  )
                 </p>
                 {normalizedRowsForPay.length > 0 ? (
                   <p className="mt-0.5 font-semibold text-slate-800">Monthly subtotal {monthTotal}</p>
@@ -384,8 +417,13 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                         return rows.map((st, sIdx) => {
                           const isFirstGlobalRow = renderedRows === 0;
                           renderedRows += 1;
+                          const isGuarantee =
+                            g.zeroAttendanceGuarantee || st.studentId === ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID;
                           return (
-                            <tr key={`${g.groupKey}:${st.studentId || "empty"}:${sIdx}`} className="text-slate-800">
+                            <tr
+                              key={`${g.groupKey}:${st.studentId || "empty"}:${sIdx}`}
+                              className={isGuarantee ? "bg-amber-50/70 text-slate-800" : "text-slate-800"}
+                            >
                               {isFirstGlobalRow ? (
                                 <td
                                   rowSpan={totalStudentRows}
@@ -401,6 +439,11 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                                   </td>
                                   <td rowSpan={rows.length} className="border border-slate-200 px-3 py-2 whitespace-nowrap tabular-nums">
                                     {formatLessonTimeRangeLine(g.time, g.hours) ?? g.time}
+                                    {isGuarantee && g.room ? (
+                                      <span className="mt-0.5 block text-[11px] font-medium text-amber-800">
+                                        Room {g.room}
+                                      </span>
+                                    ) : null}
                                   </td>
                                   <td rowSpan={rows.length} className="border border-slate-200 px-2 py-2 text-right tabular-nums">
                                     {g.hours}
@@ -408,19 +451,21 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                                 </>
                               ) : null}
                               <td className="border border-slate-200 px-2 py-2 text-right font-medium tabular-nums">
-                                {st.studentId ? st.amount : "—"}
+                                {isGuarantee || st.studentId ? st.amount : "—"}
                               </td>
-                              <td className="border border-slate-200 px-2 py-2">{formatGradeDisplay(st.grade) || "—"}</td>
+                              <td className="border border-slate-200 px-2 py-2">
+                                {isGuarantee ? "—" : formatGradeDisplay(st.grade) || "—"}
+                              </td>
                               <td className="border border-slate-200 px-3 py-2">
-                                {st.studentId ? (
-                                  <>
-                                    <Link
-                                      href={`/students/${encodeURIComponent(st.studentId)}/lessons`}
-                                      className="text-[#1d76c2] hover:underline"
-                                    >
-                                      {st.studentName}
-                                    </Link>
-                                  </>
+                                {isGuarantee ? (
+                                  <span className="text-amber-950">{st.studentName || ZERO_ATTENDANCE_GUARANTEE_LABEL}</span>
+                                ) : st.studentId ? (
+                                  <Link
+                                    href={`/students/${encodeURIComponent(st.studentId)}/lessons`}
+                                    className="text-[#1d76c2] hover:underline"
+                                  >
+                                    {st.studentName}
+                                  </Link>
                                 ) : (
                                   "—"
                                 )}

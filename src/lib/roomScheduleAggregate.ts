@@ -28,6 +28,7 @@ import { monthsToLoadForScheduleRange } from "@/lib/roomScheduleMonths";
 import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
 import { hasTutorNameCandidate } from "@/lib/tutorMonthCandidate";
 import { hasRoomScheduleCandidate } from "@/lib/roomScheduleCandidate";
+import { materializeTutorMonthPayRows } from "@/lib/tutorMonthlyPayroll";
 import { inferGradeOnDate } from "@/lib/inferStudentGrade";
 import {
   loadScheduleStudentsForYear,
@@ -395,6 +396,11 @@ export type TutorMonthLessonRow = {
   note: string;
   attended: boolean;
   sortTime: string;
+  /**
+   * Past/today slot had this tutor + scheduled students, but nobody ticked attendance.
+   * Counts as 1× Single Student Rate with student count 0.
+   */
+  zeroAttendanceGuarantee?: boolean;
 };
 
 async function fetchTutorMonthLessonRowsUncached(
@@ -421,7 +427,7 @@ async function fetchTutorMonthLessonRowsUncached(
   const { students, recMap, stateMap } = bundle;
   const supabase = getSupabaseAdmin();
   const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(supabase);
-  const out: TutorMonthLessonRow[] = [];
+  const candidates: TutorMonthLessonRow[] = [];
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
   const hasTutorCandidateById = new Map<string, boolean>();
   for (const st of students) {
@@ -454,8 +460,7 @@ async function fetchTutorMonthLessonRowsUncached(
         lessonType: r.lessonType,
         scheduleRuleId: r.scheduleRuleId,
       });
-      if (!attended) continue;
-      out.push({
+      candidates.push({
         rowKey: `${st.id}:${r.rowId}`,
         studentId: st.id,
         studentName,
@@ -467,21 +472,27 @@ async function fetchTutorMonthLessonRowsUncached(
         room: r.room,
         lessonType: r.lessonType,
         note: r.noteDisplay,
-        attended: true,
+        attended,
         sortTime: r.sortTime,
       });
     }
   }
 
-  const sortedRows = sortAggregatedRoomRows(out);
+  const todayIso = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const out = sortAggregatedRoomRows(materializeTutorMonthPayRows(candidates, todayIso));
   if (PERF_LOG_ENABLED) {
     const elapsedMs = Date.now() - perfStartedAt;
     const computeMs = Math.max(0, elapsedMs - perfDbElapsedMs);
     console.info(
-      `[perf] fetchTutorMonthLessonRows y=${year} m=${month} nameCount=${nameSet.size} students=${students.length} rows=${sortedRows.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
+      `[perf] fetchTutorMonthLessonRows y=${year} m=${month} nameCount=${nameSet.size} students=${students.length} rows=${out.length} dbMs=${perfDbElapsedMs} computeMs=${computeMs} elapsedMs=${elapsedMs}`,
     );
   }
-  return { rows: sortedRows, loadError: null };
+  return { rows: out, loadError: null };
 }
 
 export async function fetchTutorMonthLessonRows(
@@ -495,7 +506,7 @@ export async function fetchTutorMonthLessonRows(
   if (!nameKey) return { rows: [], loadError: null };
   return unstable_cache(
     async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
-    ["tutor-month-lessons-v6", nameKey, String(year), String(month)],
+    ["tutor-month-lessons-v7", nameKey, String(year), String(month)],
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }

@@ -710,6 +710,8 @@ export async function upsertStudentMonthlyFeeRecord(input: {
       .upsert(basePayload, { onConflict: "student_id,year,month" }));
   }
   if (error) throw error;
+  // Fee bootstrap caches submitted_amount for ~120s; invalidate after paid/remarks writes.
+  notifyScheduleCachesStale();
 }
 
 function hkTodayIso(now = new Date()): string {
