@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, DragEvent } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -9,6 +9,15 @@ import {
   type DayTimetablePayload,
   type RoomGroup,
 } from "@/lib/dayTimetableShared";
+import {
+  applyTempRoomMoves,
+  findOriginalRoomForStudent,
+  parseTempRoomMoveKey,
+  resolveTempDragStudentIds,
+  studentIdsInSameTimeRange,
+  tempRoomMoveKey,
+  type TempRoomMoveMap,
+} from "@/lib/dayTimetableTempLayout";
 import type {
   DayTimetableFeePaymentTone,
   DayTimetableStyleSettings,
@@ -200,6 +209,11 @@ type Props = {
   roomGroupsForTable?: readonly RoomGroup[];
   /** Daily page: allow per-room show/hide toggles to reduce empty columns. */
   enableRoomVisibilityToggle?: boolean;
+  /**
+   * Daily page: drag students across room columns for the same time only.
+   * Page-local layout; not saved; refresh clears.
+   */
+  enableTempRoomLayout?: boolean;
 };
 
 const COLS_PER_ROOM = 3;
@@ -250,11 +264,12 @@ export default function DayTimetableTable({
   roomScheduleQuery,
   roomGroupsForTable,
   enableRoomVisibilityToggle = false,
+  enableTempRoomLayout = false,
 }: Props) {
   const t = dayTimetableTableStrings;
   const {
-    rowFrames,
-    byTimeRoom,
+    rowFrames: payloadRowFrames,
+    byTimeRoom: payloadByTimeRoom,
     examById,
     regularPeriodMaxByRoom,
     roomDisplayLabels,
@@ -263,15 +278,163 @@ export default function DayTimetableTable({
     timetableStyle,
   } = payload;
   const baseRoomGroups: readonly RoomGroup[] = roomGroupsForTable ?? ROOM_GROUPS;
+  const [tempRoomMoves, setTempRoomMoves] = useState<TempRoomMoveMap>({});
+  /** Layout-only columns appended on the right (may have no tutor that day). */
+  const [tempAddedRooms, setTempAddedRooms] = useState<RoomGroup[]>([]);
+  /** Which header instance is editing: `${room}:::${instanceId}` */
+  const [renamingHeaderKey, setRenamingHeaderKey] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  /** Selected student keys (`time|||studentId`) for multi-drag, same time only. */
+  const [tempSelectedKeys, setTempSelectedKeys] = useState<string[]>([]);
+  const tempSelectAnchorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setTempRoomMoves({});
+    setTempAddedRooms([]);
+    setRenamingHeaderKey(null);
+    setDragOverKey(null);
+    setTempSelectedKeys([]);
+    tempSelectAnchorRef.current = null;
+  }, [dateIso]);
+
+  const effectiveRoomGroups = useMemo(() => {
+    const seen = new Set<string>(baseRoomGroups);
+    const extras = tempAddedRooms.filter((room) => {
+      if (seen.has(room)) return false;
+      seen.add(room);
+      return true;
+    });
+    return [...baseRoomGroups, ...extras] as RoomGroup[];
+  }, [baseRoomGroups, tempAddedRooms]);
+
+  const times = useMemo(() => payloadRowFrames.map((f) => f.time), [payloadRowFrames]);
+  const layout = useMemo(() => {
+    if (
+      !enableTempRoomLayout ||
+      (Object.keys(tempRoomMoves).length === 0 && tempAddedRooms.length === 0)
+    ) {
+      return { byTimeRoom: payloadByTimeRoom, rowFrames: payloadRowFrames };
+    }
+    return applyTempRoomMoves(payloadByTimeRoom, tempRoomMoves, effectiveRoomGroups, times);
+  }, [
+    enableTempRoomLayout,
+    tempRoomMoves,
+    tempAddedRooms.length,
+    payloadByTimeRoom,
+    payloadRowFrames,
+    effectiveRoomGroups,
+    times,
+  ]);
+  const byTimeRoom = layout.byTimeRoom;
+  const rowFrames = layout.rowFrames;
+  const tempMoveCount = Object.keys(tempRoomMoves).length;
+
   const roomLabel = useCallback(
     (room: RoomGroup) => roomDisplayLabels?.[room] ?? room,
     [roomDisplayLabels],
   );
+  const knownRoomsForAdd = useMemo(() => {
+    const seen = new Set<string>();
+    const out: RoomGroup[] = [];
+    for (const room of [
+      ...ROOM_GROUPS,
+      ...(payload.extraRoomGroups ?? []),
+      ...Object.keys(roomDisplayLabels ?? {}),
+    ]) {
+      if (!room || seen.has(room)) continue;
+      seen.add(room);
+      out.push(room);
+    }
+    return out;
+  }, [payload.extraRoomGroups, roomDisplayLabels]);
+  const addableRooms = useMemo(
+    () => knownRoomsForAdd.filter((room) => !effectiveRoomGroups.includes(room)),
+    [knownRoomsForAdd, effectiveRoomGroups],
+  );
+  const tempAddedRoomSet = useMemo(() => new Set(tempAddedRooms), [tempAddedRooms]);
+
+  const addTempRoomColumn = useCallback(
+    (room: RoomGroup) => {
+      const key = room.trim();
+      if (!key) return;
+      setTempAddedRooms((prev) => (prev.includes(key) || baseRoomGroups.includes(key) ? prev : [...prev, key]));
+    },
+    [baseRoomGroups],
+  );
+  const addNextTempColumn = useCallback(() => {
+    let n = 1;
+    const used = new Set(effectiveRoomGroups);
+    while (used.has(`Temp ${n}`)) n += 1;
+    const name = `Temp ${n}`;
+    addTempRoomColumn(name);
+    const instanceId = repeatRoomHeadersPerTimeSlot
+      ? (payloadRowFrames[0]?.time ?? "thead")
+      : "thead";
+    setRenamingHeaderKey(`${name}:::${instanceId}`);
+  }, [addTempRoomColumn, effectiveRoomGroups, payloadRowFrames, repeatRoomHeadersPerTimeSlot]);
+  const removeTempRoomColumn = useCallback((room: RoomGroup) => {
+    setTempAddedRooms((prev) => prev.filter((r) => r !== room));
+    setRenamingHeaderKey((cur) => (cur?.startsWith(`${room}:::`) ? null : cur));
+    setTempRoomMoves((prev) => {
+      let changed = false;
+      const next: TempRoomMoveMap = { ...prev };
+      for (const [key, toRoom] of Object.entries(prev)) {
+        if (toRoom === room) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+  const renameTempRoomColumn = useCallback(
+    (from: RoomGroup, toRaw: string) => {
+      const to = toRaw.trim().replace(/\s+/g, " ");
+      if (!to || to === from) {
+        setRenamingHeaderKey(null);
+        return;
+      }
+      const taken =
+        baseRoomGroups.includes(to) ||
+        tempAddedRooms.some((room) => room === to && room !== from);
+      if (taken) {
+        window.alert(`“${to}” is already used as a room column.`);
+        return;
+      }
+      setTempAddedRooms((prev) => prev.map((room) => (room === from ? to : room)));
+      setTempRoomMoves((prev) => {
+        let changed = false;
+        const next: TempRoomMoveMap = { ...prev };
+        for (const [key, toRoom] of Object.entries(prev)) {
+          if (toRoom === from) {
+            next[key] = to;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      setRenamingHeaderKey(null);
+    },
+    [baseRoomGroups, tempAddedRooms],
+  );
+  const resetTempLayout = useCallback(() => {
+    setTempRoomMoves({});
+    setTempAddedRooms([]);
+    setRenamingHeaderKey(null);
+    setDragOverKey(null);
+    setTempSelectedKeys([]);
+    tempSelectAnchorRef.current = null;
+  }, []);
+
   const repeatSlotRoomHint = useMemo(
-    () => baseRoomGroups.map((room) => roomDisplayLabels?.[room] ?? room).join(", "),
-    [baseRoomGroups, roomDisplayLabels],
+    () => effectiveRoomGroups.map((room) => roomDisplayLabels?.[room] ?? room).join(", "),
+    [effectiveRoomGroups, roomDisplayLabels],
   );
   const { roomsForTable, omittedRoomsToday } = useMemo(() => {
+    // Temp layout needs empty / added rooms as drop targets.
+    if (enableTempRoomLayout) {
+      return { roomsForTable: [...effectiveRoomGroups] as RoomGroup[], omittedRoomsToday: [] as RoomGroup[] };
+    }
     const withStudents = baseRoomGroups.filter((room) =>
       rowFrames.some((frame) => (byTimeRoom[`${frame.time}::${room}`] ?? []).length > 0),
     ) as RoomGroup[];
@@ -282,7 +445,87 @@ export default function DayTimetableTable({
         ? (baseRoomGroups.filter((r) => !withStudents.includes(r)) as RoomGroup[])
         : [];
     return { roomsForTable, omittedRoomsToday };
-  }, [rowFrames, byTimeRoom, baseRoomGroups]);
+  }, [rowFrames, byTimeRoom, baseRoomGroups, effectiveRoomGroups, enableTempRoomLayout]);
+
+  const tempSelectedSet = useMemo(() => new Set(tempSelectedKeys), [tempSelectedKeys]);
+
+  const orderedStudentIdsAtTime = useCallback(
+    (time: string) => {
+      const ids: string[] = [];
+      for (const room of roomsForTable) {
+        for (const c of byTimeRoom[`${time}::${room}`] ?? []) {
+          ids.push(c.studentId);
+        }
+      }
+      return ids;
+    },
+    [byTimeRoom, roomsForTable],
+  );
+
+  const selectTempStudent = useCallback(
+    (time: string, studentId: string, mode: "replace" | "toggle" | "range") => {
+      const key = tempRoomMoveKey(time, studentId);
+      if (mode === "replace") {
+        setTempSelectedKeys([key]);
+        tempSelectAnchorRef.current = key;
+        return;
+      }
+      if (mode === "toggle") {
+        setTempSelectedKeys((prev) => {
+          const sameTime = prev.filter((k) => k.startsWith(`${time}|||`));
+          const base = sameTime.length > 0 ? sameTime : [];
+          if (base.includes(key)) {
+            const next = base.filter((k) => k !== key);
+            tempSelectAnchorRef.current = next[next.length - 1] ?? key;
+            return next;
+          }
+          tempSelectAnchorRef.current = key;
+          return [...base, key];
+        });
+        return;
+      }
+      // range (Shift): same time only, from last anchor
+      const anchor = tempSelectAnchorRef.current;
+      const anchorParsed = anchor ? parseTempRoomMoveKey(anchor) : null;
+      if (!anchorParsed || anchorParsed.time !== time) {
+        setTempSelectedKeys([key]);
+        tempSelectAnchorRef.current = key;
+        return;
+      }
+      const rangeIds = studentIdsInSameTimeRange(
+        orderedStudentIdsAtTime(time),
+        anchorParsed.studentId,
+        studentId,
+      );
+      setTempSelectedKeys(rangeIds.map((id) => tempRoomMoveKey(time, id)));
+    },
+    [orderedStudentIdsAtTime],
+  );
+
+  const moveStudentsToRoom = useCallback(
+    (time: string, studentIds: readonly string[], toRoom: RoomGroup) => {
+      setTempRoomMoves((prev) => {
+        let changed = false;
+        const next: TempRoomMoveMap = { ...prev };
+        for (const studentId of studentIds) {
+          const original = findOriginalRoomForStudent(payloadByTimeRoom, time, studentId);
+          const key = tempRoomMoveKey(time, studentId);
+          if (!original || original === toRoom) {
+            if (key in next) {
+              delete next[key];
+              changed = true;
+            }
+            continue;
+          }
+          if (next[key] === toRoom) continue;
+          next[key] = toRoom;
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    },
+    [payloadByTimeRoom],
+  );
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
   const dailyCompactColumns = repeatRoomHeadersPerTimeSlot;
   const dailyNameCells = dailyCompactColumns || compactStudentNames;
@@ -322,6 +565,18 @@ export default function DayTimetableTable({
   const [showAllRemarks, setShowAllRemarks] = useState(false);
   const saveTimersRef = useRef<Map<string, number>>(new Map());
   const hideHoverTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!enableTempRoomLayout) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setTempSelectedKeys([]);
+      tempSelectAnchorRef.current = null;
+      setRenamingHeaderKey(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [enableTempRoomLayout]);
 
   useEffect(() => {
     setPermanentRemarksById(hideRemarks ? {} : (payload.timetablePermanentRemarksById ?? {}));
@@ -445,6 +700,8 @@ export default function DayTimetableTable({
     return Boolean((permanentRemarksById[studentId] ?? "").trim());
   }
 
+  const tempDragActiveRef = useRef(false);
+
   function renderStudentNameLabel(
     item: DayTimetableCell,
     nameSurf: { isDarkBg: boolean },
@@ -505,7 +762,19 @@ export default function DayTimetableTable({
     }
 
     return (
-      <Link id={anchorId} href={`/students/${encodeURIComponent(normalizeStudentId(item.studentId))}/lessons`} className={className}>
+      <Link
+        id={anchorId}
+        href={`/students/${encodeURIComponent(normalizeStudentId(item.studentId))}/lessons`}
+        className={className}
+        // Let the parent cell own HTML5 drag; default link drag blocks room moves.
+        draggable={false}
+        onClick={(e) => {
+          if (tempDragActiveRef.current || e.metaKey || e.ctrlKey || e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+      >
         {nameBody}
         {remarkDot}
       </Link>
@@ -536,36 +805,96 @@ export default function DayTimetableTable({
     return `year=${year}&month=${month}&period=custom&from=${dateIso}&to=${dateIso}`;
   }
 
-  function renderRoomHeader(room: RoomGroup) {
+  function renderRoomHeader(room: RoomGroup, instanceId: string) {
     const label = roomLabel(room);
     const href = buildRoomPageHref(room, effectiveRoomScheduleQuery(), payload.roomSlugByGroup);
-    const headerLabel = href ? (
-      <Link href={href} className="text-[#1d76c2] hover:underline">
-        {label}
-      </Link>
-    ) : (
-      label
-    );
-    if (!enableRoomVisibilityToggle) return headerLabel;
+    const isLayoutAdded = tempAddedRoomSet.has(room);
+    const headerKey = `${room}:::${instanceId}`;
+    const isEditingTitle = isLayoutAdded && renamingHeaderKey === headerKey;
+    const headerLabel =
+      href && !isLayoutAdded ? (
+        <Link href={href} className="text-[#1d76c2] hover:underline">
+          {label}
+        </Link>
+      ) : isLayoutAdded ? (
+        isEditingTitle ? (
+          <input
+            key={headerKey}
+            autoFocus
+            defaultValue={room}
+            className="w-full min-w-[2.5rem] max-w-[5.5rem] rounded border border-amber-400 bg-white px-0.5 py-0 text-center text-[9px] font-semibold leading-tight text-amber-950 sm:max-w-[6.5rem] sm:text-[10px] lg:text-xs"
+            aria-label="Rename layout room"
+            title="Rename"
+            onFocus={(e) => e.currentTarget.select()}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                renameTempRoomColumn(room, e.currentTarget.value);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setRenamingHeaderKey(null);
+              }
+            }}
+            onBlur={(e) => renameTempRoomColumn(room, e.currentTarget.value)}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setRenamingHeaderKey(headerKey)}
+            className="min-w-0 truncate text-amber-900 underline decoration-amber-300 decoration-dotted underline-offset-2 hover:text-amber-950"
+            title="Click to rename"
+          >
+            {label}
+          </button>
+        )
+      ) : (
+        <span>{label}</span>
+      );
+    if (!enableRoomVisibilityToggle && !isLayoutAdded) return headerLabel;
     const hidden = hiddenRooms.includes(room);
     return (
       <div className="flex items-center justify-center gap-0.5 sm:gap-1">
-        <button
-          type="button"
-          onClick={() => toggleRoomVisibility(room)}
-          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-800 sm:h-5 sm:w-5"
-          aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
-          title={hidden ? `Show ${label}` : `Hide ${label}`}
-        >
-          {renderEyeIcon(hidden)}
-        </button>
-        <span className="min-w-0 truncate">{headerLabel}</span>
+        {enableRoomVisibilityToggle ? (
+          <button
+            type="button"
+            onClick={() => toggleRoomVisibility(room)}
+            className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-800 sm:h-5 sm:w-5"
+            aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
+            title={hidden ? `Show ${label}` : `Hide ${label}`}
+          >
+            {renderEyeIcon(hidden)}
+          </button>
+        ) : null}
+        <span className={`min-w-0 ${isEditingTitle ? "flex-1" : "truncate"}`}>{headerLabel}</span>
+        {isLayoutAdded ? (
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => removeTempRoomColumn(room)}
+            className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border border-amber-300 bg-amber-50 text-[10px] font-bold leading-none text-amber-900 hover:bg-amber-100 sm:h-5 sm:w-5"
+            aria-label={`Remove ${label}`}
+            title={`Remove layout column ${label}`}
+          >
+            ×
+          </button>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-slate-300 bg-white">
+    <div
+      className="rounded-lg border border-slate-300 bg-white"
+      onClick={(e) => {
+        if (!enableTempRoomLayout || tempSelectedKeys.length === 0) return;
+        const target = e.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest("[data-tt-temp-select]")) return;
+        setTempSelectedKeys([]);
+        tempSelectAnchorRef.current = null;
+      }}
+    >
       {omittedRoomsToday.length > 0 && !repeatRoomHeadersPerTimeSlot ? (
         <p className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
           {t.roomsHiddenToday.replace(
@@ -589,6 +918,65 @@ export default function DayTimetableTable({
             </span>
           ) : null}
         </p>
+      ) : null}
+      {enableTempRoomLayout ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+          <p>
+            <span className="font-semibold">Layout only</span>
+            {" · "}
+            drag cells · ⌘/Ctrl multi-select · Shift range · click empty to clear
+            {" · "}
+            same time only · not saved
+            {tempMoveCount > 0 || tempAddedRooms.length > 0 || tempSelectedKeys.length > 0 ? (
+              <span className="ml-1 font-semibold text-amber-800">
+                (
+                {tempSelectedKeys.length > 0 ? `${tempSelectedKeys.length} selected` : null}
+                {tempSelectedKeys.length > 0 && (tempMoveCount > 0 || tempAddedRooms.length > 0)
+                  ? ", "
+                  : null}
+                {tempMoveCount > 0 ? `${tempMoveCount} moved` : null}
+                {tempMoveCount > 0 && tempAddedRooms.length > 0 ? ", " : null}
+                {tempAddedRooms.length > 0 ? `${tempAddedRooms.length} room(s) added` : null}
+                )
+              </span>
+            ) : null}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-1.5">
+              <span className="sr-only">Add room</span>
+              <select
+                className="max-w-[11rem] rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-900"
+                defaultValue=""
+                onChange={(e) => {
+                  const value = e.target.value;
+                  e.target.value = "";
+                  if (!value) return;
+                  if (value === "__temp__") {
+                    addNextTempColumn();
+                    return;
+                  }
+                  addTempRoomColumn(value);
+                }}
+              >
+                <option value="">+ Room</option>
+                {addableRooms.map((room) => (
+                  <option key={`add-room-${room}`} value={room}>
+                    {roomLabel(room)}
+                  </option>
+                ))}
+                <option value="__temp__">+ Temp</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={tempMoveCount === 0 && tempAddedRooms.length === 0}
+              onClick={resetTempLayout}
+              className="rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Reset layout
+            </button>
+          </div>
+        </div>
       ) : null}
       {enableRoomVisibilityToggle || !hideRemarks ? (
         <div className="border-b border-slate-200 bg-white px-3 py-2">
@@ -708,9 +1096,14 @@ export default function DayTimetableTable({
                 <th
                   key={`room-${room}`}
                   colSpan={COLS_PER_ROOM}
-                  className={thRoomRow1Class}
+                  className={[
+                    thRoomRow1Class,
+                    tempAddedRoomSet.has(room) ? "!bg-amber-50" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                 >
-                  {renderRoomHeader(room)}
+                  {renderRoomHeader(room, "thead")}
                 </th>
               ))}
             </tr>
@@ -765,9 +1158,14 @@ export default function DayTimetableTable({
                           key={`${frame.time}-slot-h1-${room}`}
                           colSpan={COLS_PER_ROOM}
                           scope="colgroup"
-                          className={thRoomRow1Class}
+                          className={[
+                            thRoomRow1Class,
+                            tempAddedRoomSet.has(room) ? "!bg-amber-50" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
                         >
-                          {renderRoomHeader(room)}
+                          {renderRoomHeader(room, frame.time)}
                         </th>
                       ))}
                     </tr>
@@ -811,41 +1209,199 @@ export default function DayTimetableTable({
                           feeStripe: true,
                           feeStripeSide: "right",
                         });
+                        const dropKey = `${frame.time}::${room}`;
+                        const isTempMoved =
+                          enableTempRoomLayout &&
+                          item != null &&
+                          Boolean(tempRoomMoves[tempRoomMoveKey(frame.time, item.studentId)]);
+                        const canDrag = Boolean(enableTempRoomLayout && item);
+                        const selectKey = item ? tempRoomMoveKey(frame.time, item.studentId) : "";
+                        const isTempSelected = Boolean(item && tempSelectedSet.has(selectKey));
+                        const nameCellClassName = [
+                          nameSurf.className,
+                          tdNameExtra,
+                          noGridCls,
+                          "relative",
+                          showAllRemarks ? "!overflow-visible" : "overflow-visible",
+                          canDrag ? "cursor-grab active:cursor-grabbing" : "",
+                          isTempSelected ? "ring-2 ring-inset ring-sky-500" : "",
+                          dragOverKey === dropKey ? "ring-2 ring-inset ring-amber-400" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ");
+                        const slotSurfClass = (surfClass: string, extra: string) =>
+                          [
+                            surfClass,
+                            extra,
+                            noGridCls,
+                            "relative",
+                            canDrag ? "cursor-grab active:cursor-grabbing" : "",
+                            isTempSelected ? "ring-2 ring-inset ring-sky-500" : "",
+                            dragOverKey === dropKey ? "ring-2 ring-inset ring-amber-400" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ");
+                        const onTempDragOver = enableTempRoomLayout
+                          ? (e: DragEvent) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                              setDragOverKey(dropKey);
+                            }
+                          : undefined;
+                        const onTempDragLeave = enableTempRoomLayout
+                          ? () => {
+                              setDragOverKey((cur) => (cur === dropKey ? null : cur));
+                            }
+                          : undefined;
+                        const onTempDrop = enableTempRoomLayout
+                          ? (e: DragEvent) => {
+                              e.preventDefault();
+                              setDragOverKey(null);
+                              const raw = e.dataTransfer.getData("application/x-tt-temp-room");
+                              if (!raw) return;
+                              try {
+                                const data = JSON.parse(raw) as {
+                                  time?: string;
+                                  studentId?: string;
+                                  studentIds?: string[];
+                                };
+                                if (!data.time) return;
+                                if (data.time !== frame.time) return;
+                                const ids =
+                                  Array.isArray(data.studentIds) && data.studentIds.length > 0
+                                    ? data.studentIds
+                                    : data.studentId
+                                      ? [data.studentId]
+                                      : [];
+                                if (ids.length === 0) return;
+                                moveStudentsToRoom(data.time, ids, room);
+                              } catch {
+                                /* ignore bad payload */
+                              }
+                            }
+                          : undefined;
+                        const onTempDragStart = canDrag
+                          ? (e: DragEvent) => {
+                              tempDragActiveRef.current = true;
+                              const studentIds = resolveTempDragStudentIds(
+                                frame.time,
+                                item!.studentId,
+                                tempSelectedKeys,
+                              );
+                              if (studentIds.length === 1) {
+                                const onlyKey = tempRoomMoveKey(frame.time, studentIds[0]);
+                                if (!tempSelectedSet.has(onlyKey)) {
+                                  setTempSelectedKeys([onlyKey]);
+                                  tempSelectAnchorRef.current = onlyKey;
+                                }
+                              }
+                              e.dataTransfer.setData(
+                                "application/x-tt-temp-room",
+                                JSON.stringify({
+                                  time: frame.time,
+                                  studentId: item!.studentId,
+                                  studentIds,
+                                  fromRoom: room,
+                                }),
+                              );
+                              e.dataTransfer.effectAllowed = "move";
+                            }
+                          : undefined;
+                        const onTempDragEnd = canDrag
+                          ? () => {
+                              setDragOverKey(null);
+                              window.setTimeout(() => {
+                                tempDragActiveRef.current = false;
+                              }, 0);
+                            }
+                          : undefined;
+                        const onTempSelectClick = canDrag
+                          ? (e: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }) => {
+                              if (e.shiftKey) {
+                                selectTempStudent(frame.time, item!.studentId, "range");
+                              } else if (e.metaKey || e.ctrlKey) {
+                                selectTempStudent(frame.time, item!.studentId, "toggle");
+                              } else {
+                                selectTempStudent(frame.time, item!.studentId, "replace");
+                              }
+                            }
+                          : undefined;
+                        const dragTitle = canDrag
+                          ? isTempSelected && tempSelectedKeys.length > 1
+                            ? `Drag ${tempSelectedKeys.length} selected students (same time)`
+                            : "Drag cell · ⌘/Ctrl multi-select · Shift range"
+                          : undefined;
+                        const dragFillClass = [
+                          "block h-full min-h-[1.75rem] w-full",
+                          canDrag ? "cursor-grab active:cursor-grabbing" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ");
+                        const cellBody = item ? (
+                          <>
+                            {renderStudentNameLabel(
+                              item,
+                              nameSurf,
+                              `tt-hover-${frame.time}-${idx}-${room}-${item.studentId}`,
+                            )}
+                            {isTempMoved ? (
+                              <p className="mt-0.5 text-[9px] font-semibold leading-tight text-amber-800">
+                                moved
+                              </p>
+                            ) : null}
+                            {isTempSelected && tempSelectedKeys.length > 1 ? (
+                              <p className="mt-0.5 text-[9px] font-semibold leading-tight text-sky-700">
+                                selected
+                              </p>
+                            ) : null}
+                            {item.pendingMakeupLabel ? (
+                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-900">
+                                {item.pendingMakeupLabel}
+                              </p>
+                            ) : null}
+                            {item.lessonType === "取消" ? (
+                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500 no-underline">
+                                Cancelled
+                              </p>
+                            ) : null}
+                            {item.isInactive ? (
+                              <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500">
+                                Inactive
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null;
                         return (
                           <Fragment key={`${frame.time}-${idx}-${room}`}>
                             <td
-                              className={`${nameSurf.className} ${tdNameExtra} ${noGridCls} ${
-                                showAllRemarks ? "!overflow-visible" : "overflow-visible"
-                              }`}
+                              className={nameCellClassName}
                               style={nameSurf.style}
+                              onDragOver={onTempDragOver}
+                              onDragLeave={onTempDragLeave}
+                              onDrop={onTempDrop}
                             >
                               {item ? (
                                 hideRemarks ? (
-                                  <>
-                                    {renderStudentNameLabel(
-                                      item,
-                                      nameSurf,
-                                      `tt-hover-${frame.time}-${idx}-${room}-${item.studentId}`,
-                                    )}
-                                    {item.pendingMakeupLabel ? (
-                                      <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-900">
-                                        {item.pendingMakeupLabel}
-                                      </p>
-                                    ) : null}
-                                    {item.lessonType === "取消" ? (
-                                      <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500 no-underline">
-                                        Cancelled
-                                      </p>
-                                    ) : null}
-                                    {item.isInactive ? (
-                                      <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500">
-                                        Inactive
-                                      </p>
-                                    ) : null}
-                                  </>
+                                  <div
+                                    className={dragFillClass}
+                                    data-tt-temp-select="1"
+                                    draggable={canDrag || undefined}
+                                    onDragStart={onTempDragStart}
+                                    onDragEnd={onTempDragEnd}
+                                    onClick={onTempSelectClick}
+                                    title={dragTitle}
+                                  >
+                                    {cellBody}
+                                  </div>
                                 ) : (
                                 <div
-                                  className="relative"
+                                  className={["relative", dragFillClass].join(" ")}
+                                  data-tt-temp-select="1"
+                                  draggable={canDrag || undefined}
+                                  onDragStart={onTempDragStart}
+                                  onDragEnd={onTempDragEnd}
+                                  onClick={onTempSelectClick}
+                                  title={dragTitle}
                                   onMouseEnter={() =>
                                     openHover({
                                       studentId: item.studentId,
@@ -876,26 +1432,7 @@ export default function DayTimetableTable({
                                   }
                                   onMouseLeave={() => closeHoverLater(item.studentId)}
                                 >
-                                  {renderStudentNameLabel(
-                                    item,
-                                    nameSurf,
-                                    `tt-hover-${frame.time}-${idx}-${room}-${item.studentId}`,
-                                  )}
-                                  {item.pendingMakeupLabel ? (
-                                    <p className="mt-0.5 text-[10px] font-semibold leading-tight text-amber-900">
-                                      {item.pendingMakeupLabel}
-                                    </p>
-                                  ) : null}
-                                  {item.lessonType === "取消" ? (
-                                    <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500 no-underline">
-                                      Cancelled
-                                    </p>
-                                  ) : null}
-                                  {item.isInactive ? (
-                                    <p className="mt-0.5 text-[10px] font-semibold leading-tight text-slate-500">
-                                      Inactive
-                                    </p>
-                                  ) : null}
+                                  {cellBody}
                                   {renderInlineAllRemarks(item, nameSurf.isDarkBg)}
                                   {hoverPanel?.studentId === item.studentId ? (
                                     <span className="sr-only">{t.remarkClickOpen}</span>
@@ -904,11 +1441,47 @@ export default function DayTimetableTable({
                                 )
                               ) : null}
                             </td>
-                            <td className={`${gradeSurf.className} ${tdGradeExtra} ${noGridCls}`} style={gradeSurf.style}>
-                              {formatGradeDisplay(item?.grade ?? "")}
+                            <td
+                              className={slotSurfClass(gradeSurf.className, tdGradeExtra)}
+                              style={gradeSurf.style}
+                              onDragOver={onTempDragOver}
+                              onDragLeave={onTempDragLeave}
+                              onDrop={onTempDrop}
+                            >
+                              {item ? (
+                                <div
+                                  className={`${dragFillClass} flex items-center justify-center`}
+                                  data-tt-temp-select="1"
+                                  draggable={canDrag || undefined}
+                                  onDragStart={onTempDragStart}
+                                  onDragEnd={onTempDragEnd}
+                                  onClick={onTempSelectClick}
+                                  title={dragTitle}
+                                >
+                                  {formatGradeDisplay(item.grade ?? "")}
+                                </div>
+                              ) : null}
                             </td>
-                            <td className={`${examSurf.className} ${tdExamExtra} ${noGridCls}`} style={examSurf.style}>
-                              {item ? formatVisibleExamDateSlashed(examById[item.studentId] ?? "") : ""}
+                            <td
+                              className={slotSurfClass(examSurf.className, tdExamExtra)}
+                              style={examSurf.style}
+                              onDragOver={onTempDragOver}
+                              onDragLeave={onTempDragLeave}
+                              onDrop={onTempDrop}
+                            >
+                              {item ? (
+                                <div
+                                  className={`${dragFillClass} flex items-center justify-center`}
+                                  data-tt-temp-select="1"
+                                  draggable={canDrag || undefined}
+                                  onDragStart={onTempDragStart}
+                                  onDragEnd={onTempDragEnd}
+                                  onClick={onTempSelectClick}
+                                  title={dragTitle}
+                                >
+                                  {formatVisibleExamDateSlashed(examById[item.studentId] ?? "")}
+                                </div>
+                              ) : null}
                             </td>
                           </Fragment>
                         );
