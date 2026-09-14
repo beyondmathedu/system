@@ -1,7 +1,11 @@
 import { unstable_cache } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
-import { inferGradeOnDate } from "@/lib/inferStudentGrade";
+import { getStudentGradeForDate } from "@/lib/studentGradeHistory";
+import {
+  loadStudentGradeHistoryServer,
+  loadStudentHeldBackYearsServer,
+} from "@/lib/lessonDataServer";
 import {
   buildStudentInactivePeriodsById,
   withAutoF6InactivePeriod,
@@ -184,14 +188,30 @@ const loadScheduleStudentsContextCached = unstable_cache(
       inactivePeriodsById: buildStudentInactivePeriodsById(periodRows ?? []),
     };
   },
-  ["schedule-students-context-v3"],
+  ["schedule-students-context-v4"],
   { revalidate: 300, tags: SHARED_SCHEDULE_CACHE_TAGS },
 );
 
 export async function loadScheduleStudentsForYear(year: number): Promise<ScheduleStudentsContext> {
   const { students, inactivePeriodsById: periodsById } = await loadScheduleStudentsContextCached();
-  const activeStudents = filterStudentsWithAnyActivityInYear(students, periodsById, year);
+  const idsAll = students.map((s) => s.id).filter(Boolean);
+  const supabase = getSupabaseAdmin();
+  const [heldBackYearsResult, gradeHistoryResult] = await Promise.all([
+    loadStudentHeldBackYearsServer(supabase, idsAll),
+    loadStudentGradeHistoryServer(supabase, idsAll),
+  ]);
+  const gradeOptions = {
+    heldBackYearsByStudentId: heldBackYearsResult.byStudentId ?? {},
+    gradeHistoryByStudentId: gradeHistoryResult.byStudentId ?? {},
+  };
+  const activeStudents = filterStudentsWithAnyActivityInYear(
+    students,
+    periodsById,
+    year,
+    gradeOptions,
+  );
   const inactivePeriodsById = new Map<string, StudentInactivePeriod[]>();
+  const summerProbeIso = `${year}-07-15`;
 
   for (const st of activeStudents) {
     // Apply F6 summer hide only if they were F6 during that summer (not after Sept promotion).
@@ -200,7 +220,12 @@ export async function loadScheduleStudentsForYear(year: number): Promise<Schedul
       withAutoF6InactivePeriod({
         periods: periodsById[st.id] ?? [],
         studentId: st.id,
-        grade: inferGradeOnDate(st.grade ?? "", `${year}-07-15`),
+        grade: getStudentGradeForDate({
+          currentGrade: st.grade ?? "",
+          dateIso: summerProbeIso,
+          historyByAcademicYear: gradeOptions.gradeHistoryByStudentId[st.id],
+          heldBackYears: gradeOptions.heldBackYearsByStudentId[st.id],
+        }),
         year,
       }),
     );

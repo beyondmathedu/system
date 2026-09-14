@@ -659,6 +659,11 @@ async function fetchDayTimetablePayloadUncached(
     inactivePeriodsById,
     year,
     dateIso,
+    undefined,
+    {
+      heldBackYearsByStudentId,
+      gradeHistoryByStudentId,
+    },
   );
   const activeIdSet = new Set(activeStudentList.map((s) => s.id));
   const inactiveStudentList = includeInactiveSlots
@@ -778,7 +783,12 @@ async function fetchDayTimetablePayloadUncached(
       list.push({
         studentId: st.id,
         name: studentDisplayName,
-        grade: st.grade ?? "",
+        grade: getStudentGradeForDate({
+          currentGrade: st.grade ?? "",
+          dateIso,
+          historyByAcademicYear: gradeHistoryByStudentId[st.id],
+          heldBackYears: heldBackYearsByStudentId[st.id],
+        }),
         scheduleRemarks: row.noteDisplay ?? "",
         lessonType: row.lessonType,
         tutorDisplay,
@@ -955,7 +965,7 @@ export async function fetchDayTimetablePayload(
         includeInactiveMakeupSlots,
       }),
     [
-      "day-timetable-payload-v27",
+      "day-timetable-payload-v28",
       String(year),
       String(month),
       String(day),

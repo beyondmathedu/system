@@ -1,4 +1,7 @@
-import { inferGradeOnDate } from "@/lib/inferStudentGrade";
+import {
+  getStudentGradeForDate,
+  type GradeHistoryByStudentId,
+} from "@/lib/studentGradeHistory";
 import {
   isStudentInactiveOnDate,
   isStudentInactiveOnDateFromPeriods,
@@ -8,6 +11,27 @@ import {
 } from "@/lib/studentVisibility";
 
 type StudentLike = { id: string; grade?: string | null };
+
+export type ActiveStudentGradeOptions = {
+  heldBackYearsByStudentId?: Record<string, number[]>;
+  gradeHistoryByStudentId?: GradeHistoryByStudentId;
+  /** Override grade used for F6 / inactive checks on `dateIso`. */
+  resolveGrade?: (student: StudentLike, dateIso: string) => string;
+};
+
+function gradeForActiveCheck(
+  st: StudentLike,
+  dateIso: string,
+  options?: ActiveStudentGradeOptions,
+): string {
+  if (options?.resolveGrade) return options.resolveGrade(st, dateIso);
+  return getStudentGradeForDate({
+    currentGrade: st.grade ?? "",
+    dateIso,
+    heldBackYears: options?.heldBackYearsByStudentId?.[st.id],
+    historyByAcademicYear: options?.gradeHistoryByStudentId?.[st.id],
+  });
+}
 
 /** Active on a specific calendar day (YYYY-MM-DD). */
 export function filterActiveStudentsOnDate<T extends StudentLike>(
@@ -20,6 +44,7 @@ export function filterActiveStudentsOnDate<T extends StudentLike>(
   year: number,
   dateIso: string,
   reactivateDateById?: Map<string, string | null> | Record<string, string | null>,
+  gradeOptions?: ActiveStudentGradeOptions,
 ): T[] {
   const anyValue = manualInactiveEffectiveById instanceof Map
     ? manualInactiveEffectiveById.values().next().value
@@ -35,7 +60,7 @@ export function filterActiveStudentsOnDate<T extends StudentLike>(
       const periods = withAutoF6InactivePeriod({
         periods: periodsMap.get(st.id) ?? [],
         studentId: st.id,
-        grade: inferGradeOnDate(st.grade ?? "", dateIso),
+        grade: gradeForActiveCheck(st, dateIso, gradeOptions),
         year: y,
       });
       return !isStudentInactiveOnDateFromPeriods({ periods, dateIso });
@@ -58,6 +83,8 @@ export function filterActiveStudentsOnDate<T extends StudentLike>(
       reactivateDate: reactivateMap.get(st.id) ?? null,
       year,
       dateIso,
+      heldBackYears: gradeOptions?.heldBackYearsByStudentId?.[st.id],
+      historyByAcademicYear: gradeOptions?.gradeHistoryByStudentId?.[st.id],
     });
   });
 }
@@ -73,9 +100,11 @@ export function filterStudentsWithAnyActivityInYear<T extends StudentLike>(
     | Map<string, StudentInactivePeriod[]>
     | Record<string, StudentInactivePeriod[]>,
   year: number,
+  gradeOptions?: ActiveStudentGradeOptions,
 ): T[] {
   const yearStart = `${year}-01-01`;
   const yearEndExclusive = `${year + 1}-01-01`;
+  const summerProbeIso = `${year}-07-15`;
   const anyValue = manualInactiveEffectiveById instanceof Map
     ? manualInactiveEffectiveById.values().next().value
     : Object.values(manualInactiveEffectiveById ?? {})[0];
@@ -89,7 +118,7 @@ export function filterStudentsWithAnyActivityInYear<T extends StudentLike>(
       const periods = withAutoF6InactivePeriod({
         periods: periodsMap.get(st.id) ?? [],
         studentId: st.id,
-        grade: st.grade,
+        grade: gradeForActiveCheck(st, summerProbeIso, gradeOptions),
         year,
       });
       // Skip only if the student is inactive for the entire year.
@@ -108,7 +137,7 @@ export function filterStudentsWithAnyActivityInYear<T extends StudentLike>(
 
   return students.filter((st) => {
     const inactiveEffective = resolveStudentInactiveEffectiveDate({
-      grade: st.grade,
+      grade: gradeForActiveCheck(st, yearStart, gradeOptions),
       manualInactiveEffective: manualMap.get(st.id) ?? null,
       year,
     });

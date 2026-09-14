@@ -684,6 +684,8 @@ export function StudentLessonsYearPage({
   const [inactivePeriods, setInactivePeriods] = useState<StudentInactivePeriodRow[]>(
     () => initialHydrated?.inactivePeriods ?? [],
   );
+  const heldBackYears = initialHydrated?.heldBackYears ?? initialBootstrap?.heldBackYears ?? [];
+  const gradeHistory = initialHydrated?.gradeHistory ?? initialBootstrap?.gradeHistory ?? {};
   const [accessReady, setAccessReady] = useState(() => Boolean(initialBootstrap));
   const [isReadOnlyViewer, setIsReadOnlyViewer] = useState(Boolean(initialReadOnly));
   const [canEditTimetableRemarks, setCanEditTimetableRemarks] = useState(
@@ -1558,8 +1560,10 @@ export function StudentLessonsYearPage({
         studentId,
         grade: studentSummary.grade,
         year: targetYear,
+        heldBackYears,
+        historyByAcademicYear: gradeHistory,
       }),
-    [inactivePeriods, studentId, studentSummary.grade, targetYear],
+    [inactivePeriods, studentId, studentSummary.grade, targetYear, heldBackYears, gradeHistory],
   );
 
   /** Full-year regular lesson dates for reschedule validation (not month/range/inactive filtered). */
@@ -2626,8 +2630,10 @@ export function StudentLessonsYearPage({
       grade: studentSummary.grade,
       year: targetYear,
       firstMonth,
+      heldBackYears,
+      historyByAcademicYear: gradeHistory,
     });
-  }, [inactivePeriods, studentId, studentSummary.grade, targetYear]);
+  }, [inactivePeriods, studentId, studentSummary.grade, targetYear, heldBackYears, gradeHistory]);
 
   const viewingInactiveMonthOnly = useMemo(() => {
     if (!filterMonth) return false;

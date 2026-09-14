@@ -1,6 +1,7 @@
 import { getLessonUntickedMetrics, type Lesson2026Record } from "@/lib/lesson2026Summary";
 import { toYearLessonStateFromClient } from "@/lib/feeRecordLessonDates";
 import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
+import type { GradeHistoryByAcademicYear } from "@/lib/studentGradeHistory";
 import { makeStudentInactiveDateCheckerFromPeriods } from "@/lib/studentVisibility";
 
 export type StudentLessonHubMetrics = {
@@ -23,6 +24,8 @@ export function computeStudentLessonHubMetrics(input: {
   scheduleRecords: unknown[];
   yearState: StudentLesson2026State;
   inactivePeriods: InactivePeriodRow[];
+  heldBackYears?: readonly number[] | null;
+  gradeHistory?: GradeHistoryByAcademicYear | null;
   nowMs?: number;
 }): StudentLessonHubMetrics {
   const periods = (input.inactivePeriods ?? [])
@@ -39,6 +42,8 @@ export function computeStudentLessonHubMetrics(input: {
     grade: input.grade ?? "",
     year: input.hubYear,
     periods,
+    heldBackYears: input.heldBackYears,
+    historyByAcademicYear: input.gradeHistory,
   });
 
   const state = toYearLessonStateFromClient(input.yearState);

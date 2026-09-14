@@ -1,5 +1,8 @@
 import { isF6Grade } from "@/lib/grade";
-import { inferGradeOnDate } from "@/lib/inferStudentGrade";
+import {
+  getStudentGradeForDate,
+  type GradeHistoryByAcademicYear,
+} from "@/lib/studentGradeHistory";
 
 /**
  * 學生可見性規則：
@@ -281,8 +284,15 @@ export function isStudentInactiveOnDate(input: {
   reactivateDate?: string | null;
   year: number;
   dateIso: string;
+  heldBackYears?: ReadonlySet<number> | readonly number[] | null;
+  historyByAcademicYear?: GradeHistoryByAcademicYear | null;
 }): boolean {
-  const gradeOnDate = inferGradeOnDate(input.grade ?? "", input.dateIso);
+  const gradeOnDate = getStudentGradeForDate({
+    currentGrade: input.grade ?? "",
+    dateIso: input.dateIso,
+    heldBackYears: input.heldBackYears,
+    historyByAcademicYear: input.historyByAcademicYear,
+  });
   const y = Number(String(input.dateIso ?? "").slice(0, 4)) || input.year;
   const eff = resolveStudentInactiveEffectiveDate({
     grade: gradeOnDate,
@@ -337,6 +347,8 @@ export function getInactiveMonthGapsInYearFromPeriods(input: {
   grade?: string | null;
   year: number;
   firstMonth?: number;
+  heldBackYears?: ReadonlySet<number> | readonly number[] | null;
+  historyByAcademicYear?: GradeHistoryByAcademicYear | null;
 }): InactiveMonthGap[] {
   const startMonth = input.firstMonth ?? 1;
   const fullyInactive: number[] = [];
@@ -349,7 +361,12 @@ export function getInactiveMonthGapsInYearFromPeriods(input: {
     const periods = withAutoF6InactivePeriod({
       periods: input.periods,
       studentId: input.studentId,
-      grade: inferGradeOnDate(input.grade ?? "", monthStart),
+      grade: getStudentGradeForDate({
+        currentGrade: input.grade ?? "",
+        dateIso: monthStart,
+        heldBackYears: input.heldBackYears,
+        historyByAcademicYear: input.historyByAcademicYear,
+      }),
       year: input.year,
     });
     periodsByMonth.set(m, periods);
@@ -473,6 +490,8 @@ export function makeStudentInactiveDateCheckerFromPeriods(input: {
   studentId: string;
   grade?: string | null;
   year: number;
+  heldBackYears?: ReadonlySet<number> | readonly number[] | null;
+  historyByAcademicYear?: GradeHistoryByAcademicYear | null;
 }): (dateIso: string) => boolean {
   const base = [...input.periods];
   return (dateIso: string) => {
@@ -480,7 +499,12 @@ export function makeStudentInactiveDateCheckerFromPeriods(input: {
     const periods = withAutoF6InactivePeriod({
       periods: base,
       studentId: input.studentId,
-      grade: inferGradeOnDate(input.grade ?? "", dateIso),
+      grade: getStudentGradeForDate({
+        currentGrade: input.grade ?? "",
+        dateIso,
+        heldBackYears: input.heldBackYears,
+        historyByAcademicYear: input.historyByAcademicYear,
+      }),
       year: y,
     });
     return isStudentInactiveOnDateFromPeriods({ periods, dateIso });

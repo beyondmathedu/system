@@ -29,7 +29,11 @@ import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
 import { hasTutorNameCandidate } from "@/lib/tutorMonthCandidate";
 import { hasRoomScheduleCandidate } from "@/lib/roomScheduleCandidate";
 import { materializeTutorMonthPayRows } from "@/lib/tutorMonthlyPayroll";
-import { inferGradeOnDate } from "@/lib/inferStudentGrade";
+import { getStudentGradeForDate, type GradeHistoryByStudentId } from "@/lib/studentGradeHistory";
+import {
+  loadStudentGradeHistoryServer,
+  loadStudentHeldBackYearsServer,
+} from "@/lib/lessonDataServer";
 import {
   loadScheduleStudentsForYear,
   loadYearScheduleData,
@@ -254,7 +258,22 @@ async function fetchRoomScheduleAggregateUncached(
 
   const { students, recMap, stateMap, inactivePeriodsById } = bundle;
   const supabase = getSupabaseAdmin();
-  const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(supabase);
+  const studentIds = students.map((s) => s.id).filter(Boolean);
+  const [roomSlotTutorRules, heldBackYearsResult, gradeHistoryResult] = await Promise.all([
+    loadRoomSlotTutorRulesServer(supabase),
+    loadStudentHeldBackYearsServer(supabase, studentIds),
+    loadStudentGradeHistoryServer(supabase, studentIds),
+  ]);
+  const heldBackYearsByStudentId = heldBackYearsResult.byStudentId ?? {};
+  const gradeHistoryByStudentId: GradeHistoryByStudentId =
+    gradeHistoryResult.byStudentId ?? {};
+  const gradeOnDate = (studentId: string, currentGrade: string, dateIso: string) =>
+    getStudentGradeForDate({
+      currentGrade,
+      dateIso,
+      historyByAcademicYear: gradeHistoryByStudentId[studentId],
+      heldBackYears: heldBackYearsByStudentId[studentId],
+    });
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
   const roomCandidateStudents: ScheduleStudentRow[] = students;
   for (const st of students) {
@@ -310,7 +329,7 @@ async function fetchRoomScheduleAggregateUncached(
         rowKey: `${st.id}:${r.rowId}:${r.date}:${r.time}:${idx}`,
         studentId: st.id,
         studentName: name,
-        grade: inferGradeOnDate((st.grade ?? "").toString(), r.date),
+        grade: gradeOnDate(st.id, (st.grade ?? "").toString(), r.date),
         attendanceKey: r.attendanceKey,
         scheduleRuleId: r.scheduleRuleId,
         attended: isScheduleAttendanceMarked(state.attendance, {
@@ -375,7 +394,7 @@ export async function fetchRoomScheduleAggregate(
   const slugKey = slug.trim().toLowerCase();
   return unstable_cache(
     async () => fetchRoomScheduleAggregateUncached(slug, year, month, { startIso, endIso }),
-    ["room-schedule-aggregate-v4", slugKey, String(year), String(month), startIso, endIso],
+    ["room-schedule-aggregate-v5", slugKey, String(year), String(month), startIso, endIso],
     // Heavy full-room expand; longer TTL + tag busting keeps UI snappy.
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
@@ -426,7 +445,22 @@ async function fetchTutorMonthLessonRowsUncached(
 
   const { students, recMap, stateMap } = bundle;
   const supabase = getSupabaseAdmin();
-  const roomSlotTutorRules = await loadRoomSlotTutorRulesServer(supabase);
+  const studentIds = students.map((s) => s.id).filter(Boolean);
+  const [roomSlotTutorRules, heldBackYearsResult, gradeHistoryResult] = await Promise.all([
+    loadRoomSlotTutorRulesServer(supabase),
+    loadStudentHeldBackYearsServer(supabase, studentIds),
+    loadStudentGradeHistoryServer(supabase, studentIds),
+  ]);
+  const heldBackYearsByStudentId = heldBackYearsResult.byStudentId ?? {};
+  const gradeHistoryByStudentId: GradeHistoryByStudentId =
+    gradeHistoryResult.byStudentId ?? {};
+  const gradeOnDate = (studentId: string, currentGrade: string, dateIso: string) =>
+    getStudentGradeForDate({
+      currentGrade,
+      dateIso,
+      historyByAcademicYear: gradeHistoryByStudentId[studentId],
+      heldBackYears: heldBackYearsByStudentId[studentId],
+    });
   const candidates: TutorMonthLessonRow[] = [];
   const normalizedRecordsById = new Map<string, YearLessonRecord[]>();
   const hasTutorCandidateById = new Map<string, boolean>();
@@ -464,7 +498,7 @@ async function fetchTutorMonthLessonRowsUncached(
         rowKey: `${st.id}:${r.rowId}`,
         studentId: st.id,
         studentName,
-        grade: inferGradeOnDate((st.grade ?? "").toString(), r.date),
+        grade: gradeOnDate(st.id, (st.grade ?? "").toString(), r.date),
         dateIso: r.date,
         dateDisplay: formatDateSlash(r.date),
         weekdayDisplay: weekdayCnParen(r.date),
@@ -506,7 +540,7 @@ export async function fetchTutorMonthLessonRows(
   if (!nameKey) return { rows: [], loadError: null };
   return unstable_cache(
     async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
-    ["tutor-month-lessons-v7", nameKey, String(year), String(month)],
+    ["tutor-month-lessons-v8", nameKey, String(year), String(month)],
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }

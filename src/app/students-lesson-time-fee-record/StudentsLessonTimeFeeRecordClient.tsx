@@ -1232,19 +1232,15 @@ export default function StudentsLessonTimeFeeRecordPage({
       const vis = visibilityByStudentId[st.id];
       out[st.id] = makeStudentInactiveDateCheckerFromPeriods({
         studentId: st.id,
-        grade: getStudentGradeForMonth({
-          currentGrade: st.grade,
-          sheetYear,
-          sheetMonth,
-          historyByAcademicYear: gradeHistoryByStudentId[st.id],
-          heldBackYears: heldBackYearsByStudentId[st.id],
-        }),
+        grade: st.grade,
         year: sheetYear,
         periods: vis?.periods ?? [],
+        heldBackYears: heldBackYearsByStudentId[st.id],
+        historyByAcademicYear: gradeHistoryByStudentId[st.id],
       });
     }
     return out;
-  }, [students, visibilityByStudentId, sheetYear, sheetMonth, heldBackYearsByStudentId, gradeHistoryByStudentId]);
+  }, [students, visibilityByStudentId, sheetYear, heldBackYearsByStudentId, gradeHistoryByStudentId]);
 
   const isMonthInactiveForFeeByStudentId = useMemo(() => {
     const out: Record<string, (month1to12: number) => boolean> = {};

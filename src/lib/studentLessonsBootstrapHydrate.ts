@@ -68,6 +68,8 @@ export type HydratedLessonYearBootstrap = {
   visibilityEffectiveDate: string;
   visibilityReactivateDate: string | null;
   inactivePeriods: StudentInactivePeriodRowHydrated[];
+  heldBackYears: number[];
+  gradeHistory: import("@/lib/studentGradeHistory").GradeHistoryByAcademicYear;
   records: ScheduleRecord[];
   roomSlotTutorRules: RoomSlotTutorRule[];
   attendance: Record<string, boolean>;
@@ -125,6 +127,8 @@ export function hydrateLessonYearFromBootstrap(
       visibilityEffectiveDate: "",
       visibilityReactivateDate: null,
       inactivePeriods: [],
+      heldBackYears: Array.isArray(bootstrap.heldBackYears) ? [...bootstrap.heldBackYears] : [],
+      gradeHistory: bootstrap.gradeHistory ?? {},
       records: [],
       roomSlotTutorRules: Array.isArray(bootstrap.roomSlotTutorRules)
         ? bootstrap.roomSlotTutorRules
@@ -184,6 +188,8 @@ export function hydrateLessonYearFromBootstrap(
           note: String(row.note ?? ""),
         }))
       : [],
+    heldBackYears: Array.isArray(bootstrap.heldBackYears) ? [...bootstrap.heldBackYears] : [],
+    gradeHistory: bootstrap.gradeHistory ?? {},
     records,
     roomSlotTutorRules: Array.isArray(bootstrap.roomSlotTutorRules) ? bootstrap.roomSlotTutorRules : [],
     attendance: (cloud?.attendance ?? {}) as Record<string, boolean>,
