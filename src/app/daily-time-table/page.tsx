@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import DayTimetableLegend from "@/components/DayTimetableLegend";
 import DayTimetableStyleEditorLazy from "@/components/DayTimetableStyleEditorLazy";
-import DayTimetableTable from "@/components/DayTimetableTable";
+import DayTimetableTableLazy from "@/components/DayTimetableTableLazy";
 import { dayTimetablePageIntroStrings } from "@/lib/dayTimetableUiStrings";
 import PageDatePicker from "@/components/PageDatePicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
@@ -31,14 +31,13 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
   const sp = searchParams ? await searchParams : undefined;
   const { year, month, day } = parseDayParams(sp);
   const nextHref = `/daily-time-table?year=${year}&month=${month}&day=${day}`;
-  const [viewer, payload] = await Promise.all([
-    getViewerContext(),
-    fetchDayTimetablePayload(year, month, day, {
-      regularOnly: false,
-      includeCancelledSlots: false,
-      includeInactiveMakeupSlots: true,
-    }),
-  ]);
+  const viewerPromise = getViewerContext();
+  const payloadPromise = fetchDayTimetablePayload(year, month, day, {
+    regularOnly: false,
+    includeCancelledSlots: false,
+    includeInactiveMakeupSlots: true,
+  });
+  const viewer = await viewerPromise;
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
     redirect(studentPortalHomePath(normalizeStudentId(viewer.studentId)));
@@ -47,7 +46,10 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
     redirect("/login");
   }
   const readOnly = isTutorViewer(viewer);
-  const navViewer = await buildAppTopNavViewer(viewer);
+  const [payload, navViewer] = await Promise.all([
+    payloadPromise,
+    buildAppTopNavViewer(viewer),
+  ]);
   const tablePayload = readOnly ? redactDayTimetableRemarks(payload) : payload;
   const roomScheduleQuery = buildRoomScheduleQueryForDate(viewer, payload.dateIso);
   const prev = shiftDay(year, month, day, -1);
@@ -95,7 +97,7 @@ export default async function DailyTimeTablePage({ searchParams }: PageProps) {
           <div className="p-2 sm:p-4 lg:p-6">
             <div className="rounded-xl border border-slate-200 bg-white p-2 sm:p-4">
               <div className="mb-2 text-sm font-bold text-slate-700 sm:mb-3">Daily lesson records</div>
-              <DayTimetableTable
+              <DayTimetableTableLazy
                 key={payload.dateIso}
                 payload={tablePayload}
                 emptyMessage="No lessons on this day."

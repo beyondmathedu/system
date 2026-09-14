@@ -1,12 +1,20 @@
+import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { homeBirthdayWhatsappHref } from "@/lib/homeBirthdayWhatsapp";
 import { listUntickedRegularMakeupExtraInRange } from "@/lib/lesson2026Summary";
 import { formatPendingMakeupFromDateLabel } from "@/lib/pendingMakeup";
+import {
+  SCHEDULE_CACHE_TAG_AGGREGATES,
+  SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
+  SCHEDULE_CACHE_TAG_HOME,
+} from "@/lib/scheduleCacheTags";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   buildStudentInactivePeriodsById,
   isStudentInactiveOnDateFromPeriods,
   withAutoF6InactivePeriod,
+  type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import { loadYearScheduleData } from "@/lib/yearScheduleData.server";
 import type { HomeReminderRow } from "@/app/home/HomeReminderPanel";
@@ -30,6 +38,30 @@ export type HomeDashboardData = {
   weekBirthdayReminderItems: HomeWeekBirthdayItem[];
   /** 6 月起至昨天，恆常／補堂／加堂已過期未打勾的學生 */
   untickedFromJuneRows: HomeReminderRow[];
+};
+
+type HomeActiveStudentMeta = {
+  id: string;
+  birthMd: string;
+  displayName: string;
+  grade: string;
+};
+
+type HomePeopleContext = {
+  ymdToday: string;
+  mdToday: string;
+  year: number;
+  month: number;
+  activeStudentMeta: HomeActiveStudentMeta[];
+  inactivePeriodsById: Record<string, StudentInactivePeriod[]>;
+  tutorRows: Array<Record<string, unknown>>;
+};
+
+type HomeBirthdaySlice = {
+  birthdaySummary: string;
+  todayWhatsappHref: string;
+  weekBirthdayLines: string[];
+  weekBirthdayReminderItems: HomeWeekBirthdayItem[];
 };
 
 const EMPTY_YEAR_STATE: YearLessonState = {
@@ -73,20 +105,27 @@ function formatTutorBirthdayLabel(row: {
   return label || String(row.id ?? "").trim() || "—";
 }
 
-async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
-  const { ymdToday, mdToday, year, month } = hkTodayParts();
+function ymdYesterdayOf(ymdToday: string): string {
+  const endExclusiveToday = new Date(`${ymdToday}T00:00:00+08:00`);
+  endExclusiveToday.setDate(endExclusiveToday.getDate() - 1);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(endExclusiveToday);
+}
+
+async function fetchHomePeopleContextUncached(ymdToday: string): Promise<HomePeopleContext> {
+  const year = Number(ymdToday.slice(0, 4)) || new Date().getFullYear();
+  const month = Number(ymdToday.slice(5, 7)) || 1;
+  const mdToday = ymdToday.slice(5, 10);
   const supabase = getSupabaseAdmin();
 
-  const [
-    { data: studentRows },
-    { data: tutorRows },
-    { data: periodRows },
-    scheduleData,
-  ] = await Promise.all([
+  const [{ data: studentRows }, { data: tutorRows }, { data: periodRows }] = await Promise.all([
     supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
     supabase.from("tutors").select("id, name, name_zh, name_en, nickname_en, birth_date, status"),
     supabase.from("student_visibility_periods").select("student_id, start_date, end_date, note"),
-    loadYearScheduleData(year),
   ]);
 
   const inactivePeriodsById = buildStudentInactivePeriodsById(periodRows ?? []);
@@ -122,65 +161,26 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     };
   });
 
-  const juneStartIso = `${year}-06-01`;
-  // 只計已過期的堂（昨天及更早）；今天未打勾唔列出。
-  const endExclusiveToday = new Date(`${ymdToday}T00:00:00+08:00`);
-  endExclusiveToday.setDate(endExclusiveToday.getDate() - 1);
-  const ymdYesterday = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(endExclusiveToday);
+  return {
+    ymdToday,
+    mdToday,
+    year,
+    month,
+    activeStudentMeta,
+    inactivePeriodsById,
+    tutorRows: (tutorRows ?? []) as Array<Record<string, unknown>>,
+  };
+}
 
-  const untickedFromJuneRows: HomeReminderRow[] = [];
+function buildBirthdaySlice(people: HomePeopleContext): HomeBirthdaySlice {
+  const { ymdToday, mdToday, activeStudentMeta, tutorRows } = people;
 
-  for (const meta of activeStudentMeta) {
-    const periods = withAutoF6InactivePeriod({
-      periods: inactivePeriodsById[meta.id] ?? [],
-      studentId: meta.id,
-      grade: meta.grade,
-      year,
-    });
-    const records = scheduleData.normalizedRecordsById[meta.id] ?? [];
-    const state = scheduleData.stateById[meta.id] ?? EMPTY_YEAR_STATE;
-    const unticked = listUntickedRegularMakeupExtraInRange(
-      records,
-      state,
-      juneStartIso,
-      ymdYesterday,
-      year,
-      {
-        isDateInactive: (dateIso) =>
-          isStudentInactiveOnDateFromPeriods({ periods, dateIso }),
-      },
-    );
-    if (!unticked.length) continue;
-    const details = unticked.map(
-      (r) => `${formatPendingMakeupFromDateLabel(r.date)}（${r.lessonType}）`,
-    );
-    untickedFromJuneRows.push({
-      studentId: meta.id,
-      displayName: meta.displayName,
-      count: details.length,
-      detail: `${details.length} 堂：${details.join("、")}`,
-    });
-  }
-
-  // Most overdue first (by unticked lesson count), then name.
-  untickedFromJuneRows.sort((a, b) => {
-    const countA = a.count ?? 0;
-    const countB = b.count ?? 0;
-    if (countB !== countA) return countB - countA;
-    return a.displayName.localeCompare(b.displayName, "zh-Hant");
-  });
-
-  const tutorsBirthdayToday = (tutorRows ?? [])
+  const tutorsBirthdayToday = tutorRows
     .filter((r) => {
-      const status = String((r as { status?: string }).status ?? "").trim();
+      const status = String(r.status ?? "").trim();
       return status === "工作中" || status === "放假中";
     })
-    .filter((r) => String((r as { birth_date?: string }).birth_date ?? "").slice(5, 10) === mdToday)
+    .filter((r) => String(r.birth_date ?? "").slice(5, 10) === mdToday)
     .map((r) => formatTutorBirthdayLabel(r as Parameters<typeof formatTutorBirthdayLabel>[0]));
 
   const studentsBirthdayToday = activeStudentMeta
@@ -202,13 +202,13 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       md: student.birthMd,
       label: `${student.displayName}（學生）`,
     })),
-    ...(tutorRows ?? [])
+    ...tutorRows
       .filter((r) => {
-        const status = String((r as { status?: string }).status ?? "").trim();
+        const status = String(r.status ?? "").trim();
         return status === "工作中" || status === "放假中";
       })
       .map((r) => ({
-        md: String((r as { birth_date?: string }).birth_date ?? "").slice(5, 10),
+        md: String(r.birth_date ?? "").slice(5, 10),
         label: `${formatTutorBirthdayLabel(r as Parameters<typeof formatTutorBirthdayLabel>[0])}（導師）`,
       })),
   ].filter((r) => r.md.length === 5);
@@ -246,20 +246,129 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   }
 
   return {
-    ymdToday,
-    mdToday,
-    year,
-    month,
     birthdaySummary,
     todayWhatsappHref,
     weekBirthdayLines,
     weekBirthdayReminderItems,
-    untickedFromJuneRows,
   };
 }
 
-export async function fetchHomeDashboardData(): Promise<HomeDashboardData> {
-  // Avoid unstable_cache here: field-shape renames + Data Cache caused
-  // stale payloads (missing untickedFromJuneRows) in local/prod.
-  return fetchHomeDashboardUncached();
+function buildUntickedRows(people: HomePeopleContext, scheduleData: Awaited<ReturnType<typeof loadYearScheduleData>>): HomeReminderRow[] {
+  const { ymdToday, year, activeStudentMeta, inactivePeriodsById } = people;
+  const juneStartIso = `${year}-06-01`;
+  const ymdYesterday = ymdYesterdayOf(ymdToday);
+  const untickedFromJuneRows: HomeReminderRow[] = [];
+
+  for (const meta of activeStudentMeta) {
+    const periods = withAutoF6InactivePeriod({
+      periods: inactivePeriodsById[meta.id] ?? [],
+      studentId: meta.id,
+      grade: meta.grade,
+      year,
+    });
+    const records = scheduleData.normalizedRecordsById[meta.id] ?? [];
+    const state = scheduleData.stateById[meta.id] ?? EMPTY_YEAR_STATE;
+    const unticked = listUntickedRegularMakeupExtraInRange(
+      records,
+      state,
+      juneStartIso,
+      ymdYesterday,
+      year,
+      {
+        isDateInactive: (dateIso) =>
+          isStudentInactiveOnDateFromPeriods({ periods, dateIso }),
+      },
+    );
+    if (!unticked.length) continue;
+    const details = unticked.map(
+      (r) => `${formatPendingMakeupFromDateLabel(r.date)}（${r.lessonType}）`,
+    );
+    untickedFromJuneRows.push({
+      studentId: meta.id,
+      displayName: meta.displayName,
+      count: details.length,
+      detail: `${details.length} 堂：${details.join("、")}`,
+    });
+  }
+
+  untickedFromJuneRows.sort((a, b) => {
+    const countA = a.count ?? 0;
+    const countB = b.count ?? 0;
+    if (countB !== countA) return countB - countA;
+    return a.displayName.localeCompare(b.displayName, "zh-Hant");
+  });
+
+  return untickedFromJuneRows;
 }
+
+async function loadHomePeopleContextCached(ymdToday: string): Promise<HomePeopleContext> {
+  return unstable_cache(
+    () => fetchHomePeopleContextUncached(ymdToday),
+    ["home-people-v1", ymdToday],
+    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_HOME] },
+  )();
+}
+
+async function loadHomeBirthdaySliceCached(ymdToday: string): Promise<HomeBirthdaySlice> {
+  return unstable_cache(
+    async () => {
+      const people = await loadHomePeopleContextCached(ymdToday);
+      return buildBirthdaySlice(people);
+    },
+    ["home-birthday-v1", ymdToday],
+    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_HOME] },
+  )();
+}
+
+async function loadHomeUntickedSliceCached(ymdToday: string): Promise<HomeReminderRow[]> {
+  const year = Number(ymdToday.slice(0, 4)) || new Date().getFullYear();
+  return unstable_cache(
+    async () => {
+      const [people, scheduleData] = await Promise.all([
+        loadHomePeopleContextCached(ymdToday),
+        loadYearScheduleData(year),
+      ]);
+      return buildUntickedRows(people, scheduleData);
+    },
+    ["home-unticked-v1", ymdToday],
+    {
+      revalidate: 60,
+      tags: [SCHEDULE_CACHE_TAG_HOME, SCHEDULE_CACHE_TAG_DAY_TIMETABLE, SCHEDULE_CACHE_TAG_AGGREGATES],
+    },
+  )();
+}
+
+export const fetchHomeBirthdayPart = cache(async (): Promise<{
+  ymdToday: string;
+  mdToday: string;
+  year: number;
+  month: number;
+} & HomeBirthdaySlice> => {
+  const { ymdToday, mdToday, year, month } = hkTodayParts();
+  const birthday = await loadHomeBirthdaySliceCached(ymdToday);
+  return { ymdToday, mdToday, year, month, ...birthday };
+});
+
+export const fetchHomeUntickedPart = cache(async (): Promise<HomeReminderRow[]> => {
+  const { ymdToday } = hkTodayParts();
+  return loadHomeUntickedSliceCached(ymdToday);
+});
+
+export const fetchHomeDashboardData = cache(async (): Promise<HomeDashboardData> => {
+  const [{ ymdToday, mdToday, year, month, ...birthday }, untickedFromJuneRows] = await Promise.all([
+    fetchHomeBirthdayPart(),
+    fetchHomeUntickedPart(),
+  ]);
+
+  return {
+    ymdToday,
+    mdToday,
+    year,
+    month,
+    birthdaySummary: birthday.birthdaySummary,
+    todayWhatsappHref: birthday.todayWhatsappHref,
+    weekBirthdayLines: birthday.weekBirthdayLines,
+    weekBirthdayReminderItems: birthday.weekBirthdayReminderItems,
+    untickedFromJuneRows,
+  };
+});

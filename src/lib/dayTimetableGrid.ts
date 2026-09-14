@@ -34,6 +34,7 @@ import {
   loadLessonYearStatesBatchServer,
 } from "@/lib/lessonDataServer";
 import { loadYearScheduleData, normalizeLessonRecords } from "@/lib/yearScheduleData.server";
+import { loadStudentsGradeContext } from "@/lib/studentsGradeContext.server";
 import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorConstants";
 import type { DayTimetableFeePaymentTone } from "@/lib/dayTimetableStyleSettings";
 import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings.server";
@@ -565,66 +566,14 @@ async function fetchDayTimetablePayloadUncached(
 
   const supabase = getSupabaseAdmin();
   const targetWeekday = weekdayCnFromIsoDateHk(dateIso);
-  const [staticBundle, yearSchedule, timetableStyle] = await Promise.all([
+  const [staticBundle, yearSchedule, timetableStyle, gradeContext] = await Promise.all([
     loadDayTimetableStaticBundle(),
     loadYearScheduleData(year),
     loadDayTimetableStyleSettings(),
+    loadStudentsGradeContext(),
   ]);
-  const allStudentIds = staticBundle.studentList.map((s) => s.id).filter(Boolean);
-  const [{ data: heldBackRows }, { data: gradeHistoryRows }] = allStudentIds.length
-    ? await Promise.all([
-        supabase
-          .from("student_held_back_years")
-          .select("student_id, promotion_year")
-          .in("student_id", allStudentIds),
-        supabase
-          .from("student_grade_history")
-          .select("student_id, academic_year, grade, status, note")
-          .in("student_id", allStudentIds),
-      ])
-    : [
-        { data: [] as Array<{ student_id?: string; promotion_year?: number }> },
-        {
-          data: [] as Array<{
-            student_id?: string;
-            academic_year?: string;
-            grade?: string;
-            status?: string;
-            note?: string;
-          }>,
-        },
-      ];
-  const heldBackYearsByStudentId: Record<string, number[]> = {};
-  for (const row of heldBackRows ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    const y = Math.trunc(
-      Number(
-        (row as { promotion_year?: number; academic_year?: number }).promotion_year ??
-          (row as { academic_year?: number }).academic_year,
-      ),
-    );
-    if (!sid || !Number.isFinite(y)) continue;
-    if (!heldBackYearsByStudentId[sid]) heldBackYearsByStudentId[sid] = [];
-    heldBackYearsByStudentId[sid].push(y);
-  }
-  const gradeHistoryByStudentId: GradeHistoryByStudentId = {};
-  for (const row of gradeHistoryRows ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    const academicYear = String((row as { academic_year?: string }).academic_year ?? "").trim();
-    const grade = String((row as { grade?: string }).grade ?? "").trim();
-    if (!sid || !/^\d{4}-\d{2}$/.test(academicYear) || !grade) continue;
-    if (!gradeHistoryByStudentId[sid]) gradeHistoryByStudentId[sid] = {};
-    gradeHistoryByStudentId[sid][academicYear] = {
-      academicYear,
-      grade,
-      status: (String((row as { status?: string }).status ?? "normal").toLowerCase() as
-        | "normal"
-        | "repeating"
-        | "promoted"
-        | "manual_adjustment"),
-      note: String((row as { note?: string }).note ?? ""),
-    };
-  }
+  const heldBackYearsByStudentId = gradeContext.heldBackYearsByStudentId;
+  const gradeHistoryByStudentId = gradeContext.gradeHistoryByStudentId;
   const {
     regularPeriodMaxByRoom,
     roomDisplayLabels,
@@ -965,7 +914,7 @@ export async function fetchDayTimetablePayload(
         includeInactiveMakeupSlots,
       }),
     [
-      "day-timetable-payload-v28",
+      "day-timetable-payload-v29",
       String(year),
       String(month),
       String(day),

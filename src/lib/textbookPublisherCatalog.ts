@@ -16,7 +16,7 @@ const JUNIOR_CATALOG: TextbookPublisherGroup[] = [
   },
   {
     publisher: "Ephhk",
-    books: [{ title: "Mathematics in Focus" }, { title: "Maths Smart" }],
+    books: [{ title: "Mathematics in Focus (2nd)" }, { title: "Maths Smart" }],
   },
   {
     publisher: "HKEP",
@@ -84,7 +84,8 @@ const LEGACY_TITLE_ALIASES: Record<TextbookBand, Record<string, string>> = {
   junior: {
     "An Inspiring Journey to Mathematics": "Inspiring Journey",
     "Junior Secondary Oxford Mathematics for the New Century": "New Century",
-    "Mathematics in Focus (2nd edition)": "Mathematics in Focus",
+    "Mathematics in Focus": "Mathematics in Focus (2nd)",
+    "Mathematics in Focus (2nd edition)": "Mathematics in Focus (2nd)",
   },
   senior: {
     "Mathematics in Focus (2nd Edition)": "Mathematics in Focus (2nd)",

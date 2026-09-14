@@ -1,11 +1,8 @@
+import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { filterStudentsWithAnyActivityInYear, studentIdsOf } from "@/lib/activeStudentIds";
 import { getStudentGradeForDate } from "@/lib/studentGradeHistory";
-import {
-  loadStudentGradeHistoryServer,
-  loadStudentHeldBackYearsServer,
-} from "@/lib/lessonDataServer";
 import {
   buildStudentInactivePeriodsById,
   withAutoF6InactivePeriod,
@@ -19,6 +16,7 @@ import {
 } from "@/lib/lessonYearStateLegacy";
 import { parseLessonYearStateDbRow } from "@/lib/lessonYearStateShared";
 import { SCHEDULE_CACHE_TAG_AGGREGATES, SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
+import { loadStudentsGradeContext } from "@/lib/studentsGradeContext.server";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { YearLessonRecord, YearLessonState } from "@/lib/yearScheduleCore";
@@ -192,17 +190,14 @@ const loadScheduleStudentsContextCached = unstable_cache(
   { revalidate: 300, tags: SHARED_SCHEDULE_CACHE_TAGS },
 );
 
-export async function loadScheduleStudentsForYear(year: number): Promise<ScheduleStudentsContext> {
-  const { students, inactivePeriodsById: periodsById } = await loadScheduleStudentsContextCached();
-  const idsAll = students.map((s) => s.id).filter(Boolean);
-  const supabase = getSupabaseAdmin();
-  const [heldBackYearsResult, gradeHistoryResult] = await Promise.all([
-    loadStudentHeldBackYearsServer(supabase, idsAll),
-    loadStudentGradeHistoryServer(supabase, idsAll),
+async function loadScheduleStudentsForYearUncached(year: number): Promise<ScheduleStudentsContext> {
+  const [{ students, inactivePeriodsById: periodsById }, gradeContext] = await Promise.all([
+    loadScheduleStudentsContextCached(),
+    loadStudentsGradeContext(),
   ]);
   const gradeOptions = {
-    heldBackYearsByStudentId: heldBackYearsResult.byStudentId ?? {},
-    gradeHistoryByStudentId: gradeHistoryResult.byStudentId ?? {},
+    heldBackYearsByStudentId: gradeContext.heldBackYearsByStudentId,
+    gradeHistoryByStudentId: gradeContext.gradeHistoryByStudentId,
   };
   const activeStudents = filterStudentsWithAnyActivityInYear(
     students,
@@ -233,6 +228,9 @@ export async function loadScheduleStudentsForYear(year: number): Promise<Schedul
 
   return { activeStudents, inactivePeriodsById };
 }
+
+/** Request-memoized active students for a lesson year (also used inside year-schedule Data Cache). */
+export const loadScheduleStudentsForYear = cache(loadScheduleStudentsForYearUncached);
 
 const loadYearScheduleDataCached = unstable_cache(
   async (year: number): Promise<YearScheduleData> => {
@@ -271,6 +269,6 @@ const loadYearScheduleDataCached = unstable_cache(
 );
 
 /** Cached year-wide lesson records + states (shared by Daily Timetable and Rooms). */
-export async function loadYearScheduleData(year: number): Promise<YearScheduleData> {
+export const loadYearScheduleData = cache(async (year: number): Promise<YearScheduleData> => {
   return loadYearScheduleDataCached(year);
-}
+});

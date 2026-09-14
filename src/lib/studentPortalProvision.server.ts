@@ -151,15 +151,29 @@ function readiness(student: StudentRecord): { ready: boolean; readyReason: strin
 
 export async function getStudentPortalStatusBatch(
   studentIds: string[],
+  options?: {
+    /** Reuse students list fields to skip a second students query. */
+    students?: Array<{
+      id: string;
+      email: string | null;
+      student_phone: string | null;
+      grade?: string | null;
+    }>;
+  },
 ): Promise<Record<string, StudentPortalStatusRow>> {
   const ids = [...new Set(studentIds.map((id) => normalizeStudentId(id)).filter(Boolean))];
   const out: Record<string, StudentPortalStatusRow> = {};
   if (!ids.length) return out;
 
   const sb = getSupabaseAdmin();
+  const preloadedStudents = options?.students;
+  const studentsPromise = preloadedStudents?.length
+    ? Promise.resolve({ data: preloadedStudents as StudentRecord[], error: null })
+    : sb.from("students").select("id, email, student_phone, grade").in("id", ids);
+
   const [{ data: studentsRaw, error: studentsError }, { data: profilesRaw, error: profilesError }, periodRows] =
     await Promise.all([
-      sb.from("students").select("id, email, student_phone, grade").in("id", ids),
+      studentsPromise,
       sb.from("user_profiles").select("user_id, role, student_id").in("student_id", ids),
       loadStudentInactivePeriodsBatchServer(sb, ids),
     ]);
