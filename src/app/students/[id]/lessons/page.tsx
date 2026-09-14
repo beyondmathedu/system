@@ -40,6 +40,8 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
     scheduleRecords: initialBootstrap.scheduleRecords,
     yearState: initialBootstrap.yearState,
     inactivePeriods: initialBootstrap.inactivePeriods,
+    heldBackYears: initialBootstrap.heldBackYears,
+    gradeHistory: initialBootstrap.gradeHistory,
   });
   const initialReadOnly =
     viewer.isSharedIpadTutor ||
