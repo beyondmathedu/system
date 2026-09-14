@@ -684,8 +684,14 @@ export function StudentLessonsYearPage({
   const [inactivePeriods, setInactivePeriods] = useState<StudentInactivePeriodRow[]>(
     () => initialHydrated?.inactivePeriods ?? [],
   );
-  const heldBackYears = initialHydrated?.heldBackYears ?? initialBootstrap?.heldBackYears ?? [];
-  const gradeHistory = initialHydrated?.gradeHistory ?? initialBootstrap?.gradeHistory ?? {};
+  const heldBackYears = useMemo(
+    () => initialHydrated?.heldBackYears ?? initialBootstrap?.heldBackYears ?? [],
+    [initialHydrated?.heldBackYears, initialBootstrap?.heldBackYears],
+  );
+  const gradeHistory = useMemo(
+    () => initialHydrated?.gradeHistory ?? initialBootstrap?.gradeHistory ?? {},
+    [initialHydrated?.gradeHistory, initialBootstrap?.gradeHistory],
+  );
   const [accessReady, setAccessReady] = useState(() => Boolean(initialBootstrap));
   const [isReadOnlyViewer, setIsReadOnlyViewer] = useState(Boolean(initialReadOnly));
   const [canEditTimetableRemarks, setCanEditTimetableRemarks] = useState(
