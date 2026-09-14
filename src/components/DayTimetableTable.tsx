@@ -22,7 +22,7 @@ import type {
   DayTimetableFeePaymentTone,
   DayTimetableStyleSettings,
 } from "@/lib/dayTimetableStyleSettings";
-import { upsertTimetablePermanentRemark } from "@/lib/studentLessonStorage";
+import { upsertTimetablePermanentRemark } from "@/lib/studentTimetableRemarkClient";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { normalizeStudentId } from "@/lib/studentId";
 import { buildRoomPageHref } from "@/lib/roomConstants";

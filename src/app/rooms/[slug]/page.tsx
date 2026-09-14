@@ -134,10 +134,11 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
     if (period === "custom" && hasCustomRange) return { startIso: fromIso, endIso: toIso };
     return mondayToSundayRange(todayIso);
   })();
-  const [{ rows, loadError, yearStatesByStudentId }, navViewer] = await Promise.all([
-    fetchRoomScheduleAggregate(key, year, month, range),
-    buildAppTopNavViewer(viewer),
-  ]);
+  const [{ rows, loadError, yearStatesByStudentId, examDatesByStudentId, examContentsByStudentId }, navViewer] =
+    await Promise.all([
+      fetchRoomScheduleAggregate(key, year, month, range),
+      buildAppTopNavViewer(viewer),
+    ]);
 
   const basePath = `/rooms/${key}`;
   const titleSuffix = (() => {
@@ -301,6 +302,8 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                 rows={rows}
                 year={year}
                 initialYearStatesByStudentId={yearStatesByStudentId}
+                initialExamDatesByStudentId={examDatesByStudentId}
+                initialExamContentsByStudentId={examContentsByStudentId}
                 canOpenStudentLink={isAdminViewer || isTutorView || isSharedIpadTutor}
                 studentLessonsHrefMode={isAdminViewer ? "hub" : "yearFromRoom"}
                 hideStudentId={isSharedIpadTutor}

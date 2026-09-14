@@ -11,11 +11,8 @@ import {
   visibleExamContent,
   visibleExamDateIso,
 } from "@/lib/examDateVisibility";
-import {
-  loadExamInfoBatch,
-  type StudentLesson2026State,
-} from "@/lib/studentLessonStorage";
-import { DEFAULT_LESSON_YEAR_STATE } from "@/lib/lessonYearStateShared";
+import { loadExamInfoBatch } from "@/lib/studentExamClient";
+import { DEFAULT_LESSON_YEAR_STATE, type StudentLesson2026State } from "@/lib/lessonYearStateShared";
 import {
   flushSaveLessonYearStateQueue,
   queueSaveLessonYearState,
@@ -51,6 +48,10 @@ type Props = {
   year: number;
   /** Server-loaded year state for students on this page (avoids duplicate client fetch). */
   initialYearStatesByStudentId?: Record<string, YearLessonState>;
+  /** Server-loaded upcoming exam dates (visible ISO or empty). */
+  initialExamDatesByStudentId?: Record<string, string>;
+  /** Server-loaded exam content keyed by student (already visibility-filtered). */
+  initialExamContentsByStudentId?: Record<string, string>;
   canOpenStudentLink?: boolean;
   /** 鎖定出席 checkbox */
   attendanceLocked?: boolean;
@@ -83,6 +84,8 @@ export default function RoomScheduleTable({
   rows,
   year,
   initialYearStatesByStudentId = {},
+  initialExamDatesByStudentId = {},
+  initialExamContentsByStudentId = {},
   canOpenStudentLink = true,
   attendanceLocked = false,
   tutorFieldLocked = false,
@@ -144,8 +147,12 @@ export default function RoomScheduleTable({
   const [activeTutorAliasToNickname, setActiveTutorAliasToNickname] = useState<Map<string, string>>(
     new Map(),
   );
-  const [examDatesByStudentId, setExamDatesByStudentId] = useState<Record<string, string>>({});
-  const [examContentsByStudentId, setExamContentsByStudentId] = useState<Record<string, string>>({});
+  const [examDatesByStudentId, setExamDatesByStudentId] = useState<Record<string, string>>(
+    () => initialExamDatesByStudentId,
+  );
+  const [examContentsByStudentId, setExamContentsByStudentId] = useState<Record<string, string>>(
+    () => initialExamContentsByStudentId,
+  );
   const [tutorFilter, setTutorFilter] = useState("all");
   const [gradeFilter, setGradeFilter] = useState("all");
   const [lessonTypeFilter, setLessonTypeFilter] = useState("all");
@@ -482,22 +489,33 @@ export default function RoomScheduleTable({
     void (async () => {
       const studentIds = Array.from(new Set(rows.map((r) => r.studentId)));
       const nextDateMap: Record<string, string> = {};
-      const nextContentMap: Record<string, string> = {};
       const missing: string[] = [];
 
       for (const id of studentIds) {
+        if (Object.prototype.hasOwnProperty.call(initialExamDatesByStudentId, id)) {
+          nextDateMap[id] = initialExamDatesByStudentId[id] ?? "";
+          const raw = examDateCache.current.get(id);
+          if (raw === undefined) examDateCache.current.set(id, initialExamDatesByStudentId[id] ?? "");
+          continue;
+        }
         const cached = examDateCache.current.get(id);
         if (cached !== undefined) nextDateMap[id] = visibleExamDateIso(cached);
         else missing.push(id);
       }
 
-      // 先用 cache 補齊，讓 UI 不會閃爍
-      if (mounted) setExamDatesByStudentId((prev) => ({ ...prev, ...nextDateMap }));
+      // 先用 cache / SSR 補齊，讓 UI 不會閃爍
+      if (mounted) {
+        setExamDatesByStudentId((prev) => ({ ...prev, ...nextDateMap }));
+        if (Object.keys(initialExamContentsByStudentId).length) {
+          setExamContentsByStudentId((prev) => ({ ...prev, ...initialExamContentsByStudentId }));
+        }
+      }
 
       if (missing.length === 0) return;
 
       const batch = await loadExamInfoBatch(missing);
       if (!mounted) return;
+      const nextContentMap: Record<string, string> = {};
       for (const id of missing) {
         const info = batch[id] ?? { examDate: "", examContent: "" };
         examDateCache.current.set(id, info.examDate);
@@ -515,7 +533,7 @@ export default function RoomScheduleTable({
     return () => {
       mounted = false;
     };
-  }, [rows]);
+  }, [rows, initialExamDatesByStudentId, initialExamContentsByStudentId]);
 
   useEffect(() => {
     let mounted = true;

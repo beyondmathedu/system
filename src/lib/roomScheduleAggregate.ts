@@ -31,6 +31,8 @@ import { hasRoomScheduleCandidate } from "@/lib/roomScheduleCandidate";
 import { materializeTutorMonthPayRows } from "@/lib/tutorMonthlyPayroll";
 import { getStudentGradeForDate } from "@/lib/studentGradeHistory";
 import { loadStudentsGradeContext } from "@/lib/studentsGradeContext.server";
+import { visibleExamContent, visibleExamDateIso } from "@/lib/examDateVisibility";
+import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import {
   loadScheduleStudentsForYear,
   loadYearScheduleData,
@@ -39,6 +41,61 @@ import {
 } from "@/lib/yearScheduleData.server";
 
 const PERF_LOG_ENABLED = process.env.ENABLE_PERF_LOGS === "1";
+
+const EMPTY_EXAM_MAPS = {
+  examDatesByStudentId: {} as Record<string, string>,
+  examContentsByStudentId: {} as Record<string, string>,
+};
+
+async function loadVisibleExamMapsForStudents(
+  studentIds: string[],
+): Promise<{
+  examDatesByStudentId: Record<string, string>;
+  examContentsByStudentId: Record<string, string>;
+}> {
+  const examDatesByStudentId: Record<string, string> = {};
+  const examContentsByStudentId: Record<string, string> = {};
+  if (!studentIds.length) return { examDatesByStudentId, examContentsByStudentId };
+
+  const supabase = getSupabaseAdmin();
+  const primary = await fetchRowsInChunks({
+    ids: studentIds,
+    concurrency: 8,
+    query: (chunk) =>
+      supabase
+        .from("student_exam_dates")
+        .select("student_id, exam_date, exam_content")
+        .in("student_id", chunk),
+  });
+
+  let rows: Array<Record<string, unknown>> = (primary.data ?? []) as Array<Record<string, unknown>>;
+  if (primary.error) {
+    const fallback = await fetchRowsInChunks({
+      ids: studentIds,
+      concurrency: 8,
+      query: (chunk) =>
+        supabase.from("student_exam_dates").select("student_id, exam_date").in("student_id", chunk),
+    });
+    rows = (fallback.data ?? []) as Array<Record<string, unknown>>;
+  }
+
+  for (const row of rows) {
+    const sid = String(row.student_id ?? "").trim();
+    if (!sid) continue;
+    const examDate = String(row.exam_date ?? "");
+    const examContent = String(row.exam_content ?? "");
+    const visibleDate = visibleExamDateIso(examDate);
+    examDatesByStudentId[sid] = visibleDate;
+    examContentsByStudentId[sid] = visibleDate ? visibleExamContent(examDate, examContent) : "";
+  }
+
+  // Mark missing students so the client does not refetch.
+  for (const id of studentIds) {
+    if (!(id in examDatesByStudentId)) examDatesByStudentId[id] = "";
+  }
+
+  return { examDatesByStudentId, examContentsByStudentId };
+}
 
 export type RoomScheduleRow = {
   rowKey: string;
@@ -241,16 +298,16 @@ async function fetchRoomScheduleAggregateUncached(
   const perfDbStartedAt = PERF_LOG_ENABLED ? Date.now() : 0;
   const roomLabel = await fetchClassroomScheduleLabel(slug);
   if (!roomLabel) {
-    return { roomLabel: "", rows: [], loadError: null, yearStatesByStudentId: {} };
+    return { roomLabel: "", rows: [], loadError: null, yearStatesByStudentId: {}, ...EMPTY_EXAM_MAPS };
   }
 
   const { bundle, error, stats } = await loadRoomScheduleBundleFromSharedCache(year, roomLabel);
   const perfDbElapsedMs = PERF_LOG_ENABLED ? Date.now() - perfDbStartedAt : 0;
   if (error) {
-    return { roomLabel, rows: [], loadError: error, yearStatesByStudentId: {} };
+    return { roomLabel, rows: [], loadError: error, yearStatesByStudentId: {}, ...EMPTY_EXAM_MAPS };
   }
   if (!bundle || bundle.students.length === 0) {
-    return { roomLabel, rows: [], loadError: null, yearStatesByStudentId: {} };
+    return { roomLabel, rows: [], loadError: null, yearStatesByStudentId: {}, ...EMPTY_EXAM_MAPS };
   }
 
   const { students, recMap, stateMap, inactivePeriodsById } = bundle;
@@ -365,7 +422,16 @@ async function fetchRoomScheduleAggregateUncached(
     yearStatesByStudentId[st.id] = stateMap.get(st.id) ?? emptyState();
   }
 
-  return { roomLabel, rows: sortedRows, loadError: null, yearStatesByStudentId };
+  const examStudentIds = Array.from(new Set(sortedRows.map((r) => r.studentId).filter(Boolean)));
+  const examMaps = await loadVisibleExamMapsForStudents(examStudentIds);
+
+  return {
+    roomLabel,
+    rows: sortedRows,
+    loadError: null,
+    yearStatesByStudentId,
+    ...examMaps,
+  };
 }
 
 export type RoomScheduleAggregateResult = {
@@ -373,6 +439,8 @@ export type RoomScheduleAggregateResult = {
   rows: RoomScheduleRow[];
   loadError: string | null;
   yearStatesByStudentId: Record<string, YearLessonState>;
+  examDatesByStudentId: Record<string, string>;
+  examContentsByStudentId: Record<string, string>;
 };
 
 /** Cached full-room expand (heavy); short TTL keeps edits near-real-time while cutting repeat DB load. */
@@ -387,7 +455,7 @@ export async function fetchRoomScheduleAggregate(
   const slugKey = slug.trim().toLowerCase();
   return unstable_cache(
     async () => fetchRoomScheduleAggregateUncached(slug, year, month, { startIso, endIso }),
-    ["room-schedule-aggregate-v5", slugKey, String(year), String(month), startIso, endIso],
+    ["room-schedule-aggregate-v6", slugKey, String(year), String(month), startIso, endIso],
     // Heavy full-room expand; longer TTL + tag busting keeps UI snappy.
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();

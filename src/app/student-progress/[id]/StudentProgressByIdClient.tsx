@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import { supabase } from "@/lib/supabase";
-import { loadExamInfo } from "@/lib/studentLessonStorage";
+import { loadExamInfo } from "@/lib/studentExamClient";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { normalizeStudentId } from "@/lib/studentId";
