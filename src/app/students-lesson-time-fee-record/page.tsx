@@ -2,20 +2,20 @@ import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
 import { defaultLessonYear, hkYmdNow } from "@/lib/lessonCalendar";
 import { loadFeeRecordBootstrapCached } from "@/lib/lessonDataServer";
-import StudentsLessonTimeFeeRecordClient from "./StudentsLessonTimeFeeRecordClient";
+import StudentsLessonTimeFeeRecordEntry from "./StudentsLessonTimeFeeRecordEntry";
 
 export default async function StudentsLessonTimeFeeRecordPage() {
   const { m } = hkYmdNow();
   const initialYear = defaultLessonYear();
   const initialMonth = m;
-  const [viewer, initialBootstrap] = await Promise.all([
-    getViewerContext(),
+  const viewer = await getViewerContext();
+  const [navViewer, initialBootstrap] = await Promise.all([
+    buildAppTopNavViewer(viewer),
     loadFeeRecordBootstrapCached(initialYear, initialMonth),
   ]);
-  const navViewer = await buildAppTopNavViewer(viewer);
 
   return (
-    <StudentsLessonTimeFeeRecordClient
+    <StudentsLessonTimeFeeRecordEntry
       initialBootstrap={initialBootstrap}
       initialYear={initialYear}
       initialMonth={initialMonth}

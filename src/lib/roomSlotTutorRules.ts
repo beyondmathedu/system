@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { canonicalScheduleRoomLabel, canonicalScheduleTimeLabel } from "@/lib/dayTimetableShared";
 import { normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
@@ -124,13 +125,13 @@ export async function loadRoomSlotTutorRulesServer(
 }
 
 /** Cached room→slot tutor map (invalidated with day-timetable tag). */
-export async function loadRoomSlotTutorRulesCached(): Promise<RoomSlotTutorRule[]> {
+export const loadRoomSlotTutorRulesCached = cache(async (): Promise<RoomSlotTutorRule[]> => {
   return unstable_cache(
     () => loadRoomSlotTutorRulesServer(getSupabaseAdmin()),
     ["room-slot-tutor-rules-v1"],
     { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
   )();
-}
+});
 
 export async function upsertRoomSlotTutorRule(
   supabase: SupabaseClient,

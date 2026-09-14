@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import DayTimetableLegend from "@/components/DayTimetableLegend";
 import DayTimetableStyleEditorLazy from "@/components/DayTimetableStyleEditorLazy";
-import DayTimetableTable from "@/components/DayTimetableTable";
+import DayTimetableTableLazy from "@/components/DayTimetableTableLazy";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import {
   ALL_REGULAR_TIMETABLE_FILTER,
@@ -105,7 +105,7 @@ export default function RegularClassTimetablePanel({ payload }: Props) {
             Inactive shows only pauses with an Expected return date. Graduated or open-ended inactive students are excluded.
           </p>
         ) : null}
-        <DayTimetableTable
+        <DayTimetableTableLazy
           key={`${payload.dateIso}:${filterKey}`}
           payload={tablePayload}
           emptyMessage={regularTimetableEmptyMessage(flags)}

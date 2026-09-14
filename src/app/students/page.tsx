@@ -20,7 +20,6 @@ export default async function StudentsPage() {
     if (sid) redirect(studentPortalHomePath(sid));
     redirect("/login");
   }
-  const navViewer = await buildAppTopNavViewer(viewer);
 
   let initialList: {
     students: Awaited<ReturnType<typeof listStudentsForPage>>["rows"];
@@ -28,20 +27,33 @@ export default async function StudentsPage() {
     portalStatusById: Awaited<ReturnType<typeof getStudentPortalStatusBatch>>;
   } | null = null;
   try {
-    const result = await listStudentsForPage(getSupabaseAdmin(), {
-      offset: 0,
-      limit: STUDENTS_PAGE_SIZE,
-      status: "active",
-    });
-    const portalStatusById = await getStudentPortalStatusBatch(result.rows.map((r) => r.id));
+    const [navViewer, result] = await Promise.all([
+      buildAppTopNavViewer(viewer),
+      listStudentsForPage(getSupabaseAdmin(), {
+        offset: 0,
+        limit: STUDENTS_PAGE_SIZE,
+        status: "active",
+      }),
+    ]);
+    const portalStatusById = await getStudentPortalStatusBatch(
+      result.rows.map((r) => r.id),
+      {
+        students: result.rows.map((r) => ({
+          id: r.id,
+          email: r.email,
+          student_phone: r.student_phone,
+          grade: r.grade,
+        })),
+      },
+    );
     initialList = {
       students: result.rows,
       total: result.total,
       portalStatusById,
     };
+    return <StudentsPageEntry navViewer={navViewer} initialList={initialList} />;
   } catch {
-    initialList = null;
+    const navViewer = await buildAppTopNavViewer(viewer);
+    return <StudentsPageEntry navViewer={navViewer} initialList={null} />;
   }
-
-  return <StudentsPageEntry navViewer={navViewer} initialList={initialList} />;
 }

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import {
@@ -115,13 +116,13 @@ async function fetchClassroomNavLinksUncached(): Promise<RoomNavItem[]> {
 }
 
 /** Nav room links in classrooms.sort_order (includes extra rooms such as Band). */
-export async function fetchClassroomNavLinks(): Promise<RoomNavItem[]> {
+export const fetchClassroomNavLinks = cache(async (): Promise<RoomNavItem[]> => {
   return unstable_cache(
     async () => fetchClassroomNavLinksUncached(),
     ["classroom-nav-links-v1"],
     { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
-}
+});
 
 export async function fetchClassroomSlugs(): Promise<string[]> {
   const links = await fetchClassroomNavLinks();

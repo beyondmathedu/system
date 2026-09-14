@@ -8,7 +8,7 @@ import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { redirectStudentAwayFromAdminPages } from "@/lib/studentPortalAccess";
 import { redirectIfInactiveStudentPortalBlocked } from "@/lib/studentPortalAccess.server";
 import { HOME_BIRTHDAY_WHATSAPP_LABEL } from "@/lib/homeBirthdayWhatsapp";
-import { fetchHomeDashboardData } from "@/lib/homeDashboardData";
+import { fetchHomeBirthdayPart, fetchHomeUntickedPart } from "@/lib/homeDashboardData";
 import HomeReminderPanel from "./HomeReminderPanel";
 import UpcomingBirthdayReminder from "./UpcomingBirthdayReminder";
 
@@ -172,90 +172,99 @@ export default async function HomeLandingPage() {
             <p className="mt-2 text-sm text-blue-100 sm:text-base">{randomLine}</p>
           </div>
 
-          <Suspense fallback={<HomeDashboardSkeleton />}>
-            <HomeDashboardBody />
-          </Suspense>
+          <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
+            <Suspense fallback={<HomeBirthdaySkeleton />}>
+              <HomeBirthdayBody />
+            </Suspense>
+          </div>
+
+          <div className="p-6">
+            <Suspense fallback={<HomeUntickedSkeleton />}>
+              <HomeUntickedBody />
+            </Suspense>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function HomeDashboardSkeleton() {
+function HomeBirthdaySkeleton() {
   return (
-    <div className="space-y-4 p-6" aria-busy="true">
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2" aria-busy="true">
       <div className="h-24 animate-pulse rounded-lg bg-slate-100" />
-      <div className="h-40 animate-pulse rounded-lg bg-slate-100" />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="h-48 animate-pulse rounded-lg bg-slate-100" />
-        <div className="h-48 animate-pulse rounded-lg bg-slate-100" />
-        <div className="h-48 animate-pulse rounded-lg bg-slate-100" />
-        <div className="h-48 animate-pulse rounded-lg bg-slate-100" />
-      </div>
-      <p className="sr-only">Loading dashboard…</p>
+      <div className="h-24 animate-pulse rounded-lg bg-slate-100" />
+      <p className="sr-only">Loading birthdays…</p>
     </div>
   );
 }
 
-async function HomeDashboardBody() {
-  const dashboard = await fetchHomeDashboardData();
+function HomeUntickedSkeleton() {
+  return (
+    <div className="h-48 animate-pulse rounded-lg bg-slate-100" aria-busy="true">
+      <p className="sr-only">Loading unticked reminders…</p>
+    </div>
+  );
+}
+
+async function HomeBirthdayBody() {
+  const dashboard = await fetchHomeBirthdayPart();
   const birthdaySummary = dashboard.birthdaySummary;
   const todayWhatsappHref = dashboard.todayWhatsappHref;
   const weekBirthdayLines = dashboard.weekBirthdayLines ?? [];
   const weekBirthdayReminderItems = dashboard.weekBirthdayReminderItems ?? [];
-  const untickedFromJuneRows = dashboard.untickedFromJuneRows ?? [];
 
   return (
-    <>
-          <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <section className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-                <p className="text-sm font-semibold text-slate-800">
-                  <span className="mr-1" aria-hidden>
-                    🎂
-                  </span>
-                  今日生日之星
-                </p>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <p className="text-sm text-slate-600">{birthdaySummary}</p>
-                  <a
-                    href={todayWhatsappHref}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
-                  >
-                    {HOME_BIRTHDAY_WHATSAPP_LABEL}
-                  </a>
-                </div>
-              </section>
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <section className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+        <p className="text-sm font-semibold text-slate-800">
+          <span className="mr-1" aria-hidden>
+            🎂
+          </span>
+          今日生日之星
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <p className="text-sm text-slate-600">{birthdaySummary}</p>
+          <a
+            href={todayWhatsappHref}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
+          >
+            {HOME_BIRTHDAY_WHATSAPP_LABEL}
+          </a>
+        </div>
+      </section>
 
-              <section className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-                <p className="text-sm font-semibold text-slate-800">
-                  <span className="mr-1" aria-hidden>
-                    🎂
-                  </span>
-                  本週生日之星（明天～星期日）
-                </p>
-                <p className="mt-1 text-sm text-slate-600">
-                  {weekBirthdayLines.length ? weekBirthdayLines.join(" ｜ ") : "本週暫時冇生日提醒"}
-                </p>
-                <UpcomingBirthdayReminder items={weekBirthdayReminderItems} />
-              </section>
-            </div>
-          </div>
+      <section className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+        <p className="text-sm font-semibold text-slate-800">
+          <span className="mr-1" aria-hidden>
+            🎂
+          </span>
+          本週生日之星（明天～星期日）
+        </p>
+        <p className="mt-1 text-sm text-slate-600">
+          {weekBirthdayLines.length ? weekBirthdayLines.join(" ｜ ") : "本週暫時冇生日提醒"}
+        </p>
+        <UpcomingBirthdayReminder items={weekBirthdayReminderItems} />
+      </section>
+    </div>
+  );
+}
 
-          <div className="p-6">
-            <HomeReminderPanel
-              title={`過期未打勾 · ${untickedFromJuneRows.length} 人`}
-              titleClassName="text-amber-900"
-              borderClassName="border-amber-200"
-              bgClassName="bg-amber-50/70"
-              subtitle="6 月 1 日～昨天 · 恆常／補堂／加堂仍未在課表打勾（今日堂唔計）"
-              rows={untickedFromJuneRows}
-              emptyTitle="暫時冇過期未打勾"
-            />
-          </div>
-    </>
+async function HomeUntickedBody() {
+  const untickedFromJuneRows = await fetchHomeUntickedPart();
+
+  return (
+    <HomeReminderPanel
+      title={`過期未打勾 · ${untickedFromJuneRows.length} 人`}
+      titleClassName="text-amber-900"
+      borderClassName="border-amber-200"
+      bgClassName="bg-amber-50/70"
+      subtitle="6 月 1 日～昨天 · 恆常／補堂／加堂仍未在課表打勾（今日堂唔計）"
+      rows={untickedFromJuneRows}
+      emptyTitle="暫時冇過期未打勾"
+    />
   );
 }
 

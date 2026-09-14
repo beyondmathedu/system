@@ -25,15 +25,14 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   const sp = searchParams ? await searchParams : undefined;
   const { year, month, day } = parseDayParams(sp);
   const nextHref = `/regular-class-timetable?year=${year}&month=${month}&day=${day}`;
-  const [viewer, payload] = await Promise.all([
-    getViewerContext(),
-    fetchDayTimetablePayload(year, month, day, {
-      regularOnly: false,
-      includeInactiveSlots: true,
-      includeCancelledSlots: true,
-      includePendingMakeupSlots: true,
-    }),
-  ]);
+  const viewerPromise = getViewerContext();
+  const payloadPromise = fetchDayTimetablePayload(year, month, day, {
+    regularOnly: false,
+    includeInactiveSlots: true,
+    includeCancelledSlots: true,
+    includePendingMakeupSlots: true,
+  });
+  const viewer = await viewerPromise;
   if (!viewer.userId) redirect(`/login?next=${encodeURIComponent(nextHref)}`);
   if (viewer.role === "student" && viewer.studentId) {
     redirect(studentPortalHomePath(normalizeStudentId(viewer.studentId)));
@@ -46,7 +45,10 @@ export default async function RegularClassTimetablePage({ searchParams }: PagePr
   const next = shiftDay(year, month, day, 1);
   const base = "/regular-class-timetable";
 
-  const navViewer = await buildAppTopNavViewer(viewer);
+  const [payload, navViewer] = await Promise.all([
+    payloadPromise,
+    buildAppTopNavViewer(viewer),
+  ]);
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">

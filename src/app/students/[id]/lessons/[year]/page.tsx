@@ -31,14 +31,15 @@ export default async function StudentLessonsDynamicYearPage({ params }: PageProp
   }
 
   const supabase = await createSupabaseServerClient();
-  const initialBootstrap = await loadStudentLessonsBootstrap(supabase, studentId, targetYear);
+  const [initialBootstrap, navViewer] = await Promise.all([
+    loadStudentLessonsBootstrap(supabase, studentId, targetYear),
+    buildAppTopNavViewer(viewer),
+  ]);
   const initialReadOnly =
     viewer.isSharedIpadTutor ||
     viewer.role === "tutor" ||
     viewer.role === "student" ||
     String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
-
-  const navViewer = await buildAppTopNavViewer(viewer);
 
   return (
     <StudentLessonsYearPageEntry

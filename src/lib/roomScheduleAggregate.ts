@@ -25,15 +25,12 @@ import {
 import { scheduleRoomsMatch } from "@/lib/dayTimetableShared";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { monthsToLoadForScheduleRange } from "@/lib/roomScheduleMonths";
-import { loadRoomSlotTutorRulesServer } from "@/lib/roomSlotTutorRules";
+import { loadRoomSlotTutorRulesCached } from "@/lib/roomSlotTutorRules";
 import { hasTutorNameCandidate } from "@/lib/tutorMonthCandidate";
 import { hasRoomScheduleCandidate } from "@/lib/roomScheduleCandidate";
 import { materializeTutorMonthPayRows } from "@/lib/tutorMonthlyPayroll";
-import { getStudentGradeForDate, type GradeHistoryByStudentId } from "@/lib/studentGradeHistory";
-import {
-  loadStudentGradeHistoryServer,
-  loadStudentHeldBackYearsServer,
-} from "@/lib/lessonDataServer";
+import { getStudentGradeForDate } from "@/lib/studentGradeHistory";
+import { loadStudentsGradeContext } from "@/lib/studentsGradeContext.server";
 import {
   loadScheduleStudentsForYear,
   loadYearScheduleData,
@@ -257,16 +254,12 @@ async function fetchRoomScheduleAggregateUncached(
   }
 
   const { students, recMap, stateMap, inactivePeriodsById } = bundle;
-  const supabase = getSupabaseAdmin();
-  const studentIds = students.map((s) => s.id).filter(Boolean);
-  const [roomSlotTutorRules, heldBackYearsResult, gradeHistoryResult] = await Promise.all([
-    loadRoomSlotTutorRulesServer(supabase),
-    loadStudentHeldBackYearsServer(supabase, studentIds),
-    loadStudentGradeHistoryServer(supabase, studentIds),
+  const [roomSlotTutorRules, gradeContext] = await Promise.all([
+    loadRoomSlotTutorRulesCached(),
+    loadStudentsGradeContext(),
   ]);
-  const heldBackYearsByStudentId = heldBackYearsResult.byStudentId ?? {};
-  const gradeHistoryByStudentId: GradeHistoryByStudentId =
-    gradeHistoryResult.byStudentId ?? {};
+  const heldBackYearsByStudentId = gradeContext.heldBackYearsByStudentId;
+  const gradeHistoryByStudentId = gradeContext.gradeHistoryByStudentId;
   const gradeOnDate = (studentId: string, currentGrade: string, dateIso: string) =>
     getStudentGradeForDate({
       currentGrade,
@@ -444,16 +437,12 @@ async function fetchTutorMonthLessonRowsUncached(
   }
 
   const { students, recMap, stateMap } = bundle;
-  const supabase = getSupabaseAdmin();
-  const studentIds = students.map((s) => s.id).filter(Boolean);
-  const [roomSlotTutorRules, heldBackYearsResult, gradeHistoryResult] = await Promise.all([
-    loadRoomSlotTutorRulesServer(supabase),
-    loadStudentHeldBackYearsServer(supabase, studentIds),
-    loadStudentGradeHistoryServer(supabase, studentIds),
+  const [roomSlotTutorRules, gradeContext] = await Promise.all([
+    loadRoomSlotTutorRulesCached(),
+    loadStudentsGradeContext(),
   ]);
-  const heldBackYearsByStudentId = heldBackYearsResult.byStudentId ?? {};
-  const gradeHistoryByStudentId: GradeHistoryByStudentId =
-    gradeHistoryResult.byStudentId ?? {};
+  const heldBackYearsByStudentId = gradeContext.heldBackYearsByStudentId;
+  const gradeHistoryByStudentId = gradeContext.gradeHistoryByStudentId;
   const gradeOnDate = (studentId: string, currentGrade: string, dateIso: string) =>
     getStudentGradeForDate({
       currentGrade,
