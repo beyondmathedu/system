@@ -526,6 +526,34 @@ export default function DayTimetableTable({
     },
     [payloadByTimeRoom],
   );
+
+  const clearTempSelection = useCallback(() => {
+    setTempSelectedKeys([]);
+    tempSelectAnchorRef.current = null;
+  }, []);
+
+  /** iPad / touch: tap a destination room (same time) after selecting students. */
+  const moveTempSelectionToRoom = useCallback(
+    (time: string, toRoom: RoomGroup) => {
+      const ids = tempSelectedKeys
+        .map(parseTempRoomMoveKey)
+        .filter((p): p is { time: string; studentId: string } => Boolean(p && p.time === time))
+        .map((p) => p.studentId);
+      if (ids.length === 0) return false;
+      moveStudentsToRoom(time, ids, toRoom);
+      clearTempSelection();
+      return true;
+    },
+    [tempSelectedKeys, moveStudentsToRoom, clearTempSelection],
+  );
+
+  const selectedTimeForMove = useMemo(() => {
+    if (tempSelectedKeys.length === 0) return null;
+    const first = parseTempRoomMoveKey(tempSelectedKeys[0]!);
+    if (!first) return null;
+    if (!tempSelectedKeys.every((k) => k.startsWith(`${first.time}|||`))) return null;
+    return first.time;
+  }, [tempSelectedKeys]);
   const noGridCls = showPeriodSeparatorOnly ? "!border-0" : "";
   const dailyCompactColumns = repeatRoomHeadersPerTimeSlot;
   const dailyNameCells = dailyCompactColumns || compactStudentNames;
@@ -890,9 +918,8 @@ export default function DayTimetableTable({
         if (!enableTempRoomLayout || tempSelectedKeys.length === 0) return;
         const target = e.target;
         if (!(target instanceof Element)) return;
-        if (target.closest("[data-tt-temp-select]")) return;
-        setTempSelectedKeys([]);
-        tempSelectAnchorRef.current = null;
+        if (target.closest("[data-tt-temp-select],[data-tt-temp-drop]")) return;
+        clearTempSelection();
       }}
     >
       {omittedRoomsToday.length > 0 && !repeatRoomHeadersPerTimeSlot ? (
@@ -924,9 +951,14 @@ export default function DayTimetableTable({
           <p>
             <span className="font-semibold">Layout only</span>
             {" · "}
-            drag cells · ⌘/Ctrl multi-select · Shift range · click empty to clear
+            drag on desktop · on iPad: tap to select (tap more to multi-select) · tap empty same-time cell to move
             {" · "}
             same time only · not saved
+            {tempSelectedKeys.length > 0 && selectedTimeForMove ? (
+              <span className="ml-1 font-semibold text-sky-800">
+                → tap an empty cell at {selectedTimeForMove} to move
+              </span>
+            ) : null}
             {tempMoveCount > 0 || tempAddedRooms.length > 0 || tempSelectedKeys.length > 0 ? (
               <span className="ml-1 font-semibold text-amber-800">
                 (
@@ -1215,6 +1247,8 @@ export default function DayTimetableTable({
                           item != null &&
                           Boolean(tempRoomMoves[tempRoomMoveKey(frame.time, item.studentId)]);
                         const canDrag = Boolean(enableTempRoomLayout && item);
+                        const isTapDropTarget =
+                          Boolean(enableTempRoomLayout && selectedTimeForMove === frame.time);
                         const selectKey = item ? tempRoomMoveKey(frame.time, item.studentId) : "";
                         const isTempSelected = Boolean(item && tempSelectedSet.has(selectKey));
                         const nameCellClassName = [
@@ -1224,8 +1258,11 @@ export default function DayTimetableTable({
                           "relative",
                           showAllRemarks ? "!overflow-visible" : "overflow-visible",
                           canDrag ? "cursor-grab active:cursor-grabbing" : "",
+                          !item && isTapDropTarget ? "cursor-pointer" : "",
                           isTempSelected ? "ring-2 ring-inset ring-sky-500" : "",
-                          dragOverKey === dropKey ? "ring-2 ring-inset ring-amber-400" : "",
+                          dragOverKey === dropKey || (!item && isTapDropTarget)
+                            ? "ring-2 ring-inset ring-amber-400"
+                            : "",
                         ]
                           .filter(Boolean)
                           .join(" ");
@@ -1236,8 +1273,11 @@ export default function DayTimetableTable({
                             noGridCls,
                             "relative",
                             canDrag ? "cursor-grab active:cursor-grabbing" : "",
+                            !item && isTapDropTarget ? "cursor-pointer" : "",
                             isTempSelected ? "ring-2 ring-inset ring-sky-500" : "",
-                            dragOverKey === dropKey ? "ring-2 ring-inset ring-amber-400" : "",
+                            dragOverKey === dropKey || (!item && isTapDropTarget)
+                              ? "ring-2 ring-inset ring-amber-400"
+                              : "",
                           ]
                             .filter(Boolean)
                             .join(" ");
@@ -1319,18 +1359,35 @@ export default function DayTimetableTable({
                           ? (e: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }) => {
                               if (e.shiftKey) {
                                 selectTempStudent(frame.time, item!.studentId, "range");
-                              } else if (e.metaKey || e.ctrlKey) {
-                                selectTempStudent(frame.time, item!.studentId, "toggle");
-                              } else {
-                                selectTempStudent(frame.time, item!.studentId, "replace");
+                                return;
                               }
+                              if (e.metaKey || e.ctrlKey) {
+                                selectTempStudent(frame.time, item!.studentId, "toggle");
+                                return;
+                              }
+                              // iPad / no-modifier: once anyone is selected at this time, further taps toggle.
+                              const hasSameTimeSel = tempSelectedKeys.some((k) =>
+                                k.startsWith(`${frame.time}|||`),
+                              );
+                              selectTempStudent(
+                                frame.time,
+                                item!.studentId,
+                                hasSameTimeSel ? "toggle" : "replace",
+                              );
+                            }
+                          : undefined;
+                        const onTempTapDrop = isTapDropTarget
+                          ? () => {
+                              moveTempSelectionToRoom(frame.time, room);
                             }
                           : undefined;
                         const dragTitle = canDrag
                           ? isTempSelected && tempSelectedKeys.length > 1
-                            ? `Drag ${tempSelectedKeys.length} selected students (same time)`
-                            : "Drag cell · ⌘/Ctrl multi-select · Shift range"
-                          : undefined;
+                            ? `Selected ${tempSelectedKeys.length} · drag or tap empty cell to move`
+                            : "Tap to select · tap more to multi-select · drag or tap empty cell to move"
+                          : isTapDropTarget
+                            ? "Tap to move selected students here"
+                            : undefined;
                         const dragFillClass = [
                           "block h-full min-h-[1.75rem] w-full",
                           canDrag ? "cursor-grab active:cursor-grabbing" : "",
@@ -1439,6 +1496,15 @@ export default function DayTimetableTable({
                                   ) : null}
                                 </div>
                                 )
+                              ) : isTapDropTarget ? (
+                                <button
+                                  type="button"
+                                  data-tt-temp-drop="1"
+                                  className="block h-full min-h-[1.75rem] w-full"
+                                  title={dragTitle}
+                                  onClick={onTempTapDrop}
+                                  aria-label={`Move selected students to ${roomLabel(room)}`}
+                                />
                               ) : null}
                             </td>
                             <td
@@ -1460,6 +1526,15 @@ export default function DayTimetableTable({
                                 >
                                   {formatGradeDisplay(item.grade ?? "")}
                                 </div>
+                              ) : isTapDropTarget ? (
+                                <button
+                                  type="button"
+                                  data-tt-temp-drop="1"
+                                  className="block h-full min-h-[1.75rem] w-full"
+                                  title={dragTitle}
+                                  onClick={onTempTapDrop}
+                                  aria-label={`Move selected students to ${roomLabel(room)}`}
+                                />
                               ) : null}
                             </td>
                             <td
@@ -1481,6 +1556,15 @@ export default function DayTimetableTable({
                                 >
                                   {formatVisibleExamDateSlashed(examById[item.studentId] ?? "")}
                                 </div>
+                              ) : isTapDropTarget ? (
+                                <button
+                                  type="button"
+                                  data-tt-temp-drop="1"
+                                  className="block h-full min-h-[1.75rem] w-full"
+                                  title={dragTitle}
+                                  onClick={onTempTapDrop}
+                                  aria-label={`Move selected students to ${roomLabel(room)}`}
+                                />
                               ) : null}
                             </td>
                           </Fragment>
