@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
-import { loadExamInfo, saveExamInfo } from "@/lib/studentLessonStorage";
+import { loadExamInfo, saveExamInfo } from "@/lib/studentExamClient";
 
 function ExamDateFieldFallback() {
   return (

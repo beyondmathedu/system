@@ -44,13 +44,24 @@ import {
 export type { StudentLesson2026State } from "@/lib/lessonYearStateShared";
 export { parseLessonYearStateDbRow } from "@/lib/lessonYearStateShared";
 
-/** Supabase row shapes used before generated types exist for every column. */
-type ExamDateDbRow = {
-  student_id?: string | null;
-  exam_date?: string | null;
-  exam_content?: string | null;
-};
+export type { StudentExamInfo } from "@/lib/studentExamClient";
+export {
+  loadExamInfo,
+  loadExamDate,
+  loadExamDatesBatch,
+  loadExamInfoBatch,
+  saveExamInfo,
+  saveExamDate,
+} from "@/lib/studentExamClient";
 
+export {
+  loadTimetableDayRemarksForStudent,
+  upsertTimetableDayRemark,
+  deleteTimetableDayRemark,
+  upsertTimetablePermanentRemark,
+} from "@/lib/studentTimetableRemarkClient";
+
+/** Supabase row shapes used before generated types exist for every column. */
 type LessonRecordsDbRow = {
   student_id?: string | null;
   records?: unknown[] | null;
@@ -71,188 +82,7 @@ type VisibilityPeriodDbRow = {
   note?: string | null;
 };
 
-function readExamDateRow(row: ExamDateDbRow | null | undefined) {
-  return {
-    examDate: String(row?.exam_date ?? ""),
-    examContent: row?.exam_content ? String(row.exam_content) : "",
-  };
-}
-
-export type StudentExamInfo = {
-  examDate: string;
-  examContent: string;
-};
-
 const DEFAULT_2026_STATE = DEFAULT_LESSON_YEAR_STATE;
-
-export async function loadExamInfo(studentId: string): Promise<StudentExamInfo> {
-  const { data, error } = await supabase
-    .from("student_exam_dates")
-    .select("exam_date, exam_content")
-    .eq("student_id", studentId)
-    .maybeSingle();
-
-  // Backward compatibility: older DB may not have exam_content yet.
-  if (error) {
-    const { data: fallback } = await supabase
-      .from("student_exam_dates")
-      .select("exam_date")
-      .eq("student_id", studentId)
-      .maybeSingle();
-    return {
-      examDate: (fallback?.exam_date as string | null) ?? "",
-      examContent: "",
-    };
-  }
-
-  return readExamDateRow(data as ExamDateDbRow | null);
-}
-
-export async function loadExamDate(studentId: string) {
-  const info = await loadExamInfo(studentId);
-  return info.examDate;
-}
-
-export async function loadExamDatesBatch(studentIds: string[]) {
-  if (!studentIds.length) return {} as Record<string, string>;
-  const { data } = await supabase
-    .from("student_exam_dates")
-    .select("student_id, exam_date")
-    .in("student_id", studentIds);
-  const out: Record<string, string> = {};
-  for (const row of data ?? []) {
-    const typed = row as ExamDateDbRow;
-    out[String(typed.student_id ?? "")] = String(typed.exam_date ?? "");
-  }
-  return out;
-}
-
-export async function loadExamInfoBatch(studentIds: string[]) {
-  if (!studentIds.length) return {} as Record<string, StudentExamInfo>;
-  const out: Record<string, StudentExamInfo> = {};
-  const { data, error } = await supabase
-    .from("student_exam_dates")
-    .select("student_id, exam_date, exam_content")
-    .in("student_id", studentIds);
-
-  // Backward compatibility: older DB may not have exam_content yet.
-  if (error) {
-    const { data: fallback } = await supabase
-      .from("student_exam_dates")
-      .select("student_id, exam_date")
-      .in("student_id", studentIds);
-    for (const row of fallback ?? []) {
-      const typed = row as ExamDateDbRow;
-      const sid = String(typed.student_id ?? "");
-      if (!sid) continue;
-      out[sid] = {
-        examDate: String(typed.exam_date ?? ""),
-        examContent: "",
-      };
-    }
-    return out;
-  }
-
-  for (const row of data ?? []) {
-    const typed = row as ExamDateDbRow;
-    const sid = String(typed.student_id ?? "");
-    if (!sid) continue;
-    out[sid] = readExamDateRow(typed);
-  }
-  return out;
-}
-
-export async function saveExamInfo(studentId: string, examInfo: StudentExamInfo) {
-  const { examDate, examContent } = examInfo;
-  const { error } = await supabase.from("student_exam_dates").upsert(
-    {
-      student_id: studentId,
-      exam_date: examDate,
-      exam_content: examContent,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id" },
-  );
-
-  // Backward compatibility: older DB may not have exam_content yet.
-  if (error) {
-    await supabase.from("student_exam_dates").upsert(
-      { student_id: studentId, exam_date: examDate, updated_at: new Date().toISOString() },
-      { onConflict: "student_id" },
-    );
-  }
-  notifyScheduleCachesStale();
-}
-
-export async function saveExamDate(studentId: string, examDate: string) {
-  const current = await loadExamInfo(studentId);
-  await saveExamInfo(studentId, { examDate, examContent: current.examContent });
-}
-
-/** Daily / Regular timetable 當日 Remarks（學生 + 日期 YYYY-MM-DD） */
-export async function loadTimetableDayRemarksForStudent(
-  studentId: string,
-  startIso: string,
-  endIso: string,
-): Promise<Record<string, string>> {
-  const { data, error } = await supabase
-    .from("student_timetable_day_remarks")
-    .select("date_iso, remarks")
-    .eq("student_id", studentId)
-    .gte("date_iso", startIso)
-    .lte("date_iso", endIso);
-
-  if (error) {
-    if (/student_timetable_day_remarks/i.test(error.message) && /does not exist/i.test(error.message)) {
-      return {};
-    }
-    throw new Error(error.message);
-  }
-
-  const out: Record<string, string> = {};
-  for (const row of data ?? []) {
-    const iso = String((row as { date_iso?: string }).date_iso ?? "").trim();
-    if (iso) out[iso] = String((row as { remarks?: string | null }).remarks ?? "");
-  }
-  return out;
-}
-
-export async function upsertTimetableDayRemark(studentId: string, dateIso: string, remarks: string) {
-  await supabase.from("student_timetable_day_remarks").upsert(
-    {
-      student_id: studentId,
-      date_iso: dateIso,
-      remarks,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id,date_iso" },
-  );
-  notifyScheduleCachesStale();
-}
-
-export async function deleteTimetableDayRemark(studentId: string, dateIso: string) {
-  await supabase
-    .from("student_timetable_day_remarks")
-    .delete()
-    .eq("student_id", studentId)
-    .eq("date_iso", dateIso);
-  notifyScheduleCachesStale();
-}
-
-/** Permanent admin remark (all timetable days for this student). */
-export async function upsertTimetablePermanentRemark(studentId: string, remarks: string) {
-  const { error } = await supabase
-    .from("students")
-    .update({ timetable_permanent_remark: remarks })
-    .eq("id", studentId);
-  if (error) {
-    if (/timetable_permanent_remark/i.test(error.message) && /does not exist/i.test(error.message)) {
-      throw new Error("請先在 Supabase 執行 migration 20260902_student_timetable_permanent_remark.sql");
-    }
-    throw new Error(error.message);
-  }
-  notifyScheduleCachesStale();
-}
 
 export async function loadLessonScheduleRecords(studentId: string) {
   const { data } = await supabase

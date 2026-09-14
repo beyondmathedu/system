@@ -26,6 +26,7 @@ import {
   normalizeFeeRecordRow,
 } from "@/lib/studentMonthlyFeeRecordsCompat";
 import { SCHEDULE_CACHE_TAG_FEE_RECORD } from "@/lib/scheduleCacheTags";
+import { loadStudentsGradeContext } from "@/lib/studentsGradeContext.server";
 import {
   loadStudentFeeTierSettingsAdmin,
 } from "@/lib/studentFeeTierSettings";
@@ -797,63 +798,172 @@ export async function loadFeeRecordBootstrap(
 
 export type FeeRecordBootstrapPayload = Awaited<ReturnType<typeof loadFeeRecordBootstrap>>;
 
-async function loadFeeRecordBootstrapUncached(sheetYear: number, sheetMonth: number) {
-  return loadFeeRecordBootstrap(getSupabaseAdmin(), { sheetYear, sheetMonth });
-}
-
-type FeeRecordBootstrapCachedCore = Omit<
+type FeeRecordYearCore = Pick<
   FeeRecordBootstrapPayload,
-  "openingResult" | "adjustmentResult" | "heldBackYearsResult" | "gradeHistoryResult"
+  | "students"
+  | "metricsRows"
+  | "recordsMap"
+  | "yearStatesMap"
+  | "visibilityByStudentId"
+  | "feeTierBundle"
 >;
 
-/** Cached fee-sheet bootstrap (students + schedules + fee rows + tiers). */
+type FeeRecordMonthPart = Pick<
+  FeeRecordBootstrapPayload,
+  "feeRows" | "feeStartMonth" | "endMonthForPricing"
+>;
+
+async function loadFeeYearCoreUncached(sheetYear: number): Promise<FeeRecordYearCore> {
+  const supabase = getSupabaseAdmin();
+  const { data: studentRows, error: studentErr } = await supabase
+    .from("students")
+    .select("id, name_zh, name_en, nickname_en, grade, student_phone, created_at")
+    .order("id");
+  if (studentErr) throw new Error(studentErr.message);
+
+  const allIds = (studentRows ?? []).map((r) => String(r.id ?? "")).filter(Boolean);
+  let visibilityRows: Array<{
+    student_id?: string;
+    start_date?: string;
+    end_date?: string | null;
+    note?: string | null;
+  }> = [];
+  if (allIds.length) {
+    const vis = await fetchRowsInChunks({
+      ids: allIds,
+      concurrency: 8,
+      query: (chunk) =>
+        supabase
+          .from("student_visibility_periods")
+          .select("student_id, start_date, end_date, note")
+          .in("student_id", chunk),
+    });
+    if (vis.error) throw new Error(vis.error);
+    visibilityRows = vis.data;
+  }
+
+  const periodsById = buildStudentInactivePeriodsById(visibilityRows ?? []);
+  const students: FeeRecordBootstrapStudent[] = (studentRows ?? [])
+    .map((r) => ({
+      id: String(r.id ?? ""),
+      name_zh: String(r.name_zh ?? ""),
+      name_en: String(r.name_en ?? ""),
+      nickname_en: String(r.nickname_en ?? ""),
+      grade: String(r.grade ?? ""),
+      student_phone: String((r as { student_phone?: string | null }).student_phone ?? ""),
+      created_at: String((r as { created_at?: string | null }).created_at ?? ""),
+    }))
+    .filter((s) => Boolean(s.id));
+
+  const ids = students.map((s) => s.id);
+  const [metricsResult, recordsMap, yearStatesMap, feeTierBundle] = await Promise.all([
+    ids.length
+      ? loadLessonMetricsBatchServer(supabase, ids, sheetYear)
+      : Promise.resolve({ data: [], error: null }),
+    ids.length ? loadLessonScheduleRecordsBatchServer(supabase, ids) : Promise.resolve({}),
+    ids.length ? loadLessonYearStatesBatchServer(supabase, ids, sheetYear) : Promise.resolve({}),
+    loadStudentFeeTierSettingsAdmin(supabase),
+  ]);
+  if (metricsResult.error) throw new Error(metricsResult.error);
+
+  const visibilityByStudentId: Record<string, FeeRecordStudentVisibility> = {};
+  for (const id of ids) {
+    visibilityByStudentId[id] = {
+      periods: periodsById[id] ?? [],
+    };
+  }
+
+  return {
+    students,
+    metricsRows: metricsResult.data ?? [],
+    recordsMap,
+    yearStatesMap,
+    visibilityByStudentId,
+    feeTierBundle,
+  };
+}
+
+async function loadFeeMonthPartUncached(
+  sheetYear: number,
+  sheetMonth: number,
+  studentIds: string[],
+): Promise<FeeRecordMonthPart> {
+  const supabase = getSupabaseAdmin();
+  const feeStartMonth = feeSystemStartMonth1to12(sheetYear);
+  const endMonthForPricing = sheetMonth - 1;
+  const feeRows = studentIds.length
+    ? await loadStudentMonthlyFeeRecordsInMonthRangeServer(supabase, {
+        studentIds,
+        year: sheetYear,
+        monthFrom: feeStartMonth,
+        monthTo: sheetMonth,
+      })
+    : [];
+  return { feeRows, feeStartMonth, endMonthForPricing };
+}
+
+function loadFeeYearCoreCached(sheetYear: number): Promise<FeeRecordYearCore> {
+  const y = Math.floor(sheetYear);
+  return unstable_cache(
+    () => loadFeeYearCoreUncached(y),
+    ["fee-year-core-v1", String(y)],
+    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
+  )();
+}
+
+function loadFeeMonthPartCached(sheetYear: number, sheetMonth: number): Promise<FeeRecordMonthPart> {
+  const y = Math.floor(sheetYear);
+  const m = Math.floor(sheetMonth);
+  return unstable_cache(
+    async () => {
+      const yearCore = await loadFeeYearCoreCached(y);
+      return loadFeeMonthPartUncached(
+        y,
+        m,
+        yearCore.students.map((s) => s.id),
+      );
+    },
+    ["fee-month-rows-v1", String(y), String(m)],
+    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
+  )();
+}
+
+/** Cached fee-sheet bootstrap (year core + month fee rows; opening/adjustments/grade stay fresh). */
 export async function loadFeeRecordBootstrapCached(
   sheetYear: number,
   sheetMonth: number,
 ): Promise<FeeRecordBootstrapPayload> {
   const y = Math.floor(sheetYear);
   const m = Math.floor(sheetMonth);
-  const cached = await unstable_cache(
-    async (): Promise<FeeRecordBootstrapCachedCore> => {
-      const payload = await loadFeeRecordBootstrapUncached(y, m);
-      const { openingResult, adjustmentResult, heldBackYearsResult, gradeHistoryResult, ...rest } =
-        payload;
-      void openingResult;
-      void adjustmentResult;
-      void heldBackYearsResult;
-      void gradeHistoryResult;
-      return rest;
-    },
-    ["fee-record-bootstrap-v5", String(y), String(m)],
-    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
-  )();
+  const [yearCore, monthPart, gradeContext] = await Promise.all([
+    loadFeeYearCoreCached(y),
+    loadFeeMonthPartCached(y, m),
+    loadStudentsGradeContext(),
+  ]);
 
-  const ids = cached.students.map((s) => s.id);
+  const ids = yearCore.students.map((s) => s.id);
   const supabase = getSupabaseAdmin();
-  const [openingResult, adjustmentResult, heldBackYearsResult, gradeHistoryResult] =
-    await Promise.all([
-      y === FEE_OPENING_BALANCE_AS_OF_YEAR
-        ? loadStudentFeeOpeningBalancesServer(supabase, ids)
-        : Promise.resolve({ balances: {} as Record<string, number> }),
-      ids.length
-        ? loadStudentFeeBalanceAdjustmentsServer(supabase, ids)
-        : Promise.resolve({ adjustments: {} as Record<string, { amount: number; reason: string }> }),
-      ids.length
-        ? loadStudentHeldBackYearsServer(supabase, ids)
-        : Promise.resolve({ byStudentId: {} as Record<string, number[]> }),
-      ids.length
-        ? loadStudentGradeHistoryServer(supabase, ids)
-        : Promise.resolve({
-            byStudentId: {} as Record<string, Record<string, FeeRecordGradeHistoryRow>>,
-          }),
-    ]);
+  const [openingResult, adjustmentResult] = await Promise.all([
+    y === FEE_OPENING_BALANCE_AS_OF_YEAR
+      ? loadStudentFeeOpeningBalancesServer(supabase, ids)
+      : Promise.resolve({ balances: {} as Record<string, number> }),
+    ids.length
+      ? loadStudentFeeBalanceAdjustmentsServer(supabase, ids)
+      : Promise.resolve({ adjustments: {} as Record<string, { amount: number; reason: string }> }),
+  ]);
 
   return {
-    ...cached,
+    ...yearCore,
+    ...monthPart,
     openingResult,
     adjustmentResult,
-    heldBackYearsResult,
-    gradeHistoryResult,
+    heldBackYearsResult: { byStudentId: gradeContext.heldBackYearsByStudentId },
+    gradeHistoryResult: {
+      byStudentId: gradeContext.gradeHistoryByStudentId as Record<
+        string,
+        Record<string, FeeRecordGradeHistoryRow>
+      >,
+    },
   };
 }
 
