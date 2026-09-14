@@ -57,6 +57,22 @@ function hkTodayParts() {
   return { ymdToday, mdToday, year, month };
 }
 
+function formatTutorBirthdayLabel(row: {
+  id?: string | null;
+  name?: string | null;
+  name_zh?: string | null;
+  name_en?: string | null;
+  nickname_en?: string | null;
+}): string {
+  const zh = String(row.name_zh ?? "").trim();
+  // Tutor page Nickname is stored in `name`; `nickname_en` is legacy.
+  const nick = String(row.name ?? "").trim() || String(row.nickname_en ?? "").trim();
+  const en = String(row.name_en ?? "").trim();
+  const secondary = nick || en;
+  const label = [zh, secondary].filter(Boolean).join(" ").trim();
+  return label || String(row.id ?? "").trim() || "—";
+}
+
 async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
   const { ymdToday, mdToday, year, month } = hkTodayParts();
   const supabase = getSupabaseAdmin();
@@ -68,7 +84,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
     scheduleData,
   ] = await Promise.all([
     supabase.from("students").select("id, name_zh, name_en, nickname_en, birth_date, grade"),
-    supabase.from("tutors").select("id, name_zh, name_en, birth_date, status"),
+    supabase.from("tutors").select("id, name, name_zh, name_en, nickname_en, birth_date, status"),
     supabase.from("student_visibility_periods").select("student_id, start_date, end_date, note"),
     loadYearScheduleData(year),
   ]);
@@ -165,11 +181,7 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
       return status === "工作中" || status === "放假中";
     })
     .filter((r) => String((r as { birth_date?: string }).birth_date ?? "").slice(5, 10) === mdToday)
-    .map((r) => {
-      const zh = String((r as { name_zh?: string }).name_zh ?? "").trim();
-      const en = String((r as { name_en?: string }).name_en ?? "").trim();
-      return zh || en || String(r.id ?? "");
-    });
+    .map((r) => formatTutorBirthdayLabel(r as Parameters<typeof formatTutorBirthdayLabel>[0]));
 
   const studentsBirthdayToday = activeStudentMeta
     .filter((student) => student.birthMd === mdToday)
@@ -195,14 +207,10 @@ async function fetchHomeDashboardUncached(): Promise<HomeDashboardData> {
         const status = String((r as { status?: string }).status ?? "").trim();
         return status === "工作中" || status === "放假中";
       })
-      .map((r) => {
-        const zh = String((r as { name_zh?: string }).name_zh ?? "").trim();
-        const en = String((r as { name_en?: string }).name_en ?? "").trim();
-        return {
-          md: String((r as { birth_date?: string }).birth_date ?? "").slice(5, 10),
-          label: `${zh || en || String(r.id ?? "")}（導師）`,
-        };
-      }),
+      .map((r) => ({
+        md: String((r as { birth_date?: string }).birth_date ?? "").slice(5, 10),
+        label: `${formatTutorBirthdayLabel(r as Parameters<typeof formatTutorBirthdayLabel>[0])}（導師）`,
+      })),
   ].filter((r) => r.md.length === 5);
 
   const birthdayLabelsByMd = new Map<string, string[]>();
