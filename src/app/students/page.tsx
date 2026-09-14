@@ -26,8 +26,9 @@ export default async function StudentsPage() {
     total: number;
     portalStatusById: Awaited<ReturnType<typeof getStudentPortalStatusBatch>>;
   } | null = null;
+  let navViewer: Awaited<ReturnType<typeof buildAppTopNavViewer>>;
   try {
-    const [navViewer, result] = await Promise.all([
+    const [nav, result] = await Promise.all([
       buildAppTopNavViewer(viewer),
       listStudentsForPage(getSupabaseAdmin(), {
         offset: 0,
@@ -35,6 +36,7 @@ export default async function StudentsPage() {
         status: "active",
       }),
     ]);
+    navViewer = nav;
     const portalStatusById = await getStudentPortalStatusBatch(
       result.rows.map((r) => r.id),
       {
@@ -51,9 +53,10 @@ export default async function StudentsPage() {
       total: result.total,
       portalStatusById,
     };
-    return <StudentsPageEntry navViewer={navViewer} initialList={initialList} />;
   } catch {
-    const navViewer = await buildAppTopNavViewer(viewer);
-    return <StudentsPageEntry navViewer={navViewer} initialList={null} />;
+    navViewer = await buildAppTopNavViewer(viewer);
+    initialList = null;
   }
+
+  return <StudentsPageEntry navViewer={navViewer} initialList={initialList} />;
 }
