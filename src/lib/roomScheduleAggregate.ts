@@ -9,7 +9,10 @@ import {
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { isInactiveTutorName } from "@/lib/tutorVisibility";
 import { fetchInactiveTutorNames } from "@/lib/tutorVisibilityCore";
-import { isScheduleAttendanceMarked } from "@/lib/lessonScheduleVersions";
+import {
+  isScheduleAttendanceMarked,
+  isTutorMonthAttendanceMarked,
+} from "@/lib/lessonScheduleVersions";
 import {
   isOnOrAfterLessonSystemStart,
   normalizeCalendarDateIso,
@@ -477,7 +480,7 @@ export type TutorMonthLessonRow = {
   attended: boolean;
   sortTime: string;
   /**
-   * Past/today slot had this tutor + scheduled students, but nobody ticked attendance.
+   * Past/today room+time had this tutor scheduled, but every student in that slot was unticked.
    * Counts as 1× Single Student Rate with student count 0.
    */
   zeroAttendanceGuarantee?: boolean;
@@ -504,7 +507,7 @@ async function fetchTutorMonthLessonRowsUncached(
     return { rows: [], loadError: null };
   }
 
-  const { students, recMap, stateMap } = bundle;
+  const { students, recMap, stateMap, inactivePeriodsById } = bundle;
   const [roomSlotTutorRules, gradeContext] = await Promise.all([
     loadRoomSlotTutorRulesCached(),
     loadStudentsGradeContext(),
@@ -532,10 +535,11 @@ async function fetchTutorMonthLessonRowsUncached(
     const records = normalizedRecordsById.get(st.id) ?? [];
     const state = stateMap.get(st.id) ?? emptyState();
     if (!hasTutorCandidateById.get(st.id)) continue;
+    const periods = inactivePeriodsById.get(st.id) ?? [];
     const filtered = buildYearScheduleRowsForMonth(records, state, year, month, {
       roomSlotTutorRules,
     }).filter(
-      (r) => r.lessonType !== "取消",
+      (r) => r.lessonType !== "取消" && r.lessonType !== PENDING_MAKEUP_TYPE_LABEL,
     );
     const studentName = formatStudentDisplayName(
       { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
@@ -545,12 +549,20 @@ async function fetchTutorMonthLessonRowsUncached(
     for (const r of filtered) {
       const td = r.tutorDisplay.trim();
       if (!nameSet.has(td)) continue;
-      const attended = isScheduleAttendanceMarked(state.attendance, {
+      const attended = isTutorMonthAttendanceMarked(state.attendance, {
         attendanceKey: r.attendanceKey,
         dateIso: r.date,
         lessonType: r.lessonType,
         scheduleRuleId: r.scheduleRuleId,
       });
+      // Match Rooms visibility: hidden inactive/graduated lessons do not create
+      // empty-slot Single guarantees. Attended ticks still count for pay.
+      const hidden = shouldHideScheduledLessonForInactivePeriod({
+        periods,
+        dateIso: r.date,
+        lessonType: r.lessonType,
+      });
+      if (hidden && !attended) continue;
       candidates.push({
         rowKey: `${st.id}:${r.rowId}`,
         studentId: st.id,
@@ -597,7 +609,7 @@ export async function fetchTutorMonthLessonRows(
   if (!nameKey) return { rows: [], loadError: null };
   return unstable_cache(
     async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
-    ["tutor-month-lessons-v8", nameKey, String(year), String(month)],
+    ["tutor-month-lessons-v10", nameKey, String(year), String(month)],
     { revalidate: 180, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }

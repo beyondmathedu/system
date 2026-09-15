@@ -18,8 +18,9 @@ export function tutorMonthSlotKey(dateIso: string, time: string, room: string): 
 }
 
 /**
- * From all scheduled (non-cancelled) tutor-matched lessons: keep attended rows;
- * for past/today slots with zero ticks, emit one Single-rate guarantee row per date+time+room.
+ * From tutor-matched scheduled lessons (tutor = room/student/time assignment):
+ * keep only per-lesson attended ticks; if a past/today date+time+room has a tutor
+ * but every student in that slot is unticked, emit one Single-rate guarantee row.
  */
 export function materializeTutorMonthPayRows(
   candidates: TutorMonthLessonRow[],

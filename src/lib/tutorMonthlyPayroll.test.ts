@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { inferGradeOnDate } from "@/lib/studentFeePricingGrade";
+import { isTutorMonthAttendanceMarked } from "@/lib/lessonScheduleVersions";
 import {
   classifyGradeBand,
   enrichTutorMonthRowsWithPay,
@@ -91,6 +92,55 @@ describe("tutor monthly grade band after 1 Sept promotion", () => {
     expect(sepPromoted?.subtotal).toBe(FIRST_SEAT);
     const sepHigher = september.rowsWithPay.find((r) => r.studentId === "00002");
     expect(sepHigher?.subtotal).toBe(rates.senior);
+  });
+});
+
+describe("tutor-month attendance ticks (strict per lesson)", () => {
+  it("accepts regular:id:date and rejects year-wide regular:id / bare dateIso", () => {
+    const dateIso = "2026-09-03";
+    const ruleId = "rule-sat";
+    const key = `regular:${ruleId}:${dateIso}`;
+    expect(
+      isTutorMonthAttendanceMarked(
+        { [key]: true },
+        { attendanceKey: key, dateIso, lessonType: "恆常", scheduleRuleId: ruleId },
+      ),
+    ).toBe(true);
+    expect(
+      isTutorMonthAttendanceMarked(
+        { [`regular:${ruleId}`]: true },
+        { attendanceKey: key, dateIso, lessonType: "恆常", scheduleRuleId: ruleId },
+      ),
+    ).toBe(false);
+    expect(
+      isTutorMonthAttendanceMarked(
+        { [dateIso]: true },
+        { attendanceKey: key, dateIso, lessonType: "恆常", scheduleRuleId: ruleId },
+      ),
+    ).toBe(false);
+  });
+
+  it("still uses exact keys for makeup / extra", () => {
+    expect(
+      isTutorMonthAttendanceMarked(
+        { "reschedule:abc": true },
+        {
+          attendanceKey: "reschedule:abc",
+          dateIso: "2026-09-03",
+          lessonType: "補堂",
+        },
+      ),
+    ).toBe(true);
+    expect(
+      isTutorMonthAttendanceMarked(
+        { "2026-09-03": true },
+        {
+          attendanceKey: "reschedule:abc",
+          dateIso: "2026-09-03",
+          lessonType: "補堂",
+        },
+      ),
+    ).toBe(false);
   });
 });
 
