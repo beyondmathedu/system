@@ -307,12 +307,14 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               <span className="font-mono text-blue-50">{entry.id}</span>
             </p>
             <p className="mt-2 text-sm text-blue-100">
-              {year}/{month}: expanded from all student schedules. Lessons are included when the tutor field matches
-              any of this tutor&apos;s English name / Chinese name / nickname on the Tutor page (excluding cancelled
-              lessons). Attended ticks on the student schedule or room page count as normal pay. If a past or today
-              date+time+room still has this tutor scheduled but <strong>no student was ticked</strong>, the session
-              still pays <strong>1× Single Student Rate</strong> (0 students). Inactive or graduated students are
-              still counted if attendance was ticked.
+              {year}/{month}: who teaches is taken from the <strong>room + student + time</strong> tutor field
+              (schedule / room-slot default), matched to this tutor&apos;s names on the Tutor page — not who clicked
+              the tick. Pay rows use <strong>per-lesson attendance ticks</strong> only. If a past or today{" "}
+              <strong>room + time</strong> still has this tutor on the room schedule (same visibility as Rooms) but{" "}
+              <strong>no student in that slot was ticked</strong>, it becomes one <strong>0 · Single rate</strong>{" "}
+              line — check the <strong>Room</strong> column (it may not be room B). Cancelled / pending-makeup lessons
+              are excluded. Inactive or graduated students do not create empty-slot guarantees; they still count if
+              that lesson was ticked.
             </p>
             <p className="mt-2 max-w-3xl text-xs leading-relaxed text-blue-100/95">
               Subtotal rule: same date + same schedule time = same timeslot for attended students. If there is{" "}

@@ -583,3 +583,30 @@ export function isScheduleAttendanceMarked(
   }
   return Boolean(attendance[attendanceKey]) || Boolean(attendance[dateIso]);
 }
+
+/**
+ * Tutor Monthly pay: only count a per-lesson tick for that room/time session.
+ * Does not treat legacy year-wide `regular:id` or bare `dateIso` as attended
+ * (those over-count students who were never ticked for this slot).
+ */
+export function isTutorMonthAttendanceMarked(
+  attendance: Record<string, boolean>,
+  opts: {
+    attendanceKey: string;
+    dateIso: string;
+    lessonType: "恆常" | "補堂" | "加堂" | "取消" | typeof PENDING_MAKEUP_TYPE_LABEL;
+    scheduleRuleId?: string;
+  },
+): boolean {
+  const { attendanceKey, dateIso, lessonType, scheduleRuleId } = opts;
+  if (lessonType === "取消" || lessonType === PENDING_MAKEUP_TYPE_LABEL) return false;
+  if (lessonType === "補堂" || lessonType === "加堂") {
+    return Boolean(attendance[attendanceKey]);
+  }
+  const key = String(attendanceKey ?? "").trim();
+  if (key && attendance[key]) return true;
+  if (scheduleRuleId) {
+    return Boolean(attendance[regularLessonAttendanceKey({ id: scheduleRuleId }, dateIso)]);
+  }
+  return false;
+}
