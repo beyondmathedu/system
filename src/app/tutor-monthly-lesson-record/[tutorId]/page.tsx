@@ -307,28 +307,15 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               <span className="font-mono text-blue-50">{entry.id}</span>
             </p>
             <p className="mt-2 text-sm text-blue-100">
-              {year}/{month}: who teaches is taken from the <strong>room + student + time</strong> tutor field
-              (schedule / room-slot default), matched to this tutor&apos;s names on the Tutor page — not who clicked
-              the tick. Pay rows use <strong>per-lesson attendance ticks</strong> only. If a past or today{" "}
-              <strong>room + time</strong> still has this tutor on the room schedule (same visibility as Rooms) but{" "}
-              <strong>no student in that slot was ticked</strong>, it becomes one <strong>0 · Single rate</strong>{" "}
-              line — check the <strong>Room</strong> column (it may not be room B). Cancelled / pending-makeup lessons
-              are excluded. Inactive or graduated students do not create empty-slot guarantees; they still count if
-              that lesson was ticked.
+              {year}/{month}：跟<strong>房間＋時間</strong>嘅 Tutor（唔睇邊個撳勾）。有 tick 先計人；成槽冇人
+              tick → <strong>0 · Single {rates.single}</strong>。停課／畢業唔造空槽保底。
             </p>
-            <p className="mt-2 max-w-3xl text-xs leading-relaxed text-blue-100/95">
-              Subtotal rule: same date + same schedule time = same timeslot for attended students. If there is{" "}
-              <strong>1 student</strong>, use the tutor <strong>Single Student Rate {rates.single}</strong>. If there
-              are <strong>2 or more students</strong>, the <strong>lowest-grade student</strong> uses
-              <strong> {multiStudentFirstAmount}</strong> (editable in{" "}
+            <p className="mt-1.5 max-w-3xl text-xs text-blue-100/95">
+              計薪：同一日同一時間＝同一槽。1 人用 Single {rates.single}；≥2 人最低年級用{" "}
               <Link href="/tutor-monthly-lesson-record" className="underline hover:text-white">
-                Tutor Monthly home
-              </Link>{" "}
-              ). Others use <strong>Junior {rates.junior}</strong> or <strong>Senior {rates.senior}</strong> by
-              that month&apos;s grade (before 1 Sept = last year&apos;s form; repeating students keep their
-              Student Info / Grade History grade; F.1–F.3 Junior, F.4–F.6 Senior).
-              Unrecognized grade defaults to Junior. Zero-attendance guarantee sessions always use Single and are not
-              merged into multi-student slots. Hours are inferred from time range; otherwise 1.5.
+                {multiStudentFirstAmount}
+              </Link>
+              ，其餘 Junior {rates.junior}／Senior {rates.senior}（F.1–3／F.4–6）。空槽保底永遠 Single。
             </p>
           </div>
 
