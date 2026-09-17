@@ -1,12 +1,19 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
+import DownloadTutorMonthlyPdfButton from "@/components/DownloadTutorMonthlyPdfButton";
+import TutorManualGuaranteeActions from "@/components/TutorManualGuaranteeActions";
 import TutorMonthlyYearMonthPicker from "@/components/TutorMonthlyYearMonthPicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
+import { formatGradeDisplay } from "@/lib/grade";
+import { monthEndIsoDate } from "@/lib/inferStudentGrade";
+import { readYmParts } from "@/lib/intlFormatParts";
+import { loadLatestTutorRates, loadPayrollSettings } from "@/lib/payrollSettings";
+import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
 import { fetchTutorMonthLessonRows } from "@/lib/roomScheduleAggregate";
-import { formatDateSlash } from "@/lib/yearScheduleCore";
+import { loadTutorManualGuaranteesForMonth } from "@/lib/tutorManualGuarantee.server";
 import {
   fetchTutorNavEntryById,
   TUTOR_NAV_STATUS_LABEL,
@@ -17,14 +24,13 @@ import {
   enrichTutorMonthRowsWithPay,
   formatLessonTimeRangeLine,
   gradeRank,
+  MANUAL_GUARANTEE_LABEL,
+  MANUAL_GUARANTEE_STUDENT_ID,
+  mergeManualTutorGuarantees,
   ZERO_ATTENDANCE_GUARANTEE_LABEL,
   ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID,
 } from "@/lib/tutorMonthlyPayroll";
-import { loadLatestTutorRates, loadPayrollSettings } from "@/lib/payrollSettings";
-import { readYmParts } from "@/lib/intlFormatParts";
-import DownloadTutorMonthlyPdfButton from "@/components/DownloadTutorMonthlyPdfButton";
-import { formatGradeDisplay } from "@/lib/grade";
-import { redirectTutorAwayFromAdminPages } from "@/lib/requireTutorRoomOnly";
+import { formatDateSlash, sortAggregatedRoomRows } from "@/lib/yearScheduleCore";
 
 export const dynamic = "force-dynamic";
 
@@ -82,12 +88,23 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
   const entry = await fetchTutorNavEntryById(tutorId);
   if (!entry) notFound();
 
-  const [navViewer, { rows, loadError }, rates, payrollSettings] = await Promise.all([
+  const startIso = `${year}-${String(month).padStart(2, "0")}-01`;
+  const endIso = monthEndIsoDate(year, month);
+
+  const [navViewer, lessonResult, manualsResult, rates, payrollSettings] = await Promise.all([
     buildAppTopNavViewer(viewer),
     fetchTutorMonthLessonRows(entry.matchNames, year, month),
+    loadTutorManualGuaranteesForMonth(tutorId, startIso, endIso),
     loadLatestTutorRates(tutorId),
     loadPayrollSettings(),
   ]);
+  const { rows: fetchedRows, loadError } = lessonResult;
+  const rows = sortAggregatedRoomRows(
+    mergeManualTutorGuarantees(
+      fetchedRows,
+      manualsResult.rows.map((m) => ({ id: m.id, dateIso: m.dateIso, time: m.time })),
+    ),
+  );
   const multiStudentFirstAmount = payrollSettings.multiStudentFirstAmount;
   const mpfRelevantIncomeThreshold = payrollSettings.mpfRelevantIncomeThreshold;
   const normalizedRowsForPay = (() => {
@@ -121,6 +138,8 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
       hours: number;
       subtotal: number;
       zeroAttendanceGuarantee: boolean;
+      manualGuarantee: boolean;
+      manualGuaranteeId: string | null;
       studentIdSet: Set<string>;
       students: Array<{ studentId: string; studentName: string; grade: string; amount: number }>;
     };
@@ -129,7 +148,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
     for (const r of rowsWithPay) {
       const timeKey = r.time.trim().toLowerCase().replace(/\s+/g, " ");
       const groupKey = r.zeroAttendanceGuarantee
-        ? `guarantee|||${r.dateIso}|||${timeKey}|||${r.room.trim().toLowerCase()}`
+        ? `guarantee|||${r.dateIso}|||${timeKey}|||${r.room.trim().toLowerCase()}|||${r.manualGuarantee ? "manual" : "auto"}`
         : `${r.dateIso}|||${timeKey}`;
       const found = byKey.get(groupKey);
       if (!found) {
@@ -142,6 +161,8 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
           hours: r.hours,
           subtotal: 0,
           zeroAttendanceGuarantee: Boolean(r.zeroAttendanceGuarantee),
+          manualGuarantee: Boolean(r.manualGuarantee),
+          manualGuaranteeId: r.manualGuaranteeId ?? null,
           studentIdSet: new Set([r.studentId]),
           students: [{ studentId: r.studentId, studentName: r.studentName, grade: r.grade, amount: 0 }],
         };
@@ -156,11 +177,13 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
     }
     for (const g of ordered) {
       if (g.zeroAttendanceGuarantee) {
+        const label = g.manualGuarantee ? MANUAL_GUARANTEE_LABEL : ZERO_ATTENDANCE_GUARANTEE_LABEL;
+        const sid = g.manualGuarantee ? MANUAL_GUARANTEE_STUDENT_ID : ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID;
         g.subtotal = rates.single;
         g.students = [
           {
-            studentId: ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID,
-            studentName: ZERO_ATTENDANCE_GUARANTEE_LABEL,
+            studentId: sid,
+            studentName: label,
             grade: "",
             amount: rates.single,
           },
@@ -232,7 +255,8 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
         : [{ studentId: "", studentName: "—", grade: "—", amount: 0 }];
     for (let si = 0; si < students.length; si++) {
       const st = students[si];
-      const isGuarantee = g.zeroAttendanceGuarantee || st.studentId === ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID;
+      const isGuarantee = g.zeroAttendanceGuarantee || st.studentId === ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID || st.studentId === MANUAL_GUARANTEE_STUDENT_ID;
+      const guaranteeLabel = g.manualGuarantee ? MANUAL_GUARANTEE_LABEL : ZERO_ATTENDANCE_GUARANTEE_LABEL;
       csvRows.push([
         !csvYearShown ? `${year}` : "",
         si === 0 && showDate ? csvDateText(g.dateIso) : "",
@@ -240,7 +264,11 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
         si === 0 ? g.hours : "",
         isGuarantee || st.studentId ? st.amount : "—",
         isGuarantee ? "0 students" : st.grade || "—",
-        isGuarantee ? `${ZERO_ATTENDANCE_GUARANTEE_LABEL} · ${g.room}` : st.studentName || "—",
+        isGuarantee
+          ? g.manualGuarantee
+            ? guaranteeLabel
+            : `${guaranteeLabel} · ${g.room}`
+          : st.studentName || "—",
       ]);
       csvYearShown = true;
     }
@@ -306,17 +334,31 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
               </span>
               <span className="font-mono text-blue-50">{entry.id}</span>
             </p>
-            <p className="mt-2 text-sm text-blue-100">
-              {year}/{month}：跟<strong>房間＋時間</strong>嘅 Tutor（唔睇邊個撳勾）。有 tick 先計人；成槽冇人
-              tick → <strong>0 · Single {rates.single}</strong>。停課／畢業唔造空槽保底。
-            </p>
-            <p className="mt-1.5 max-w-3xl text-xs text-blue-100/95">
-              計薪：同一日同一時間＝同一槽。1 人用 Single {rates.single}；≥2 人最低年級用{" "}
-              <Link href="/tutor-monthly-lesson-record" className="underline hover:text-white">
-                {multiStudentFirstAmount}
-              </Link>
-              ，其餘 Junior {rates.junior}／Senior {rates.senior}（F.1–3／F.4–6）。空槽保底永遠 Single。
-            </p>
+            <div className="mt-3 overflow-x-auto rounded-lg border border-white/20 bg-white/10 px-4 py-3 text-sm text-blue-50">
+              <p className="font-semibold text-white">💡 Tips</p>
+              <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-blue-100">
+                <li>
+                  <strong className="text-white">Tutor</strong>
+                  ：系統按「房間＋時間」自動配對 Tutor，唔受學生 Tick 影響。
+                </li>
+                <li>
+                  <strong className="text-white">有 Tick</strong>
+                  ：只計已 Tick 嘅學生；
+                  <strong className="text-white">全槽無 Tick</strong>
+                  ：系統會自動加入{" "}
+                  <code className="rounded bg-black/20 px-1 py-0.5 text-[12px] text-white">0 · Single</code>
+                  {" "}保底。
+                </li>
+                <li className="whitespace-nowrap">
+                  <strong className="text-white">停課／畢業</strong>
+                  ：唔會自動加入保底；如果 Tutor 仍然返場，請用前一頁頁底{" "}
+                  <strong className="text-white">Add Guarantee</strong>
+                  ，系統會加入{" "}
+                  <code className="rounded bg-black/20 px-1 py-0.5 text-[12px] text-white">0 · Single</code>
+                  {" "}保底。
+                </li>
+              </ol>
+            </div>
           </div>
 
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
@@ -342,7 +384,10 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                   {groupedRows.length} sessions (
                   {normalizedRowsForPay.filter((r) => !r.zeroAttendanceGuarantee).length} student-slots
                   {normalizedRowsForPay.some((r) => r.zeroAttendanceGuarantee)
-                    ? ` · ${normalizedRowsForPay.filter((r) => r.zeroAttendanceGuarantee).length} zero-attendance`
+                    ? ` · ${normalizedRowsForPay.filter((r) => r.zeroAttendanceGuarantee && !r.manualGuarantee).length} zero-attendance`
+                    : ""}
+                  {normalizedRowsForPay.some((r) => r.manualGuarantee)
+                    ? ` · ${normalizedRowsForPay.filter((r) => r.manualGuarantee).length} manual guarantee`
                     : ""}
                   )
                 </p>
@@ -408,7 +453,12 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                           const isFirstGlobalRow = renderedRows === 0;
                           renderedRows += 1;
                           const isGuarantee =
-                            g.zeroAttendanceGuarantee || st.studentId === ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID;
+                            g.zeroAttendanceGuarantee ||
+                            st.studentId === ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID ||
+                            st.studentId === MANUAL_GUARANTEE_STUDENT_ID;
+                          const guaranteeLabel = g.manualGuarantee
+                            ? MANUAL_GUARANTEE_LABEL
+                            : ZERO_ATTENDANCE_GUARANTEE_LABEL;
                           return (
                             <tr
                               key={`${g.groupKey}:${st.studentId || "empty"}:${sIdx}`}
@@ -429,9 +479,14 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                                   </td>
                                   <td rowSpan={rows.length} className="border border-slate-200 px-3 py-2 whitespace-nowrap tabular-nums">
                                     {formatLessonTimeRangeLine(g.time, g.hours) ?? g.time}
-                                    {isGuarantee && g.room ? (
+                                    {isGuarantee && !g.manualGuarantee && g.room ? (
                                       <span className="mt-0.5 block text-[11px] font-medium text-amber-800">
                                         Room {g.room}
+                                      </span>
+                                    ) : null}
+                                    {g.manualGuarantee ? (
+                                      <span className="mt-0.5 block text-[11px] font-medium text-amber-800">
+                                        manual guarantee
                                       </span>
                                     ) : null}
                                   </td>
@@ -448,7 +503,17 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
                               </td>
                               <td className="border border-slate-200 px-3 py-2">
                                 {isGuarantee ? (
-                                  <span className="text-amber-950">{st.studentName || ZERO_ATTENDANCE_GUARANTEE_LABEL}</span>
+                                  <span className="text-amber-950">
+                                    {st.studentName || guaranteeLabel}
+                                    {g.manualGuarantee && g.manualGuaranteeId ? (
+                                      <TutorManualGuaranteeActions
+                                        guaranteeId={g.manualGuaranteeId}
+                                        tutorId={tutorId}
+                                        dateIso={g.dateIso}
+                                        time={g.time}
+                                      />
+                                    ) : null}
+                                  </span>
                                 ) : st.studentId ? (
                                   <Link
                                     href={`/students/${encodeURIComponent(st.studentId)}/lessons`}

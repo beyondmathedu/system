@@ -4,7 +4,10 @@ import { isTutorMonthAttendanceMarked } from "@/lib/lessonScheduleVersions";
 import {
   classifyGradeBand,
   enrichTutorMonthRowsWithPay,
+  MANUAL_GUARANTEE_LABEL,
+  MANUAL_GUARANTEE_STUDENT_ID,
   materializeTutorMonthPayRows,
+  mergeManualTutorGuarantees,
   ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID,
   type TutorPayRates,
 } from "@/lib/tutorMonthlyPayroll";
@@ -242,5 +245,48 @@ describe("zero-attendance Single guarantee", () => {
     const { rowsWithPay, monthTotal } = enrichTutorMonthRowsWithPay(payRows, rates, FIRST_SEAT);
     expect(rowsWithPay.every((r) => r.subtotal === rates.single)).toBe(true);
     expect(monthTotal).toBe(rates.single * 2);
+  });
+});
+
+describe("manual tutor guarantees", () => {
+  it("appends manual 0·Single when date+time has no pay row", () => {
+    const merged = mergeManualTutorGuarantees(
+      [
+        row({
+          rowKey: "a",
+          studentId: "00001",
+          grade: "F3",
+          attended: true,
+          dateIso: "2026-09-03",
+          time: "4:30 PM",
+        }),
+      ],
+      [{ id: "mg1", dateIso: "2026-09-04", time: "06:00 PM" }],
+    );
+    expect(merged).toHaveLength(2);
+    const manual = merged.find((r) => r.manualGuarantee);
+    expect(manual?.studentId).toBe(MANUAL_GUARANTEE_STUDENT_ID);
+    expect(manual?.studentName).toBe(MANUAL_GUARANTEE_LABEL);
+    expect(manual?.zeroAttendanceGuarantee).toBe(true);
+    const { monthTotal } = enrichTutorMonthRowsWithPay(merged, rates, FIRST_SEAT);
+    expect(monthTotal).toBe(rates.single * 2);
+  });
+
+  it("skips manual when same date+time already has a pay row", () => {
+    const merged = mergeManualTutorGuarantees(
+      [
+        row({
+          rowKey: "a",
+          studentId: "00001",
+          grade: "F3",
+          attended: true,
+          dateIso: "2026-09-03",
+          time: "4:30 PM",
+        }),
+      ],
+      [{ id: "mg1", dateIso: "2026-09-03", time: "04:30 PM" }],
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged.every((r) => !r.manualGuarantee)).toBe(true);
   });
 });

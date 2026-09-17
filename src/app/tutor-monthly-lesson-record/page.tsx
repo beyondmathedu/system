@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import MultiStudentFirstAmountEditor from "@/components/MultiStudentFirstAmountEditor";
 import MpfRelevantIncomeThresholdEditor from "@/components/MpfRelevantIncomeThresholdEditor";
+import TutorManualGuaranteeForm from "@/components/TutorManualGuaranteeForm";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
@@ -91,6 +92,14 @@ export default async function TutorMonthlyLessonRecordPage() {
               <MpfRelevantIncomeThresholdEditor initialValue={mpfRelevantIncomeThreshold} />
             </div>
           </div>
+
+          {tutors.length > 0 ? (
+            <div className="border-t border-slate-200 px-4 py-4 sm:px-6">
+              <TutorManualGuaranteeForm
+                tutors={tutors.map((t) => ({ id: t.id, displayName: t.displayName }))}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
