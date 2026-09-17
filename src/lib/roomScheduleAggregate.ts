@@ -484,6 +484,10 @@ export type TutorMonthLessonRow = {
    * Counts as 1× Single Student Rate with student count 0.
    */
   zeroAttendanceGuarantee?: boolean;
+  /** Admin-added 0·Single guarantee (no room/student); still uses Single rate via zeroAttendanceGuarantee. */
+  manualGuarantee?: boolean;
+  /** DB id when {@link manualGuarantee} is true — used for delete. */
+  manualGuaranteeId?: string;
 };
 
 async function fetchTutorMonthLessonRowsUncached(

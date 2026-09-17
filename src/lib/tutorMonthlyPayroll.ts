@@ -1,4 +1,6 @@
 import type { TutorMonthLessonRow } from "@/lib/roomScheduleAggregate";
+import { canonicalScheduleTimeLabel } from "@/lib/dayTimetableShared";
+import { formatDateSlash, weekdayCnParen } from "@/lib/yearScheduleCore";
 
 export type TutorMonthLessonRowWithPay = TutorMonthLessonRow & {
   hours: number;
@@ -8,8 +10,73 @@ export type TutorMonthLessonRowWithPay = TutorMonthLessonRow & {
 export const ZERO_ATTENDANCE_GUARANTEE_STUDENT_ID = "__zero_attendance_guarantee__";
 export const ZERO_ATTENDANCE_GUARANTEE_LABEL = "No students attended (0 · Single rate)";
 
+export const MANUAL_GUARANTEE_STUDENT_ID = "__manual_guarantee__";
+export const MANUAL_GUARANTEE_LABEL = "Manual guarantee (0 · Single)";
+
 function normalizePayTimeKey(time: string): string {
   return time.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function sortTimeFromDisplay(time: string): string {
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(time.trim());
+  if (!m) return time.padStart(5, "0");
+  let h = Number(m[1]);
+  const min = m[2];
+  const ap = m[3].toUpperCase();
+  if (ap === "PM" && h !== 12) h += 12;
+  if (ap === "AM" && h === 12) h = 0;
+  return `${String(h).padStart(2, "0")}:${min}`;
+}
+
+export function tutorMonthDateTimeKey(dateIso: string, time: string): string {
+  return `${dateIso}|||${normalizePayTimeKey(canonicalScheduleTimeLabel(time))}`;
+}
+
+export type ManualGuaranteeSource = {
+  id: string;
+  dateIso: string;
+  time: string;
+};
+
+/**
+ * Append admin manual 0·Single rows. Skips when the same date+time already has a
+ * pay row (attended student or auto zero-attendance guarantee) so existing pay
+ * logic is unchanged and Single is never double-counted.
+ */
+export function mergeManualTutorGuarantees(
+  rows: TutorMonthLessonRow[],
+  manuals: ManualGuaranteeSource[],
+): TutorMonthLessonRow[] {
+  if (!manuals.length) return rows;
+  const occupied = new Set(rows.map((r) => tutorMonthDateTimeKey(r.dateIso, r.time)));
+  const out = [...rows];
+  for (const m of manuals) {
+    const dateIso = String(m.dateIso ?? "").trim().slice(0, 10);
+    const time = canonicalScheduleTimeLabel(String(m.time ?? ""));
+    if (!dateIso || !time) continue;
+    const k = tutorMonthDateTimeKey(dateIso, time);
+    if (occupied.has(k)) continue;
+    occupied.add(k);
+    out.push({
+      rowKey: `manual-guarantee:${m.id}`,
+      studentId: MANUAL_GUARANTEE_STUDENT_ID,
+      studentName: MANUAL_GUARANTEE_LABEL,
+      grade: "",
+      dateIso,
+      dateDisplay: formatDateSlash(dateIso),
+      weekdayDisplay: weekdayCnParen(dateIso),
+      time,
+      room: "—",
+      lessonType: "保底",
+      note: "",
+      attended: false,
+      sortTime: sortTimeFromDisplay(time),
+      zeroAttendanceGuarantee: true,
+      manualGuarantee: true,
+      manualGuaranteeId: m.id,
+    });
+  }
+  return out;
 }
 
 /** date + time + room — one classroom session for zero-attendance guarantee. */
