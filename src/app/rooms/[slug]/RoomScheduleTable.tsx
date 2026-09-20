@@ -971,7 +971,7 @@ export default function RoomScheduleTable({
                       <tr className="group bg-white hover:bg-slate-50">
                 {hideStudentId ? null : (
                   <td
-                    className="sticky left-0 z-40 whitespace-nowrap bg-white px-3 py-2 font-mono text-xs text-slate-800 group-hover:bg-slate-50"
+                    className="sticky left-0 z-40 whitespace-nowrap bg-white px-3 py-2 align-middle font-mono text-xs text-slate-800 group-hover:bg-slate-50"
                     style={{ width: STICKY_ID_WIDTH, minWidth: STICKY_ID_WIDTH, maxWidth: STICKY_ID_WIDTH }}
                   >
                     {(() => {
@@ -991,7 +991,7 @@ export default function RoomScheduleTable({
                 )}
                 <td
                   className={[
-                    "sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-800 group-hover:bg-slate-50",
+                    "sticky z-40 whitespace-nowrap bg-white px-3 py-2 align-middle text-slate-800 group-hover:bg-slate-50",
                     hideStudentId ? "left-0" : "",
                   ].join(" ")}
                   style={{
@@ -1015,7 +1015,7 @@ export default function RoomScheduleTable({
                   })()}
                 </td>
                 <td
-                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-slate-700 group-hover:bg-slate-50"
+                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 align-middle text-slate-700 group-hover:bg-slate-50"
                   style={{
                     left: stickyGradeLeft,
                     width: STICKY_GRADE_WIDTH,
@@ -1026,7 +1026,7 @@ export default function RoomScheduleTable({
                   {formatGradeDisplay(r.grade) || "—"}
                 </td>
                 <td
-                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-center text-slate-800 group-hover:bg-slate-50"
+                  className="sticky z-40 whitespace-nowrap bg-white px-3 py-2 text-center align-middle text-slate-800 group-hover:bg-slate-50"
                   style={{
                     left: stickyAttendanceLeft,
                     width: STICKY_ATTENDANCE_WIDTH,
@@ -1053,11 +1053,11 @@ export default function RoomScheduleTable({
                     <span className="mt-1 block text-[10px] font-medium text-emerald-700">Saved</span>
                   ) : null}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 tabular-nums text-slate-800">{r.dateDisplay}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-slate-700">{weekdayLabelFromIso(r.dateIso)}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-slate-800">{r.time}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.room}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                <td className="whitespace-nowrap px-3 py-2 align-middle tabular-nums text-slate-800">{r.dateDisplay}</td>
+                <td className="whitespace-nowrap px-3 py-2 align-middle text-slate-700">{weekdayLabelFromIso(r.dateIso)}</td>
+                <td className="whitespace-nowrap px-3 py-2 align-middle text-slate-800">{r.time}</td>
+                <td className="whitespace-nowrap px-3 py-2 align-middle text-slate-700">{r.room}</td>
+                <td className="whitespace-nowrap px-3 py-2 align-middle text-slate-700">
                   <select
                     value={(() => {
                       const raw = r.tutor?.trim() ?? "";
@@ -1082,7 +1082,7 @@ export default function RoomScheduleTable({
                     ))}
                   </select>
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 align-middle">
                   <textarea
                     value={r.note || ""}
                     disabled={summaryLocked || !isAttendanceOrSummaryEditableForDate(r.dateIso)}
@@ -1110,13 +1110,15 @@ export default function RoomScheduleTable({
                   />
                 </td>
                 <td
-                  className="max-w-[220px] whitespace-normal break-words px-3 py-2 text-xs text-slate-600 overflow-hidden [display:-webkit-box] [WebkitBoxOrient:vertical] [WebkitLineClamp:2]"
+                  className="max-w-[220px] px-3 py-2 align-middle text-xs text-slate-600"
                   title={r.school || ""}
                 >
-                  {r.school || "—"}
+                  <span className="block overflow-hidden whitespace-normal break-words [display:-webkit-box] [WebkitBoxOrient:vertical] [WebkitLineClamp:2]">
+                    {r.school || "—"}
+                  </span>
                 </td>
                 <td
-                  className="max-w-[100px] truncate px-3 py-2 text-slate-500"
+                  className="max-w-[100px] truncate px-3 py-2 align-middle text-slate-500"
                   title={examDatesByStudentId[r.studentId] ? formatExamDateDisplay(examDatesByStudentId[r.studentId]) : "—"}
                 >
                   {examDatesByStudentId[r.studentId]
@@ -1124,18 +1126,18 @@ export default function RoomScheduleTable({
                     : "—"}
                 </td>
                 <td
-                  className="max-w-[260px] whitespace-normal break-words px-3 py-2 text-xs text-slate-600"
+                  className="max-w-[260px] whitespace-normal break-words px-3 py-2 align-middle text-xs text-slate-600"
                   title={examContentsByStudentId[r.studentId] || ""}
                 >
                   {examContentsByStudentId[r.studentId] || "—"}
                 </td>
                 <td
-                  className="max-w-[180px] whitespace-normal break-words px-3 py-2 text-xs text-slate-600"
+                  className="max-w-[180px] whitespace-normal break-words px-3 py-2 align-middle text-xs text-slate-600"
                   title={r.textbookPublisher || ""}
                 >
                   {r.textbookPublisher || "—"}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2">
+                <td className="whitespace-nowrap px-3 py-2 align-middle">
                   <span
                     className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
                       r.lessonType === "恆常"
