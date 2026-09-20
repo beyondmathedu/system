@@ -465,14 +465,14 @@ export default function RoomsAdminClient({
                   <tbody className="divide-y divide-slate-100">
                     {rows.map((r) => (
                       <tr key={r.id}>
-                        <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{r.id}</td>
-                        <td className="px-4 py-3 text-slate-800">{r.name}</td>
-                        <td className="px-4 py-3 font-mono text-xs text-[#1d76c2]">{r.slug}</td>
-                        <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-700">
+                        <td className="whitespace-nowrap px-4 py-3 align-middle font-mono text-xs">{r.id}</td>
+                        <td className="px-4 py-3 align-middle text-slate-800">{r.name}</td>
+                        <td className="px-4 py-3 align-middle font-mono text-xs text-[#1d76c2]">{r.slug}</td>
+                        <td className="whitespace-nowrap px-4 py-3 align-middle tabular-nums text-slate-700">
                           {r.regular_period_max != null ? r.regular_period_max : "—"}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 tabular-nums">{r.sort_order}</td>
-                        <td className="whitespace-nowrap px-4 py-3">
+                        <td className="whitespace-nowrap px-4 py-3 align-middle tabular-nums">{r.sort_order}</td>
+                        <td className="whitespace-nowrap px-4 py-3 align-middle">
                           <button
                             type="button"
                             onClick={() => startEdit(r)}

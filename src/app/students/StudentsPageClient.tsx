@@ -1202,7 +1202,7 @@ export default function StudentsPageClient({
                         key={student.id}
                         className="group divide-x divide-slate-100 bg-white hover:bg-slate-50"
                       >
-                        <td className="sticky left-0 z-30 w-[64px] whitespace-nowrap bg-white px-4 py-4 text-sm text-slate-700 group-hover:bg-slate-50">
+                        <td className="sticky left-0 z-30 w-[64px] whitespace-nowrap bg-white px-4 py-4 align-middle text-sm text-slate-700 group-hover:bg-slate-50">
                           <input
                             type="checkbox"
                             checked={selectedIdSet.has(student.id)}
@@ -1218,7 +1218,7 @@ export default function StudentsPageClient({
                             className="h-4 w-4 accent-[#1d76c2]"
                           />
                         </td>
-                        <td className="sticky left-[64px] z-30 min-w-[170px] max-w-[170px] whitespace-nowrap bg-white px-6 py-4 text-sm font-medium text-slate-900 group-hover:bg-slate-50">
+                        <td className="sticky left-[64px] z-30 min-w-[170px] max-w-[170px] whitespace-nowrap bg-white px-6 py-4 align-middle text-sm font-medium text-slate-900 group-hover:bg-slate-50">
                           <Link
                             href={`/students/${encodeURIComponent(studentIdDisplay)}/lessons`}
                             className="text-[#1d76c2] hover:underline"
@@ -1226,35 +1226,35 @@ export default function StudentsPageClient({
                             {studentIdDisplay}
                           </Link>
                         </td>
-                        <td className="sticky left-[234px] z-30 min-w-[240px] max-w-[240px] whitespace-nowrap bg-white px-6 py-4 text-sm text-slate-700 group-hover:bg-slate-50">
+                        <td className="sticky left-[234px] z-30 min-w-[240px] max-w-[240px] whitespace-nowrap bg-white px-6 py-4 align-middle text-sm text-slate-700 group-hover:bg-slate-50">
                           {student.nameZh}
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-700 align-top">
+                        <td className="px-6 py-4 align-middle text-sm text-slate-700">
                           <span className="inline-block max-w-[20ch] break-words whitespace-normal leading-5">
                             {student.nameEn}
                           </span>
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.nicknameEn}
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.birthDate}
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-700 align-top">
+                        <td className="px-6 py-4 align-middle text-sm text-slate-700">
                           <span className="inline-block max-w-[9ch] break-all whitespace-normal leading-5">
                             {student.studentPhone}
                           </span>
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.email}
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.school}
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.textbookPublisher}
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {formatGradeDisplay(student.grade)}
                           {student.heldBackYears?.length ? (
                             <span className="mt-0.5 block text-[10px] font-medium text-amber-800">
@@ -1267,11 +1267,11 @@ export default function StudentsPageClient({
                             </span>
                           ) : null}
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-700">
+                        <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.mathLanguage}
                         </td>
                         {isAdmin ? (
-                          <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-700">
+                          <td className="whitespace-nowrap px-4 py-3 align-middle text-xs text-slate-700">
                             {!portalStatus ? (
                               <span className="text-slate-400">…</span>
                             ) : portalStatus.hasAccount ? (

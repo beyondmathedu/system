@@ -624,15 +624,15 @@ function FeeArrearsDetailTable({
                       </tr>
                     ) : null}
                     <tr className="border-b border-slate-100 last:border-0">
-                      <td className="px-2.5 py-2 text-slate-800">{row.monthLabel}</td>
-                      <td className="px-2.5 py-2 text-right tabular-nums text-slate-800">
+                      <td className="px-2.5 py-2 align-middle text-slate-800">{row.monthLabel}</td>
+                      <td className="px-2.5 py-2 text-right align-middle tabular-nums text-slate-800">
                         {formatTuitionCell(row.expected, row.lessonCount, row.isLegacyOpening)}
                       </td>
-                      <td className="px-2.5 py-2 text-right tabular-nums text-slate-700">
+                      <td className="px-2.5 py-2 text-right align-middle tabular-nums text-slate-700">
                         ${formatHkMoneyAmount(row.paid)}
                       </td>
                       <td
-                        className={`px-2.5 py-2 text-right font-semibold tabular-nums ${
+                        className={`px-2.5 py-2 text-right align-middle font-semibold tabular-nums ${
                           row.outstanding > 0.005
                             ? "text-rose-700"
                             : row.outstanding < -0.005
@@ -2775,7 +2775,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
       } ${showGradeSeparatorTop ? "border-t-2 border-slate-400" : ""}`}
     >
       <td
-        className="sticky left-0 z-30 whitespace-nowrap bg-inherit px-4 py-4 text-sm text-slate-700"
+        className="sticky left-0 z-30 whitespace-nowrap bg-inherit px-4 py-4 align-middle text-sm text-slate-700"
         style={{ left: 0, minWidth: STICKY_ID_WIDTH }}
       >
         <Link
@@ -2786,7 +2786,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
         </Link>
       </td>
       <td
-        className="sticky z-30 min-w-0 bg-inherit px-1.5 py-3 text-left text-xs text-slate-700 align-middle"
+        className="sticky z-30 min-w-0 bg-inherit px-1.5 py-3 text-left align-middle text-xs text-slate-700"
         style={{ left: STICKY_ID_WIDTH, minWidth: STICKY_NAME_WIDTH, maxWidth: STICKY_NAME_WIDTH }}
       >
         {!hasAnyName ? (
@@ -2809,14 +2809,14 @@ const StudentFeeRow = memo(function StudentFeeRow({
         )}
       </td>
       <td
-        className="sticky z-30 whitespace-nowrap bg-inherit px-4 py-4 text-sm text-slate-700"
+        className="sticky z-30 whitespace-nowrap bg-inherit px-4 py-4 align-middle text-sm text-slate-700"
         style={{ left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH, minWidth: STICKY_GRADE_WIDTH }}
         title="該表月份的上課年級（9/1 升班前會顯示升班前年級）"
       >
         {formatGradeDisplay(sheetGrade) || "—"}
       </td>
       <td
-        className="sticky z-30 whitespace-nowrap border-r border-slate-200 bg-inherit px-4 py-4 text-sm text-slate-700"
+        className="sticky z-30 whitespace-nowrap border-r border-slate-200 bg-inherit px-4 py-4 align-middle text-sm text-slate-700"
         style={{
           left: STICKY_ID_WIDTH + STICKY_NAME_WIDTH + STICKY_GRADE_WIDTH,
           minWidth: STICKY_PHONE_WIDTH,
@@ -2831,7 +2831,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
         )}
       </td>
 
-      <td className="px-2 py-3 text-center">
+      <td className="px-2 py-3 text-center align-middle">
         <div className="text-center text-xs font-medium text-slate-800" style={{ width: WEEKDAY_COL_WIDTH }}>
           {(record.weekday
             ? record.weekday
@@ -2841,7 +2841,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
             : "") || "—"}
         </div>
       </td>
-      <td className="px-2 py-3 text-center">
+      <td className="px-2 py-3 text-center align-middle">
         <div className="mx-auto flex max-w-[9rem] flex-col items-center gap-0.5">
           <input
             type="number"
@@ -2892,7 +2892,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
         </button>
       </td>
       {Array.from({ length: lColumnCount }, (_, i) => (
-        <td key={i} className="px-2 py-3 text-center">
+        <td key={i} className="px-2 py-3 text-center align-middle">
           <div
             className="min-h-7 rounded bg-slate-50 px-0.5 text-center text-[10px] leading-snug text-slate-800"
             style={{ width: L_COL_WIDTH - 8 }}
@@ -2903,7 +2903,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
         </td>
       ))}
 
-      <td className="px-2 py-3 text-center align-top">
+      <td className="px-2 py-3 text-center align-middle">
         <button
           type="button"
           className="mx-auto flex w-full max-w-[5.5rem] flex-col items-center rounded border border-transparent px-1 py-1 transition hover:border-slate-200 hover:bg-slate-50"
@@ -2919,7 +2919,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
         </button>
       </td>
 
-      <td className="px-2 py-3 text-center">
+      <td className="px-2 py-3 text-center align-middle">
         <div
           className="mx-auto max-w-[9rem] whitespace-normal text-center text-xs font-semibold text-slate-800 leading-snug"
           title={`Total Due＝帶入結餘 + 本月應收（未扣已繳）；括號 N 堂＝本月有檔期堂數（Total 含結餘時與 N 堂唔一定同價對齊）`}
@@ -2959,7 +2959,7 @@ const StudentFeeRow = memo(function StudentFeeRow({
         </td>
       ) : null}
 
-      <td className="px-2 py-3 align-top">
+      <td className="px-2 py-3 align-middle">
         <textarea
           value={record.remarks}
           onChange={(e) => onRemarksChange(student.id, e.target.value)}
