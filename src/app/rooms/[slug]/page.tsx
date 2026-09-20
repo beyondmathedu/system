@@ -13,6 +13,7 @@ import { normalizeStudentId } from "@/lib/studentId";
 import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { fetchRoomScheduleAggregate } from "@/lib/roomScheduleAggregate";
 import { defaultDailyTimetablePath, getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
+import { loadTutorVisibility } from "@/lib/tutorVisibility.server";
 import RoomScheduleTable from "./RoomScheduleTable";
 
 export const maxDuration = 60;
@@ -134,11 +135,21 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
     if (period === "custom" && hasCustomRange) return { startIso: fromIso, endIso: toIso };
     return mondayToSundayRange(todayIso);
   })();
-  const [{ rows, loadError, yearStatesByStudentId, examDatesByStudentId, examContentsByStudentId }, navViewer] =
-    await Promise.all([
-      fetchRoomScheduleAggregate(key, year, month, range),
-      buildAppTopNavViewer(viewer),
-    ]);
+  const [
+    { rows, loadError, yearStatesByStudentId, examDatesByStudentId, examContentsByStudentId },
+    navViewer,
+    tutorVisibility,
+  ] = await Promise.all([
+    fetchRoomScheduleAggregate(key, year, month, range),
+    buildAppTopNavViewer(viewer),
+    loadTutorVisibility(),
+  ]);
+
+  const initialTutorVisibility = {
+    inactiveNames: Array.from(tutorVisibility.inactiveNames),
+    activeSelectNames: tutorVisibility.activeSelectNames,
+    activeAliasToNickname: Object.fromEntries(tutorVisibility.activeAliasToNickname),
+  };
 
   const basePath = `/rooms/${key}`;
   const titleSuffix = (() => {
@@ -304,6 +315,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
                 initialYearStatesByStudentId={yearStatesByStudentId}
                 initialExamDatesByStudentId={examDatesByStudentId}
                 initialExamContentsByStudentId={examContentsByStudentId}
+                initialTutorVisibility={initialTutorVisibility}
                 canOpenStudentLink={isAdminViewer || isTutorView || isSharedIpadTutor}
                 studentLessonsHrefMode={isAdminViewer ? "hub" : "yearFromRoom"}
                 hideStudentId={isSharedIpadTutor}

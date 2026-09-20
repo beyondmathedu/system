@@ -28,26 +28,29 @@ export default async function StudentsPage() {
   } | null = null;
   let navViewer: Awaited<ReturnType<typeof buildAppTopNavViewer>>;
   try {
-    const [nav, result] = await Promise.all([
-      buildAppTopNavViewer(viewer),
-      listStudentsForPage(getSupabaseAdmin(), {
-        offset: 0,
-        limit: STUDENTS_PAGE_SIZE,
-        status: "active",
-      }),
+    const listPromise = listStudentsForPage(getSupabaseAdmin(), {
+      offset: 0,
+      limit: STUDENTS_PAGE_SIZE,
+      status: "active",
+    });
+    const navPromise = buildAppTopNavViewer(viewer);
+    const result = await listPromise;
+    // Overlap portal status with remaining nav work once IDs are known.
+    const [nav, portalStatusById] = await Promise.all([
+      navPromise,
+      getStudentPortalStatusBatch(
+        result.rows.map((r) => r.id),
+        {
+          students: result.rows.map((r) => ({
+            id: r.id,
+            email: r.email,
+            student_phone: r.student_phone,
+            grade: r.grade,
+          })),
+        },
+      ),
     ]);
     navViewer = nav;
-    const portalStatusById = await getStudentPortalStatusBatch(
-      result.rows.map((r) => r.id),
-      {
-        students: result.rows.map((r) => ({
-          id: r.id,
-          email: r.email,
-          student_phone: r.student_phone,
-          grade: r.grade,
-        })),
-      },
-    );
     initialList = {
       students: result.rows,
       total: result.total,

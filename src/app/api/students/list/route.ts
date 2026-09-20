@@ -38,7 +38,17 @@ export async function GET(request: NextRequest) {
     });
     let portalStatusById = {};
     try {
-      portalStatusById = await getStudentPortalStatusBatch(result.rows.map((r) => r.id));
+      portalStatusById = await getStudentPortalStatusBatch(
+        result.rows.map((r) => r.id),
+        {
+          students: result.rows.map((r) => ({
+            id: r.id,
+            email: r.email,
+            student_phone: r.student_phone,
+            grade: r.grade,
+          })),
+        },
+      );
     } catch {
       portalStatusById = {};
     }

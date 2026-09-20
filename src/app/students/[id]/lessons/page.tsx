@@ -32,7 +32,16 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
 
   const hubYear = defaultLessonYear();
   const supabase = await createSupabaseServerClient();
-  const initialBootstrap = await loadStudentLessonsBootstrap(supabase, studentId, hubYear);
+  const initialReadOnly =
+    viewer.isSharedIpadTutor ||
+    viewer.role === "tutor" ||
+    viewer.role === "student" ||
+    String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
+
+  const [initialBootstrap, navViewer] = await Promise.all([
+    loadStudentLessonsBootstrap(supabase, studentId, hubYear),
+    buildAppTopNavViewer(viewer),
+  ]);
   const initialMetrics = computeStudentLessonHubMetrics({
     studentId,
     hubYear,
@@ -43,12 +52,6 @@ export default async function StudentLessonsHubPage({ params }: PageProps) {
     heldBackYears: initialBootstrap.heldBackYears,
     gradeHistory: initialBootstrap.gradeHistory,
   });
-  const initialReadOnly =
-    viewer.isSharedIpadTutor ||
-    viewer.role === "tutor" ||
-    viewer.role === "student" ||
-    String(viewer.email ?? "").trim().toLowerCase() === TUTOR_SHARED_IPAD_EMAIL.toLowerCase();
-  const navViewer = await buildAppTopNavViewer(viewer);
 
   return (
     <StudentLessonsHubClient

@@ -967,6 +967,56 @@ export async function loadFeeRecordBootstrapCached(
   };
 }
 
+export type FeeRecordMonthDeltaPayload = Pick<
+  FeeRecordBootstrapPayload,
+  | "feeRows"
+  | "feeStartMonth"
+  | "endMonthForPricing"
+  | "openingResult"
+  | "adjustmentResult"
+  | "heldBackYearsResult"
+  | "gradeHistoryResult"
+>;
+
+/**
+ * Month/year-switch delta: fee rows + opening/adjustments/grade freshness only.
+ * Caller keeps year-core (students, schedules, metrics) on the client.
+ */
+export async function loadFeeRecordMonthDeltaCached(
+  sheetYear: number,
+  sheetMonth: number,
+): Promise<FeeRecordMonthDeltaPayload> {
+  const y = Math.floor(sheetYear);
+  const m = Math.floor(sheetMonth);
+  const [yearCore, monthPart, gradeContext] = await Promise.all([
+    loadFeeYearCoreCached(y),
+    loadFeeMonthPartCached(y, m),
+    loadStudentsGradeContext(),
+  ]);
+  const ids = yearCore.students.map((s) => s.id);
+  const supabase = getSupabaseAdmin();
+  const [openingResult, adjustmentResult] = await Promise.all([
+    y === FEE_OPENING_BALANCE_AS_OF_YEAR
+      ? loadStudentFeeOpeningBalancesServer(supabase, ids)
+      : Promise.resolve({ balances: {} as Record<string, number> }),
+    ids.length
+      ? loadStudentFeeBalanceAdjustmentsServer(supabase, ids)
+      : Promise.resolve({ adjustments: {} as Record<string, { amount: number; reason: string }> }),
+  ]);
+  return {
+    ...monthPart,
+    openingResult,
+    adjustmentResult,
+    heldBackYearsResult: { byStudentId: gradeContext.heldBackYearsByStudentId },
+    gradeHistoryResult: {
+      byStudentId: gradeContext.gradeHistoryByStudentId as Record<
+        string,
+        Record<string, FeeRecordGradeHistoryRow>
+      >,
+    },
+  };
+}
+
 export async function upsertStudentFeeOpeningBalanceAdmin(
   studentId: string,
   openingBalance: number,

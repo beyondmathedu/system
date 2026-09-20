@@ -33,12 +33,14 @@ function dispatchClassroomsUpdated() {
 
 export default function RoomsAdminClient({
   navViewer = null,
+  initialRows = null,
 }: {
   navViewer?: AppTopNavViewer | null;
+  initialRows?: Classroom[] | null;
 }) {
-  const [rows, setRows] = useState<Classroom[]>([]);
+  const [rows, setRows] = useState<Classroom[]>(() => initialRows ?? []);
   const [loadError, setLoadError] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !initialRows);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editSnapshot, setEditSnapshot] = useState<{ name: string } | null>(null);
@@ -88,10 +90,10 @@ export default function RoomsAdminClient({
   }, []);
 
   useEffect(() => {
-    const run = () => {
+    // Soft-refresh after SSR hydrate (or first load when no initialRows).
+    const t = window.setTimeout(() => {
       void loadClassrooms();
-    };
-    const t = window.setTimeout(run, 0);
+    }, 0);
     return () => window.clearTimeout(t);
   }, [loadClassrooms]);
 

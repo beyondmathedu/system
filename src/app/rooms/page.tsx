@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { buildAppTopNavViewer } from "@/lib/appTopNavViewer";
 import { getViewerContext } from "@/lib/authz";
+import { fetchClassroomsAdminList } from "@/lib/classroomsRegistry";
 import { defaultDailyTimetablePath, isSharedIpadTutorViewer, isTutorViewer } from "@/lib/tutorRoomAccess";
 import RoomsAdminClient from "./RoomsAdminClient";
 
@@ -15,6 +16,21 @@ export default async function RoomsIndexPage() {
 
   if (viewer.role !== "admin") redirect("/login");
 
-  const navViewer = await buildAppTopNavViewer(viewer);
-  return <RoomsAdminClient navViewer={navViewer} />;
+  const [navViewer, initialRows] = await Promise.all([
+    buildAppTopNavViewer(viewer),
+    fetchClassroomsAdminList(),
+  ]);
+  return (
+    <RoomsAdminClient
+      navViewer={navViewer}
+      initialRows={initialRows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        description: r.description,
+        sort_order: r.sort_order,
+        regular_period_max: r.regular_period_max ?? null,
+      }))}
+    />
+  );
 }
