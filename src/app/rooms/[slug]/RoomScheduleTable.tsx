@@ -1,8 +1,9 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import type { YearLessonState } from "@/lib/yearScheduleCore";
 import { normalizeStudentId } from "@/lib/studentId";
@@ -28,6 +29,7 @@ import { hkTodayIso } from "@/lib/examDateVisibility";
 import { useRoomLessonStateRealtime } from "@/lib/useRoomLessonStateRealtime";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+import { VirtualTableSpacerRow } from "@/components/VirtualTableSpacerRow";
 
 function RoomScheduleTableSkeleton() {
   return (
@@ -52,6 +54,12 @@ type Props = {
   initialExamDatesByStudentId?: Record<string, string>;
   /** Server-loaded exam content keyed by student (already visibility-filtered). */
   initialExamContentsByStudentId?: Record<string, string>;
+  /** Server-loaded tutor dropdown options (serializable). */
+  initialTutorVisibility?: {
+    inactiveNames: string[];
+    activeSelectNames: string[];
+    activeAliasToNickname: Record<string, string>;
+  } | null;
   canOpenStudentLink?: boolean;
   /** 鎖定出席 checkbox */
   attendanceLocked?: boolean;
@@ -86,6 +94,7 @@ export default function RoomScheduleTable({
   initialYearStatesByStudentId = {},
   initialExamDatesByStudentId = {},
   initialExamContentsByStudentId = {},
+  initialTutorVisibility = null,
   canOpenStudentLink = true,
   attendanceLocked = false,
   tutorFieldLocked = false,
@@ -142,10 +151,14 @@ export default function RoomScheduleTable({
   const [saveError, setSaveError] = useState("");
   const [saveErrorStudentId, setSaveErrorStudentId] = useState("");
   const saveErrorStudentIdRef = useRef("");
-  const [teacherOptions, setTeacherOptions] = useState<string[]>([]);
-  const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
+  const [teacherOptions, setTeacherOptions] = useState<string[]>(
+    () => initialTutorVisibility?.activeSelectNames ?? [],
+  );
+  const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(
+    () => new Set(initialTutorVisibility?.inactiveNames ?? []),
+  );
   const [activeTutorAliasToNickname, setActiveTutorAliasToNickname] = useState<Map<string, string>>(
-    new Map(),
+    () => new Map(Object.entries(initialTutorVisibility?.activeAliasToNickname ?? {})),
   );
   const [examDatesByStudentId, setExamDatesByStudentId] = useState<Record<string, string>>(
     () => initialExamDatesByStudentId,
@@ -392,6 +405,38 @@ export default function RoomScheduleTable({
     return copied;
   }, [filteredRows, sortConfig, examDatesByStudentId]);
 
+  type RoomVirtualItem =
+    | { kind: "divider"; key: string }
+    | { kind: "row"; key: string; row: RoomScheduleRow; index: number };
+
+  const roomVirtualItems = useMemo(() => {
+    const out: RoomVirtualItem[] = [];
+    for (let idx = 0; idx < sortedLocalRows.length; idx += 1) {
+      const r = sortedLocalRows[idx]!;
+      const prev = idx > 0 ? sortedLocalRows[idx - 1] : null;
+      if (
+        showLessonSlotDividers &&
+        prev &&
+        lessonSlotKey(r) !== lessonSlotKey(prev)
+      ) {
+        out.push({ kind: "divider", key: `div:${r.rowKey}:${idx}` });
+      }
+      out.push({ kind: "row", key: `${r.rowKey}:${idx}`, row: r, index: idx });
+    }
+    return out;
+  }, [sortedLocalRows, showLessonSlotDividers]);
+
+  const roomRowVirtualizer = useVirtualizer({
+    count: roomVirtualItems.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: (index) => (roomVirtualItems[index]?.kind === "divider" ? 2 : 88),
+    overscan: 12,
+  });
+  const roomVirtualRows = roomRowVirtualizer.getVirtualItems();
+  const roomPadTop = roomVirtualRows[0]?.start ?? 0;
+  const roomPadBottom =
+    roomRowVirtualizer.getTotalSize() - (roomVirtualRows[roomVirtualRows.length - 1]?.end ?? 0);
+
   const {
     tableScrollId,
     bottomTrackRef,
@@ -536,6 +581,7 @@ export default function RoomScheduleTable({
   }, [rows, initialExamDatesByStudentId, initialExamContentsByStudentId]);
 
   useEffect(() => {
+    if (initialTutorVisibility) return;
     let mounted = true;
     void (async () => {
       const v = await loadTutorVisibility();
@@ -547,7 +593,7 @@ export default function RoomScheduleTable({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [initialTutorVisibility]);
 
   function onToggle(row: RoomScheduleRow, checked: boolean) {
     if (attendanceLocked || !isAttendanceOrSummaryEditableForDate(row.dateIso)) return;
@@ -955,20 +1001,21 @@ export default function RoomScheduleTable({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {sortedLocalRows.map((r, idx) => {
-                  const prev = idx > 0 ? sortedLocalRows[idx - 1] : null;
-                  const showSlotDivider =
-                    showLessonSlotDividers &&
-                    idx > 0 &&
-                    lessonSlotKey(r) !== lessonSlotKey(prev!);
+                <VirtualTableSpacerRow height={roomPadTop} colSpan={tableColumnCount} />
+                {roomVirtualRows.map((virtualRow) => {
+                  const item = roomVirtualItems[virtualRow.index];
+                  if (!item) return null;
+                  if (item.kind === "divider") {
+                    return (
+                      <tr key={item.key} aria-hidden>
+                        <td colSpan={tableColumnCount} className="h-0 border-t-2 border-slate-400 p-0" />
+                      </tr>
+                    );
+                  }
+                  const r = item.row;
+                  const idx = item.index;
                   return (
-                    <Fragment key={`${r.rowKey}:${idx}`}>
-                      {showSlotDivider ? (
-                        <tr aria-hidden>
-                          <td colSpan={tableColumnCount} className="h-0 border-t-2 border-slate-400 p-0" />
-                        </tr>
-                      ) : null}
-                      <tr className="group bg-white hover:bg-slate-50">
+                      <tr key={item.key} className="group bg-white hover:bg-slate-50" data-index={idx}>
                 {hideStudentId ? null : (
                   <td
                     className="sticky left-0 z-40 whitespace-nowrap bg-white px-3 py-2 align-middle font-mono text-xs text-slate-800 group-hover:bg-slate-50"
@@ -1151,9 +1198,9 @@ export default function RoomScheduleTable({
                   </span>
                 </td>
                       </tr>
-                    </Fragment>
                   );
                 })}
+                <VirtualTableSpacerRow height={roomPadBottom} colSpan={tableColumnCount} />
               </tbody>
             </table>
           </div>

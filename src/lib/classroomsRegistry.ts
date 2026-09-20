@@ -130,3 +130,35 @@ export async function fetchClassroomSlugs(): Promise<string[]> {
     .map((item) => item.href.replace(/^\/rooms\//, "").trim().toLowerCase())
     .filter(Boolean);
 }
+
+async function fetchClassroomsAdminListUncached(): Promise<ClassroomRow[]> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("classrooms")
+    .select("id, name, slug, description, sort_order, regular_period_max")
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+  if (error || !data?.length) return [];
+  return data.map((r) => {
+    const rpm = (r as ClassroomRow).regular_period_max;
+    const rpmN = rpm == null ? null : Number(rpm);
+    return {
+      id: String(r.id),
+      name: String(r.name ?? "").trim(),
+      slug: String(r.slug ?? "").trim().toLowerCase(),
+      description: String(r.description ?? "").trim(),
+      sort_order: Number(r.sort_order) || 0,
+      regular_period_max:
+        rpmN != null && Number.isFinite(rpmN) && rpmN > 0 ? Math.floor(rpmN) : null,
+    };
+  });
+}
+
+/** Admin Rooms page list (same shape as client classrooms fetch). */
+export async function fetchClassroomsAdminList(): Promise<ClassroomRow[]> {
+  return unstable_cache(
+    async () => fetchClassroomsAdminListUncached(),
+    ["classrooms-admin-list-v1"],
+    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
+  )();
+}

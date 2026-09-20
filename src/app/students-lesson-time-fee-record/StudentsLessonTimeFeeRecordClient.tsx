@@ -921,6 +921,22 @@ export default function StudentsLessonTimeFeeRecordPage({
   const pendingOpeningBalanceRef = useRef<Map<string, number>>(new Map());
   const pendingBalanceAdjustmentRef = useRef<Map<string, StudentFeeBalanceAdjustment>>(new Map());
   const skipBootstrapFetchRef = useRef(true);
+  const bootstrappedYearRef = useRef(initialYear);
+  const yearCoreRef = useRef<{
+    students: FeeRecordBootstrapApiBody["students"];
+    metricsRows: FeeRecordBootstrapApiBody["metricsRows"];
+    recordsMap: FeeRecordBootstrapApiBody["recordsMap"];
+    yearStatesMap: FeeRecordBootstrapApiBody["yearStatesMap"];
+    visibilityByStudentId: FeeRecordBootstrapApiBody["visibilityByStudentId"];
+    feeTierBundle: FeeRecordBootstrapApiBody["feeTierBundle"];
+  } | null>({
+    students: initialBootstrap.students,
+    metricsRows: initialBootstrap.metricsRows,
+    recordsMap: initialBootstrap.recordsMap,
+    yearStatesMap: initialBootstrap.yearStatesMap,
+    visibilityByStudentId: initialBootstrap.visibilityByStudentId,
+    feeTierBundle: initialBootstrap.feeTierBundle,
+  });
   type FeeDetailDialogState =
     | { kind: "arrears"; studentId: string; title: string }
     | { kind: "makeup"; studentId: string };
@@ -991,13 +1007,47 @@ export default function StudentsLessonTimeFeeRecordPage({
     setBootstrapLoading(true);
     void (async () => {
       try {
+        const sameYear =
+          bootstrappedYearRef.current === sheetYear && yearCoreRef.current != null;
+        const partQs = sameYear ? "&part=month" : "";
         const res = await fetch(
-          `/api/students-lesson-fee-record/bootstrap?year=${sheetYear}&month=${sheetMonth}`,
+          `/api/students-lesson-fee-record/bootstrap?year=${sheetYear}&month=${sheetMonth}${partQs}`,
           { credentials: "same-origin", cache: "no-store" },
         );
         if (!res.ok) throw new Error("bootstrap failed");
-        const body = (await res.json()) as FeeRecordBootstrapApiBody;
+        const body = (await res.json()) as FeeRecordBootstrapApiBody & { part?: string };
         if (!mounted || !body.ok) return;
+
+        if (body.part === "month" && yearCoreRef.current) {
+          applyHydratedBootstrap(
+            hydrateFeeRecordBootstrap(
+              {
+                ok: true,
+                ...yearCoreRef.current,
+                feeRows: body.feeRows,
+                feeStartMonth: body.feeStartMonth,
+                endMonthForPricing: body.endMonthForPricing,
+                openingResult: body.openingResult,
+                adjustmentResult: body.adjustmentResult,
+                heldBackYearsResult: body.heldBackYearsResult,
+                gradeHistoryResult: body.gradeHistoryResult,
+              },
+              sheetYear,
+              sheetMonth,
+            ),
+          );
+          return;
+        }
+
+        yearCoreRef.current = {
+          students: body.students,
+          metricsRows: body.metricsRows,
+          recordsMap: body.recordsMap,
+          yearStatesMap: body.yearStatesMap,
+          visibilityByStudentId: body.visibilityByStudentId,
+          feeTierBundle: body.feeTierBundle,
+        };
+        bootstrappedYearRef.current = sheetYear;
         applyHydratedBootstrap(hydrateFeeRecordBootstrap(body, sheetYear, sheetMonth));
       } catch {
         if (!mounted) return;
@@ -1267,7 +1317,30 @@ export default function StudentsLessonTimeFeeRecordPage({
   const attendedLessonsInMonthByStudentId = useMemo(() => {
     const out: Record<string, number> = {};
     const m = Number(sheetMonth);
-    for (const st of students) {
+    // Only students that already pass search/grade/weekday — session filter needs these counts.
+    const normalizedSearch = searchText.trim().toLowerCase();
+    for (const st of sortedStudents) {
+      const matchesGrade =
+        normalizedSearch.length > 0 ||
+        gradeFilter === "all" ||
+        formatGradeDisplay(sheetGradeByStudentId[st.id] || st.grade) === gradeFilter;
+      const matchesWeekday =
+        weekdayFilter === "all" ||
+        (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
+      const displayName = formatStudentDisplayNameOrEmpty(
+        { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
+        "full",
+      ).toLowerCase();
+      const normalizedId = normalizeStudentId(st.id).toLowerCase();
+      const phoneText = st.student_phone.toLowerCase();
+      const matchesSearch =
+        normalizedSearch.length === 0 ||
+        normalizedId.includes(normalizedSearch) ||
+        st.id.toLowerCase().includes(normalizedSearch) ||
+        displayName.includes(normalizedSearch) ||
+        phoneText.includes(normalizedSearch);
+      if (!matchesGrade || !matchesWeekday || !matchesSearch) continue;
+
       if (isMonthInactiveForFeeByStudentId[st.id]?.(m)) {
         out[st.id] = 0;
         continue;
@@ -1284,13 +1357,63 @@ export default function StudentsLessonTimeFeeRecordPage({
     }
     return out;
   }, [
-    students,
+    sortedStudents,
+    searchText,
+    gradeFilter,
+    weekdayFilter,
+    sheetGradeByStudentId,
+    weekdayTokensByStudentId,
     sheetYear,
     sheetMonth,
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
     inactiveDateCheckerByStudentId,
     isMonthInactiveForFeeByStudentId,
+  ]);
+
+  /** Cheap filters first so heavy tuition/makeup math runs on a smaller set (default grade F.1). */
+  const midFilteredStudents = useMemo(() => {
+    const normalizedSearch = searchText.trim().toLowerCase();
+    return sortedStudents.filter((st) => {
+      const r = recordsByStudentId[st.id] ?? defaultRecordState();
+      const expectedSessions = r.expected ?? 0;
+      const attended = attendedLessonsInMonthByStudentId[st.id] ?? 0;
+      const matchesGrade =
+        normalizedSearch.length > 0 ||
+        gradeFilter === "all" ||
+        formatGradeDisplay(sheetGradeByStudentId[st.id] || st.grade) === gradeFilter;
+      const matchesWeekday =
+        weekdayFilter === "all" ||
+        (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
+      const matchesSession =
+        sessionFilter === "all" ||
+        (sessionFilter === "short"
+          ? expectedSessions > 0 && attended < expectedSessions
+          : expectedSessions === 0 || attended >= expectedSessions);
+      const displayName = formatStudentDisplayNameOrEmpty(
+        { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
+        "full",
+      ).toLowerCase();
+      const normalizedId = normalizeStudentId(st.id).toLowerCase();
+      const phoneText = st.student_phone.toLowerCase();
+      const matchesSearch =
+        normalizedSearch.length === 0 ||
+        normalizedId.includes(normalizedSearch) ||
+        st.id.toLowerCase().includes(normalizedSearch) ||
+        displayName.includes(normalizedSearch) ||
+        phoneText.includes(normalizedSearch);
+      return matchesGrade && matchesWeekday && matchesSession && matchesSearch;
+    });
+  }, [
+    sortedStudents,
+    recordsByStudentId,
+    attendedLessonsInMonthByStudentId,
+    gradeFilter,
+    weekdayFilter,
+    sessionFilter,
+    searchText,
+    sheetGradeByStudentId,
+    weekdayTokensByStudentId,
   ]);
 
   const updateStudentRecord = (studentId: string, patch: Partial<RecordState>) => {
@@ -1462,7 +1585,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     const full: Record<string, string[]> = {};
     let maxAttended = MIN_L_COLUMN_COUNT;
     const currentMonth = Number(sheetMonth);
-    for (const st of students) {
+    for (const st of midFilteredStudents) {
       const legacyWeekdays = weekdayTokensByStudentId[st.id] ?? [];
       const records = normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []);
       const state = toYearLessonStateFromClient(lessonYearStateByStudentId[st.id]);
@@ -1486,7 +1609,7 @@ export default function StudentsLessonTimeFeeRecordPage({
       lColumnCount: Math.max(MIN_L_COLUMN_COUNT, maxAttended),
     };
   }, [
-    students,
+    midFilteredStudents,
     weekdayTokensByStudentId,
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
@@ -1500,7 +1623,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   const { makeupLiveCountByStudentId, makeupHasLessonPayloadByStudentId } = useMemo(() => {
     const counts: Record<string, number> = {};
     const hasPayloadById: Record<string, boolean> = {};
-    for (const st of students) {
+    for (const st of midFilteredStudents) {
       const sid = st.id;
       const recs = (lessonRecordsByStudentId[sid] ?? []) as unknown as Lesson2026Record[];
       const ys = lessonYearStateByStudentId[sid];
@@ -1530,7 +1653,7 @@ export default function StudentsLessonTimeFeeRecordPage({
       makeupHasLessonPayloadByStudentId: hasPayloadById,
     };
   }, [
-    students,
+    midFilteredStudents,
     lessonRecordsByStudentId,
     lessonYearStateByStudentId,
     sheetYear,
@@ -1581,7 +1704,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   const currentMonthExpectedTuitionByStudentId = useMemo(() => {
     const out: Record<string, number> = {};
     const currentMonth = Number(sheetMonth);
-    for (const st of students) {
+    for (const st of midFilteredStudents) {
       if (isMonthInactiveForFeeByStudentId[st.id]?.(currentMonth)) {
         out[st.id] = 0;
         continue;
@@ -1605,7 +1728,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     }
     return out;
   }, [
-    students,
+    midFilteredStudents,
     recordsByStudentId,
     fullLessonDatesByStudentId,
     sheetYear,
@@ -1620,7 +1743,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     const out: Record<string, number> = {};
     const currentMonth = Number(sheetMonth);
     const feeStartMonth = feeSystemStartMonth1to12(sheetYear);
-    for (const st of students) {
+    for (const st of midFilteredStudents) {
       let sum = 0;
       const legacyWeekdays = weekdayTokensByStudentId[st.id] ?? [];
       const records = normalizeFeeLessonRecords(lessonRecordsByStudentId[st.id] ?? []);
@@ -1651,7 +1774,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     }
     return out;
   }, [
-    students,
+    midFilteredStudents,
     sheetYear,
     sheetMonth,
     weekdayTokensByStudentId,
@@ -1667,7 +1790,7 @@ export default function StudentsLessonTimeFeeRecordPage({
 
   const balanceBeforeByStudentId = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const st of students) {
+    for (const st of midFilteredStudents) {
       const priorExpectedTuition = Number(priorExpectedTuitionSumByStudentId[st.id] ?? 0) || 0;
       const submittedBefore = Number(submittedBeforeByStudentId[st.id] ?? 0) || 0;
       const opening =
@@ -1678,7 +1801,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     }
     return out;
   }, [
-    students,
+    midFilteredStudents,
     priorExpectedTuitionSumByStudentId,
     submittedBeforeByStudentId,
     openingBalanceByStudentId,
@@ -1687,7 +1810,7 @@ export default function StudentsLessonTimeFeeRecordPage({
 
   const totalDueByStudentId = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const st of students) {
+    for (const st of midFilteredStudents) {
       const thisMonth = Number(currentMonthExpectedTuitionByStudentId[st.id] ?? 0) || 0;
       const balanceBefore = Number(balanceBeforeByStudentId[st.id] ?? 0) || 0;
       const adjustment = Number(balanceAdjustmentByStudentId[st.id]?.amount ?? 0) || 0;
@@ -1695,30 +1818,15 @@ export default function StudentsLessonTimeFeeRecordPage({
     }
     return out;
   }, [
-    students,
+    midFilteredStudents,
     balanceBeforeByStudentId,
     currentMonthExpectedTuitionByStudentId,
     balanceAdjustmentByStudentId,
   ]);
 
   const filteredSortedStudents = useMemo(() => {
-    const normalizedSearch = searchText.trim().toLowerCase();
-    return sortedStudents.filter((st) => {
+    return midFilteredStudents.filter((st) => {
       const r = recordsByStudentId[st.id] ?? defaultRecordState();
-      const expectedSessions = r.expected ?? 0;
-      const attended = attendedLessonsInMonthByStudentId[st.id] ?? 0;
-      const matchesGrade =
-        normalizedSearch.length > 0 ||
-        gradeFilter === "all" ||
-        formatGradeDisplay(sheetGradeByStudentId[st.id] || st.grade) === gradeFilter;
-      const matchesWeekday =
-        weekdayFilter === "all" ||
-        (weekdayTokensByStudentId[st.id] ?? []).includes(weekdayFilter);
-      const matchesSession =
-        sessionFilter === "all" ||
-        (sessionFilter === "short"
-          ? expectedSessions > 0 && attended < expectedSessions
-          : expectedSessions === 0 || attended >= expectedSessions);
       const hasMakeup = (makeupLiveCountByStudentId[st.id] ?? 0) > 0;
       const totalDue = Number(totalDueByStudentId[st.id] ?? 0) || 0;
       const owesMoney = totalDue - (Number(r.submitted) || 0) > 0.005;
@@ -1727,41 +1835,15 @@ export default function StudentsLessonTimeFeeRecordPage({
         (balanceDueFilter === "yes" ? owesMoney : !owesMoney);
       const matchesMakeup =
         makeupFilter === "all" || (makeupFilter === "yes" ? hasMakeup : !hasMakeup);
-      const displayName = formatStudentDisplayNameOrEmpty(
-        { id: st.id, name_zh: st.name_zh, name_en: st.name_en, nickname_en: st.nickname_en },
-        "full",
-      ).toLowerCase();
-      const normalizedId = normalizeStudentId(st.id).toLowerCase();
-      const phoneText = st.student_phone.toLowerCase();
-      const matchesSearch =
-        normalizedSearch.length === 0 ||
-        normalizedId.includes(normalizedSearch) ||
-        st.id.toLowerCase().includes(normalizedSearch) ||
-        displayName.includes(normalizedSearch) ||
-        phoneText.includes(normalizedSearch);
-      return (
-        matchesGrade &&
-        matchesWeekday &&
-        matchesSession &&
-        matchesBalanceDue &&
-        matchesMakeup &&
-        matchesSearch
-      );
+      return matchesBalanceDue && matchesMakeup;
     });
   }, [
-    sortedStudents,
+    midFilteredStudents,
     recordsByStudentId,
-    gradeFilter,
-    weekdayFilter,
-    sessionFilter,
     balanceDueFilter,
     makeupFilter,
-    searchText,
-    weekdayTokensByStudentId,
-    attendedLessonsInMonthByStudentId,
     makeupLiveCountByStudentId,
     totalDueByStudentId,
-    sheetGradeByStudentId,
   ]);
 
   const {

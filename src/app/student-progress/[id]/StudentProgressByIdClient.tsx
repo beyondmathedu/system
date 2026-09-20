@@ -45,6 +45,15 @@ type StudentSummary = {
   mathLanguage: string;
 };
 
+export type StudentProgressInitialPayload = {
+  studentSummary: StudentSummary;
+  studentNotFound: boolean;
+  examInfo: { examDate: string; examContent: string };
+  sheets: ProgressSheet[];
+  cutOffSheet: ProgressSheet | null;
+  yearGradeThresholds?: Record<number, number[]>;
+};
+
 type ProgressSelectionMap = Record<string, string>;
 
 const PROGRESS_LEVEL_OPTIONS = ["Remedial", "Good", "Mastered"] as const;
@@ -460,9 +469,11 @@ function isF6ByYearsFrozenDse(sheetName: string, headerName: string): boolean {
 export default function StudentProgressByIdClient({
   navViewer = null,
   readOnly = false,
+  initial = null,
 }: {
   navViewer?: AppTopNavViewer | null;
   readOnly?: boolean;
+  initial?: StudentProgressInitialPayload | null;
 }) {
   const params = useParams<{ id: string }>();
   const studentId = normalizeStudentId(String(params?.id || ""));
@@ -473,20 +484,22 @@ export default function StudentProgressByIdClient({
     ? studentPortalHomePath(studentId)
     : `/students/${encodeURIComponent(studentId)}/lessons`;
   const backAriaLabel = isStudentViewer ? "Back to my lessons" : "Back to student lesson record";
-  const [studentSummary, setStudentSummary] = useState<StudentSummary>({
-    id: studentId,
-    nameZh: "",
-    nameEn: "",
-    nicknameEn: "",
-    grade: "",
-    school: "",
-    textbookPublisher: "",
-    mathLanguage: "English",
-  });
-  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>({
-    examDate: "",
-    examContent: "",
-  });
+  const [studentSummary, setStudentSummary] = useState<StudentSummary>(
+    () =>
+      initial?.studentSummary ?? {
+        id: studentId,
+        nameZh: "",
+        nameEn: "",
+        nicknameEn: "",
+        grade: "",
+        school: "",
+        textbookPublisher: "",
+        mathLanguage: "English",
+      },
+  );
+  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>(
+    () => initial?.examInfo ?? { examDate: "", examContent: "" },
+  );
   const visibleExamInfo = useMemo(
     () => ({
       examDate: visibleExamDateIso(examInfo.examDate),
@@ -495,14 +508,18 @@ export default function StudentProgressByIdClient({
     [examInfo],
   );
   const showExamInfo = isUpcomingExamDate(examInfo.examDate);
-  const [studentLoaded, setStudentLoaded] = useState(false);
-  const [studentNotFound, setStudentNotFound] = useState(false);
-  const [progressSheets, setProgressSheets] = useState<ProgressSheet[]>([]);
-  const [progressLoading, setProgressLoading] = useState(false);
+  const [studentLoaded, setStudentLoaded] = useState(() => Boolean(initial));
+  const [studentNotFound, setStudentNotFound] = useState(() => Boolean(initial?.studentNotFound));
+  const [progressSheets, setProgressSheets] = useState<ProgressSheet[]>(() => initial?.sheets ?? []);
+  const [progressLoading, setProgressLoading] = useState(
+    () => Boolean(initial && parseGradeLevel(initial.studentSummary.grade) && !(initial.sheets?.length)),
+  );
   const [progressError, setProgressError] = useState("");
   const [progressSelections, setProgressSelections] = useState<ProgressSelectionMap>({});
-  const [yearGradeThresholds, setYearGradeThresholds] = useState<Record<number, number[]>>(DEFAULT_YEAR_GRADE_THRESHOLDS);
-  const [cutOffSheet, setCutOffSheet] = useState<ProgressSheet | null>(null);
+  const [yearGradeThresholds, setYearGradeThresholds] = useState<Record<number, number[]>>(
+    () => initial?.yearGradeThresholds ?? DEFAULT_YEAR_GRADE_THRESHOLDS,
+  );
+  const [cutOffSheet, setCutOffSheet] = useState<ProgressSheet | null>(() => initial?.cutOffSheet ?? null);
   const [activeSheetName, setActiveSheetName] = useState("");
   const gradeLevel = parseGradeLevel(studentSummary.grade);
   const currentGradeSheetNames = new Set(gradeLevel ? getCurrentGradeSheetNames(gradeLevel) : []);
@@ -560,6 +577,10 @@ export default function StudentProgressByIdClient({
 
   useEffect(() => {
     if (!studentId) return;
+    if (initial && initial.studentSummary.id === studentId) {
+      // Already hydrated from RSC.
+      return;
+    }
     let cancelled = false;
     setStudentLoaded(false);
     setStudentNotFound(false);
@@ -611,7 +632,7 @@ export default function StudentProgressByIdClient({
     return () => {
       cancelled = true;
     };
-  }, [studentId]);
+  }, [studentId, initial]);
 
   useEffect(() => {
     if (!studentId) {
@@ -651,6 +672,31 @@ export default function StudentProgressByIdClient({
       setCutOffSheet(null);
       setProgressError("");
       setProgressLoading(false);
+      return;
+    }
+
+    // Apply browser Cut Off override onto SSR sheets without refetching workbook.
+    if (
+      initial &&
+      initial.studentSummary.id === studentId &&
+      parseGradeLevel(initial.studentSummary.grade) === level &&
+      initial.sheets.length > 0
+    ) {
+      const savedCutOff = loadCutOffOverride();
+      if (savedCutOff) {
+        setCutOffSheet(savedCutOff);
+        setProgressSheets(
+          initial.sheets.map((sheet) => {
+            if (sheet.name === CUT_OFF_SHEET) return savedCutOff;
+            if (sheet.name === F6_BY_YEARS_SHEET) return syncF6ByYearsWithCutOff(sheet, savedCutOff);
+            return sheet;
+          }),
+        );
+        const thresholds = parseCutOffThresholds([savedCutOff.headers, ...savedCutOff.rows]);
+        setYearGradeThresholds({ ...DEFAULT_YEAR_GRADE_THRESHOLDS, ...thresholds });
+      }
+      setProgressLoading(false);
+      setProgressError("");
       return;
     }
 
@@ -711,7 +757,7 @@ export default function StudentProgressByIdClient({
     return () => {
       cancelled = true;
     };
-  }, [gradeLevel]);
+  }, [gradeLevel, initial, studentId]);
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">

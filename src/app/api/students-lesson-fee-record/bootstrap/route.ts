@@ -1,11 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getViewerContext } from "@/lib/authz";
-import { loadFeeRecordBootstrapCached } from "@/lib/lessonDataServer";
+import {
+  loadFeeRecordBootstrapCached,
+  loadFeeRecordMonthDeltaCached,
+} from "@/lib/lessonDataServer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/** Admin fee sheet: one HTTP round-trip for students + lesson/fee bulk data. */
+/** Admin fee sheet: full bootstrap, or month delta when part=month (same year core kept client-side). */
 export async function GET(request: NextRequest) {
   const viewer = await getViewerContext();
   if (!viewer.userId) {
@@ -17,13 +20,18 @@ export async function GET(request: NextRequest) {
 
   const sheetYear = Number(request.nextUrl.searchParams.get("year") ?? "2026");
   const sheetMonth = Number(request.nextUrl.searchParams.get("month") ?? "1");
+  const part = String(request.nextUrl.searchParams.get("part") ?? "full").toLowerCase();
   if (!Number.isFinite(sheetYear) || !Number.isFinite(sheetMonth) || sheetMonth < 1 || sheetMonth > 12) {
     return NextResponse.json({ ok: false, error: "Invalid year or month" }, { status: 400 });
   }
 
   try {
+    if (part === "month") {
+      const payload = await loadFeeRecordMonthDeltaCached(sheetYear, sheetMonth);
+      return NextResponse.json({ ok: true, part: "month", ...payload });
+    }
     const payload = await loadFeeRecordBootstrapCached(sheetYear, sheetMonth);
-    return NextResponse.json({ ok: true, ...payload });
+    return NextResponse.json({ ok: true, part: "full", ...payload });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load fee record data";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
