@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseFeeMonthFromText } from "@/lib/zohoFeeMonthParse";
+import {
+  parseFeeMonthFromText,
+  resolveFeeMonthFromZohoLine,
+  zohoLineItemDescriptionText,
+} from "@/lib/zohoFeeMonthParse";
 
 describe("parseFeeMonthFromText", () => {
   it("parses Chinese months including 10–12", () => {
@@ -16,7 +20,39 @@ describe("parseFeeMonthFromText", () => {
     expect(parseFeeMonthFromText("September course")).toBe(9);
   });
 
+  it("parses Zoho Item Description date lists like Sep 21,28", () => {
+    expect(parseFeeMonthFromText("Sep 21,28")).toBe(9);
+    expect(
+      parseFeeMonthFromText(
+        zohoLineItemDescriptionText({
+          name: "F.6 Math Course",
+          description: "Sep 21,28",
+        }),
+      ),
+    ).toBe(9);
+  });
+
   it("returns null when no month is present", () => {
     expect(parseFeeMonthFromText("F.5 Math Course")).toBeNull();
+  });
+});
+
+describe("resolveFeeMonthFromZohoLine", () => {
+  it("prefers Item & Description over receipt date", () => {
+    expect(
+      resolveFeeMonthFromZohoLine({
+        lineItem: { name: "F.6 Math Course", description: "Sep 21,28" },
+        receiptDateMonth: 8,
+      }),
+    ).toBe(9);
+  });
+
+  it("falls back to receipt date when Item & Description has no month", () => {
+    expect(
+      resolveFeeMonthFromZohoLine({
+        lineItem: { name: "F.6 Math Course", description: "" },
+        receiptDateMonth: 8,
+      }),
+    ).toBe(8);
   });
 });
