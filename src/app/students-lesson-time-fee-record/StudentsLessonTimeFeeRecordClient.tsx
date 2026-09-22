@@ -2107,6 +2107,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                     }
                     disabled={syncingZoho}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="月份以 Zoho Item & Description 為準（例如 Sep 21,28／9月）；對唔到先用開單日期。"
                   >
                     <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
                       <path

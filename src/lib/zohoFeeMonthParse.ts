@@ -40,3 +40,34 @@ export function parseFeeMonthFromText(text: string): number | null {
   if (!en) return null;
   return MONTH_MAP[en[1].toLowerCase()] ?? null;
 }
+
+/** Zoho Books Item & Description fields (name + description line under it). */
+export function zohoLineItemDescriptionText(li: Record<string, unknown>): string {
+  return [
+    li.item_name,
+    li.name,
+    li.description,
+    li.item_description,
+    li.desc,
+  ]
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * Fee month for a tuition line: Item & Description first (e.g. "Sep 21,28" / "9月"),
+ * then receipt notes, then receipt date month as last resort.
+ */
+export function resolveFeeMonthFromZohoLine(params: {
+  lineItem: Record<string, unknown>;
+  receiptNotes?: string;
+  receiptDateMonth?: number | null;
+}): number | null {
+  const fromItem = parseFeeMonthFromText(zohoLineItemDescriptionText(params.lineItem));
+  if (fromItem) return fromItem;
+  const fromNotes = parseFeeMonthFromText(String(params.receiptNotes ?? ""));
+  if (fromNotes) return fromNotes;
+  const fallback = params.receiptDateMonth;
+  return fallback != null && fallback >= 1 && fallback <= 12 ? fallback : null;
+}

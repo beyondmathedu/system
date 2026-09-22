@@ -8,7 +8,10 @@ import {
 } from "@/lib/studentFeeTierSettings";
 import { SCHEDULE_CACHE_TAG_FEE_RECORD } from "@/lib/scheduleCacheTags";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { parseFeeMonthFromText } from "@/lib/zohoFeeMonthParse";
+import {
+  resolveFeeMonthFromZohoLine,
+  zohoLineItemDescriptionText,
+} from "@/lib/zohoFeeMonthParse";
 
 type ZohoSalesReceipt = {
   sales_receipt_id?: string;
@@ -96,10 +99,7 @@ function parseZohoNumber(v: unknown): number {
 }
 
 function lineItemDescriptionText(li: Record<string, unknown>): string {
-  return [li.item_name, li.name, li.description]
-    .map((x) => String(x ?? "").trim())
-    .filter(Boolean)
-    .join(" ");
+  return zohoLineItemDescriptionText(li);
 }
 
 /** F.1–F.6 課程行（含 "Math Course" 或 "F.5 Jul Sat" 等）；排除文具。 */
@@ -598,10 +598,11 @@ export async function POST(request: Request) {
           nonMathGross += lineItemGrossHkd(liRec);
           continue;
         }
-        const text = [li.item_name, li.name, li.description, receiptNotes, JSON.stringify(li)]
-          .map((x) => String(x ?? "").trim())
-          .join(" ");
-        const month = parseFeeMonthFromText(text) ?? receiptMonthFallback;
+        const month = resolveFeeMonthFromZohoLine({
+          lineItem: liRec,
+          receiptNotes,
+          receiptDateMonth: receiptMonthFallback,
+        });
         if (!month) continue;
         parsedMonthLineItems += 1;
         const lessonCount = lineItemLessonCountWithFallback(liRec, receiptNotes);
