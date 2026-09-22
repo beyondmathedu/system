@@ -12,6 +12,7 @@ import {
   resolveFeeMonthFromZohoLine,
   zohoLineItemDescriptionText,
 } from "@/lib/zohoFeeMonthParse";
+import { buildZohoSyncWindow } from "@/lib/zohoSyncWindow";
 
 type ZohoSalesReceipt = {
   sales_receipt_id?: string;
@@ -48,7 +49,7 @@ type SyncRequestBody = {
   month?: number;
   studentIds?: string[];
   idOnly?: boolean;
-  /** When true, sync receipts for the whole calendar year (can overwrite older months). Default: target month ±1. */
+  /** When true, sync receipts for the whole calendar year. Default: 1 Jan → target month + 1. */
   fullYear?: boolean;
 };
 type StudentNameRow = {
@@ -296,27 +297,6 @@ async function getZohoAccessToken(): Promise<string> {
   return String(json.access_token);
 }
 
-function toIsoYmdUtc(d: Date): string {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function buildSyncWindow(
-  year: number,
-  month: number,
-  widenToFullYear: boolean,
-): { dateStart: string; dateEnd: string } {
-  if (widenToFullYear) {
-    return { dateStart: `${year}-01-01`, dateEnd: `${year}-12-31` };
-  }
-  const base = new Date(Date.UTC(year, month - 1, 1));
-  const start = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() - 1, 1));
-  const end = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 2, 0));
-  return { dateStart: toIsoYmdUtc(start), dateEnd: toIsoYmdUtc(end) };
-}
-
 function monthFromReceiptDate(receipt: Record<string, unknown>, targetYear: number): number | null {
   const d = String(receipt.date ?? receipt.receipt_date ?? "").trim();
   const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(d);
@@ -508,11 +488,11 @@ export async function POST(request: Request) {
     }
 
     const accessToken = await getZohoAccessToken();
-    // Only widen to the full calendar year when explicitly requested.
-    // Passing studentIds used to force full-year sync and overwrite older months (e.g. May)
-    // while viewing September — that wiped manual Tuition Paid edits.
+    // Default window: 1 Jan → target month + 1 (see buildZohoSyncWindow).
+    // fullYear still available for an explicit whole-year pull.
+    // Non-target months with existing Tuition Paid stay preserved on upsert.
     const widenWindow = Boolean(body?.fullYear);
-    const { dateStart, dateEnd } = buildSyncWindow(year, targetMonth, widenWindow);
+    const { dateStart, dateEnd } = buildZohoSyncWindow(year, targetMonth, widenWindow);
     const receipts = await fetchAllReceipts(accessToken, orgId, dateStart, dateEnd);
     const maxDetailCalls = 500;
     let detailCalls = 0;
@@ -701,10 +681,11 @@ export async function POST(request: Request) {
       let submitted = amountByStudentMonth.get(key) ?? 0;
       const existingRow = existingMap.get(key);
       const existingAmt = Number(existingRow?.submitted_amount ?? 0) || 0;
-      // Sync window is target ±1 month, so Sep sync can also see May/Jul line items on nearby
-      // receipts and wipe manual Tuition Paid. Only overwrite the sheet month being synced;
-      // for other months, fill empty cells but never clobber a non-zero existing amount.
-      if (month !== targetMonth && existingAmt > 0.005) {
+      // Sheet month always refreshes from Zoho. Other months: fill empty cells, or
+      // refresh when this run parsed Item & Description into that month (so a Jul-dated
+      // receipt with "Aug Fri" can update August while syncing September). Preserve
+      // non-zero amounts only when Zoho did not touch that month in this run.
+      if (month !== targetMonth && existingAmt > 0.005 && !zohoMatchedKeys.has(key)) {
         skippedPreserveExisting.push(`${student_id}:${month}:keep$${existingAmt}`);
         continue;
       }
