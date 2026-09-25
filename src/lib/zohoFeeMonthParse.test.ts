@@ -16,6 +16,8 @@ describe("parseFeeMonthFromText", () => {
 
   it("parses English month names", () => {
     expect(parseFeeMonthFromText("F.5 Aug Sat")).toBe(8);
+    expect(parseFeeMonthFromText("Jul 31")).toBe(7);
+    expect(parseFeeMonthFromText("Aug Fri")).toBe(8);
     expect(parseFeeMonthFromText("May tuition")).toBe(5);
     expect(parseFeeMonthFromText("September course")).toBe(9);
   });
@@ -45,6 +47,21 @@ describe("resolveFeeMonthFromZohoLine", () => {
         receiptDateMonth: 8,
       }),
     ).toBe(9);
+  });
+
+  it("splits Jul/Aug lines on a July-dated receipt (SR-01239 style)", () => {
+    expect(
+      resolveFeeMonthFromZohoLine({
+        lineItem: { name: "F.4 Math Course", description: "Jul 31" },
+        receiptDateMonth: 7,
+      }),
+    ).toBe(7);
+    expect(
+      resolveFeeMonthFromZohoLine({
+        lineItem: { name: "F.4 Math Course", description: "Aug Fri" },
+        receiptDateMonth: 7,
+      }),
+    ).toBe(8);
   });
 
   it("falls back to receipt date when Item & Description has no month", () => {

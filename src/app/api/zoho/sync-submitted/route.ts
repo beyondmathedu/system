@@ -49,7 +49,7 @@ type SyncRequestBody = {
   month?: number;
   studentIds?: string[];
   idOnly?: boolean;
-  /** When true, sync receipts for the whole calendar year. Default: 1 Jan → target month + 1. */
+  /** When false, use 1 Jan → target month + 1. Default / UI Sync: whole calendar year. */
   fullYear?: boolean;
 };
 type StudentNameRow = {
@@ -488,13 +488,12 @@ export async function POST(request: Request) {
     }
 
     const accessToken = await getZohoAccessToken();
-    // Default window: 1 Jan → target month + 1 (see buildZohoSyncWindow).
-    // fullYear still available for an explicit whole-year pull.
-    // Non-target months with existing Tuition Paid stay preserved on upsert.
-    const widenWindow = Boolean(body?.fullYear);
+    // Default / UI Sync: full calendar year so Jul-dated "Aug Fri" lines are always included.
+    // fullYear:false keeps the shorter 1 Jan → target+1 window.
+    const widenWindow = body?.fullYear !== false;
     const { dateStart, dateEnd } = buildZohoSyncWindow(year, targetMonth, widenWindow);
     const receipts = await fetchAllReceipts(accessToken, orgId, dateStart, dateEnd);
-    const maxDetailCalls = 500;
+    const maxDetailCalls = widenWindow ? 2000 : 500;
     let detailCalls = 0;
     let skippedDetailByLimit = 0;
     let detailFetchSuccess = 0;
@@ -512,6 +511,13 @@ export async function POST(request: Request) {
     let detailFetchPreDiscount = 0;
     const zohoMatchedKeys = new Set<string>();
     const zohoMissingNetKeys = new Set<string>();
+    /** Student IDs that matched ≥1 receipt this run — rebuild their year from Zoho. */
+    const touchedStudentIds = new Set<string>();
+    /**
+     * Receipt-date months that got no tuition lines after Item & Description parsing
+     * (e.g. Jul-dated receipt whose only line is "Aug Fri"). Clear stale paid cells.
+     */
+    const staleReceiptDateKeys = new Set<string>();
 
     const matchedReceipts: Array<{ receipt: ZohoSalesReceipt; studentId: string }> = [];
     for (const r of receipts) {
@@ -526,6 +532,7 @@ export async function POST(request: Request) {
         unmatchedReceipts += 1;
         continue;
       }
+      touchedStudentIds.add(studentId);
       matchedReceipts.push({ receipt: r, studentId });
     }
 
@@ -596,6 +603,13 @@ export async function POST(request: Request) {
         zohoMatchedKeys.add(`${studentId}:${month}`);
       }
 
+      if (parsed.length > 0 && receiptMonthFallback) {
+        const resolvedMonths = new Set(parsed.map((row) => row.month));
+        if (!resolvedMonths.has(receiptMonthFallback)) {
+          staleReceiptDateKeys.add(`${studentId}:${receiptMonthFallback}`);
+        }
+      }
+
       const totalGross = parsed.reduce((s, r) => s + r.gross, 0);
       const totalNet = parsed.reduce((s, r) => s + r.net, 0);
       const mathOnlyNet =
@@ -627,8 +641,10 @@ export async function POST(request: Request) {
 
     const studentIds = Array.from(
       new Set([
+        ...Array.from(touchedStudentIds),
         ...Array.from(lessonsByStudentMonth.keys()).map((k) => k.split(":")[0]),
         ...Array.from(amountByStudentMonth.keys()).map((k) => k.split(":")[0]),
+        ...Array.from(staleReceiptDateKeys).map((k) => k.split(":")[0]),
       ]),
     );
     const { data: existing } = studentIds.length
@@ -662,6 +678,24 @@ export async function POST(request: Request) {
       });
     }
 
+    // Revisit paid months Zoho no longer attributes for matched students (full-year),
+    // or receipt-date months emptied by Item & Description (narrow window).
+    if (widenWindow) {
+      for (const [key, row] of existingMap) {
+        const sid = key.split(":")[0] ?? "";
+        if (!touchedStudentIds.has(sid)) continue;
+        if (zohoMatchedKeys.has(key)) continue;
+        if ((row.submitted_amount ?? 0) > 0.005) {
+          lessonsByStudentMonth.set(key, lessonsByStudentMonth.get(key) ?? 0);
+        }
+      }
+    } else {
+      for (const key of staleReceiptDateKeys) {
+        if (zohoMatchedKeys.has(key)) continue;
+        lessonsByStudentMonth.set(key, lessonsByStudentMonth.get(key) ?? 0);
+      }
+    }
+
     const upserts: Array<{
       student_id: string;
       year: number;
@@ -670,9 +704,11 @@ export async function POST(request: Request) {
       submitted_lesson_count: number | null;
     }> = [];
     const skippedPreserveExisting: string[] = [];
+    const clearedStaleMonths: string[] = [];
     const allKeys = new Set([
       ...Array.from(lessonsByStudentMonth.keys()),
       ...Array.from(amountByStudentMonth.keys()),
+      ...Array.from(staleReceiptDateKeys),
     ]);
     for (const key of allKeys) {
       const [student_id, mStr] = key.split(":");
@@ -681,16 +717,23 @@ export async function POST(request: Request) {
       let submitted = amountByStudentMonth.get(key) ?? 0;
       const existingRow = existingMap.get(key);
       const existingAmt = Number(existingRow?.submitted_amount ?? 0) || 0;
-      // Sheet month always refreshes from Zoho. Other months: fill empty cells, or
-      // refresh when this run parsed Item & Description into that month (so a Jul-dated
-      // receipt with "Aug Fri" can update August while syncing September). Preserve
-      // non-zero amounts only when Zoho did not touch that month in this run.
-      if (month !== targetMonth && existingAmt > 0.005 && !zohoMatchedKeys.has(key)) {
+      const touched = touchedStudentIds.has(student_id);
+      const zohoTouchedMonth = zohoMatchedKeys.has(key);
+      // Sheet month always refreshes from Zoho. Full-year sync also clears paid months
+      // for matched students that Zoho no longer attributes (fixes Jul swallowing Aug).
+      // Otherwise preserve non-zero amounts when Zoho did not touch that month.
+      if (
+        month !== targetMonth &&
+        existingAmt > 0.005 &&
+        !zohoTouchedMonth &&
+        !(widenWindow && touched) &&
+        !staleReceiptDateKeys.has(key)
+      ) {
         skippedPreserveExisting.push(`${student_id}:${month}:keep$${existingAmt}`);
         continue;
       }
       if (submitted <= 0 && lessonCount > 0) {
-        if (zohoMatchedKeys.has(key)) {
+        if (zohoTouchedMonth) {
           continue;
         }
         const gradeFor = gradeForFeePricing(
@@ -705,7 +748,22 @@ export async function POST(request: Request) {
             sumSlotTuitionHkdByLessonCount({ lessonCount, gradeFor, feeTierSettings: tier }) * 100,
           ) / 100;
       }
-      if (submitted <= 0 && lessonCount <= 0) continue;
+      if (submitted <= 0 && lessonCount <= 0) {
+        const clearPaid =
+          existingAmt > 0.005 &&
+          (staleReceiptDateKeys.has(key) || (widenWindow && touched));
+        const clearSheetMonth = month === targetMonth;
+        if (!clearPaid && !clearSheetMonth) continue;
+        if (clearPaid) clearedStaleMonths.push(`${student_id}:${month}:was$${existingAmt}`);
+        upserts.push({
+          student_id,
+          year,
+          month,
+          submitted_amount: 0,
+          submitted_lesson_count: null,
+        });
+        continue;
+      }
       upserts.push({
         student_id,
         year,
@@ -767,8 +825,12 @@ export async function POST(request: Request) {
         detailFetchPreDiscount,
         zohoMatchedKeys: zohoMatchedKeys.size,
         zohoMissingNetKeys: zohoMissingNetKeys.size,
+        touchedStudents: touchedStudentIds.size,
+        fullYearRebuild: widenWindow,
         preservedExistingMonths: skippedPreserveExisting.length,
         preservedExistingSamples: skippedPreserveExisting.slice(0, 8),
+        clearedStaleMonths: clearedStaleMonths.length,
+        clearedStaleSamples: clearedStaleMonths.slice(0, 8),
         tierAmountSamples: upserts.slice(0, 5).map((row) => {
           const lessons = row.submitted_lesson_count ?? 0;
           return `${row.student_id}:${row.month}:${lessons}堂=$${row.submitted_amount}`;
