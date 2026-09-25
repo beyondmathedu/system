@@ -495,7 +495,8 @@ function isSpecialArrearsRow(row: MonthlyArrearsRow): boolean {
 }
 
 function isOpenArrearsRow(row: MonthlyArrearsRow): boolean {
-  if (row.key === "adjustment") return false;
+  // 調整／優惠（如二人同行）要留在「只看尚欠」，否則明細紅字加總會同底部總結對唔上。
+  if (row.key === "adjustment") return Math.abs(row.outstanding) >= 0.005;
   return Math.abs(row.outstanding) >= 0.005 || isSpecialArrearsRow(row);
 }
 
@@ -512,7 +513,6 @@ const PAIR_DISCOUNT_PRESET_REASON = "二人同行";
 
 function FeeArrearsDetailTable({
   rows,
-  totalOutstanding,
   balanceDueRemarks,
   onBalanceDueRemarksChange,
   adjustmentAmount,
@@ -520,7 +520,6 @@ function FeeArrearsDetailTable({
   onAdjustmentChange,
 }: {
   rows: MonthlyArrearsRow[];
-  totalOutstanding: number;
   balanceDueRemarks: string;
   onBalanceDueRemarksChange: (value: string) => void;
   adjustmentAmount: number;
@@ -543,6 +542,12 @@ function FeeArrearsDetailTable({
     () => (showAllMonths ? rows : rows.filter(isOpenArrearsRow)),
     [rows, showAllMonths],
   );
+  /** 同表內各行「尚欠」加總（含調整／優惠），避免只顯示 Total Due − 本月已繳而同明細唔同。 */
+  const rowsOutstandingSum = useMemo(
+    () => rows.reduce((sum, row) => sum + (Number(row.outstanding) || 0), 0),
+    [rows],
+  );
+  const summaryOutstanding = rowsOutstandingSum;
   const yearCount = useMemo(() => {
     const years = new Set<string>();
     for (const row of rows) {
@@ -654,13 +659,13 @@ function FeeArrearsDetailTable({
       <div className="rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-800">
         <p className="font-bold text-slate-900">
           總結尚欠總額：$
-          <span className="tabular-nums">{formatHkMoneyAmount(Math.max(0, totalOutstanding))}</span>
+          <span className="tabular-nums">{formatHkMoneyAmount(Math.max(0, summaryOutstanding))}</span>
         </p>
-        {totalOutstanding < -0.005 ? (
+        {summaryOutstanding < -0.005 ? (
           <p className="mt-1 text-emerald-800">
-            多繳 ${formatHkMoneyAmount(-totalOutstanding)}，可留待下次抵扣。
+            多繳 ${formatHkMoneyAmount(-summaryOutstanding)}，可留待下次抵扣。
           </p>
-        ) : totalOutstanding <= 0.005 ? (
+        ) : summaryOutstanding <= 0.005 ? (
           <p className="mt-1 text-slate-600">各月已結清。</p>
         ) : null}
       </div>
@@ -2639,10 +2644,6 @@ export default function StudentsLessonTimeFeeRecordPage({
               {feeDetailDialog.kind === "arrears" ? (
                 <FeeArrearsDetailTable
                   rows={monthlyArrearsRowsForDialog}
-                  totalOutstanding={
-                    (Number(totalDueByStudentId[feeDetailDialog.studentId] ?? 0) || 0) -
-                    (Number(recordsByStudentId[feeDetailDialog.studentId]?.submitted ?? 0) || 0)
-                  }
                   balanceDueRemarks={recordsByStudentId[feeDetailDialog.studentId]?.balanceDueRemarks ?? ""}
                   onBalanceDueRemarksChange={(value) =>
                     onBalanceDueRemarksChange(feeDetailDialog.studentId, value)
