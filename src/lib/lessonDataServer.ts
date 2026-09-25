@@ -906,7 +906,7 @@ function loadFeeYearCoreCached(sheetYear: number): Promise<FeeRecordYearCore> {
   const y = Math.floor(sheetYear);
   return unstable_cache(
     () => loadFeeYearCoreUncached(y),
-    ["fee-year-core-v1", String(y)],
+    ["fee-year-core-v2", String(y)],
     { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
   )();
 }
@@ -923,7 +923,7 @@ function loadFeeMonthPartCached(sheetYear: number, sheetMonth: number): Promise<
         yearCore.students.map((s) => s.id),
       );
     },
-    ["fee-month-rows-v1", String(y), String(m)],
+    ["fee-month-rows-v2", String(y), String(m)],
     { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
   )();
 }

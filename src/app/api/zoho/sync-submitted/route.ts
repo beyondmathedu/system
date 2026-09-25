@@ -713,6 +713,7 @@ export async function POST(request: Request) {
       month: number;
       submitted_amount: number;
       submitted_lesson_count: number | null;
+      updated_at: string;
     }> = [];
     const skippedPreserveExisting: string[] = [];
     const clearedStaleMonths: string[] = [];
@@ -721,6 +722,7 @@ export async function POST(request: Request) {
       ...Array.from(amountByStudentMonth.keys()),
       ...Array.from(staleReceiptDateKeys),
     ]);
+    const nowIso = new Date().toISOString();
     for (const key of allKeys) {
       const [student_id, mStr] = key.split(":");
       const month = Number(mStr);
@@ -772,6 +774,7 @@ export async function POST(request: Request) {
           month,
           submitted_amount: 0,
           submitted_lesson_count: null,
+          updated_at: nowIso,
         });
         continue;
       }
@@ -781,6 +784,7 @@ export async function POST(request: Request) {
         month,
         submitted_amount: Math.round(submitted * 100) / 100,
         submitted_lesson_count: lessonCount > 0 ? lessonCount : null,
+        updated_at: nowIso,
       });
     }
 
