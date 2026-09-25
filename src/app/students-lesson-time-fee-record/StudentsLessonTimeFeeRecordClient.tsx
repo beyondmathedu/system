@@ -490,7 +490,7 @@ function FeeMakeupDetailPanel({
 }
 
 function isSpecialArrearsRow(row: MonthlyArrearsRow): boolean {
-  // 期初結餘仍在「只看尚欠」顯示；二人同行／調整只在「全部月份」出現。
+  // 期初結餘仍在「只看尚欠」顯示；二人同行／調整有金額時也會顯示，方便同總結對賬。
   return row.key === "opening";
 }
 

@@ -91,12 +91,24 @@ function studentIdFromBillToCode(code: string, studentIdSet: Set<string>): strin
   return null;
 }
 
-/** Zoho 行 quantity＝已繳堂數（括號提示）；Total HKD（item_total 等）＝ Tuition Paid 金額。 */
+/** Zoho 行 quantity＝已繳堂數（括號提示）；UI Amount 欄（item_total / amount）＝ Tuition Paid。 */
 function parseZohoNumber(v: unknown): number {
   if (v == null) return NaN;
   if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
   const x = parseFloat(String(v).replace(/,/g, ""));
   return Number.isFinite(x) ? x : NaN;
+}
+
+/**
+ * Zoho Books line "Amount" column — prefer this over rate×qty / receipt-level
+ * discount allocation so Tuition Paid matches what staff see on the receipt.
+ */
+function lineItemAmountHkd(li: Record<string, unknown>): number {
+  for (const key of ["item_total", "amount", "bcy_amount", "line_item_total"]) {
+    const n = parseZohoNumber(li[key]);
+    if (Number.isFinite(n) && n > 0) return Math.round(n * 100) / 100;
+  }
+  return 0;
 }
 
 function lineItemDescriptionText(li: Record<string, unknown>): string {
@@ -230,34 +242,37 @@ function receiptTotalHkd(receipt: Record<string, unknown>): number {
   return 0;
 }
 
-/** Line gross before receipt-level discount (rate×qty preferred). */
+/** Line gross before receipt-level discount (Amount column, else rate×qty). */
 function lineItemGrossHkd(li: Record<string, unknown>): number {
+  const fromAmount = lineItemAmountHkd(li);
+  if (fromAmount > 0) return fromAmount;
   const rate = parseZohoNumber(li.rate);
   const qty = parseZohoNumber(li.quantity);
   if (Number.isFinite(rate) && Number.isFinite(qty) && rate > 0 && qty > 0) {
     return Math.round(rate * qty * 100) / 100;
   }
-  for (const key of ["item_total", "line_item_total", "amount", "bcy_amount"]) {
-    const n = parseZohoNumber(li[key]);
-    if (Number.isFinite(n) && n > 0) return Math.round(n * 100) / 100;
-  }
   return 0;
 }
 
-/** Line net after line-level discount (item_total may be less than rate×qty). */
+/**
+ * Line net for Tuition Paid: always prefer Zoho Amount column.
+ * Receipt-level discounts (e.g. 二人同行) are tracked separately as balance
+ * adjustments — do not scale Amount down here or paid will diverge from the receipt.
+ */
 function lineItemNetHkd(li: Record<string, unknown>): number {
-  const gross = lineItemGrossHkd(li);
-  for (const key of ["item_total", "item_total_inclusive_of_tax", "line_item_total", "bcy_amount"]) {
-    const n = parseZohoNumber(li[key]);
-    if (Number.isFinite(n) && n > 0 && gross > 0 && n + 0.005 < gross) {
-      return Math.round(n * 100) / 100;
+  const fromAmount = lineItemAmountHkd(li);
+  if (fromAmount > 0) return fromAmount;
+  const rate = parseZohoNumber(li.rate);
+  const qty = parseZohoNumber(li.quantity);
+  if (Number.isFinite(rate) && Number.isFinite(qty) && rate > 0 && qty > 0) {
+    const gross = Math.round(rate * qty * 100) / 100;
+    const discount = parseZohoNumber(li.discount_amount ?? li.discount);
+    if (Number.isFinite(discount) && discount > 0 && gross > discount) {
+      return Math.round((gross - discount) * 100) / 100;
     }
+    return gross;
   }
-  const discount = parseZohoNumber(li.discount_amount ?? li.discount);
-  if (Number.isFinite(discount) && discount > 0 && gross > discount) {
-    return Math.round((gross - discount) * 100) / 100;
-  }
-  return gross;
+  return 0;
 }
 
 function lineItemLessonCountWithFallback(li: Record<string, unknown>, receiptNotes: string): number {
@@ -610,7 +625,6 @@ export async function POST(request: Request) {
         }
       }
 
-      const totalGross = parsed.reduce((s, r) => s + r.gross, 0);
       const totalNet = parsed.reduce((s, r) => s + r.net, 0);
       const mathOnlyNet =
         receiptNet > 0 ? Math.max(0, Math.round((receiptNet - nonMathGross) * 100) / 100) : 0;
@@ -620,13 +634,10 @@ export async function POST(request: Request) {
         }
       }
 
+      // Tuition Paid = each line's Amount. Do not scale by receipt Total: header
+      // discounts like 二人同行 are stored as balance adjustments separately.
       for (const row of parsed) {
-        let paid = row.net;
-        if (paid + 0.005 >= row.gross && mathOnlyNet > 0 && totalGross > 0 && mathOnlyNet + 0.005 < totalGross) {
-          paid = Math.round((row.gross / totalGross) * mathOnlyNet * 100) / 100;
-        } else if (paid + 0.005 >= row.gross && totalNet + 0.005 < totalGross) {
-          paid = row.net;
-        }
+        const paid = row.net;
         const key = `${studentId}:${row.month}`;
         if (row.lessonCount > 0) {
           lessonsByStudentMonth.set(key, (lessonsByStudentMonth.get(key) ?? 0) + row.lessonCount);
