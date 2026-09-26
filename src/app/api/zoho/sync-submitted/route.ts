@@ -17,10 +17,14 @@ import { buildZohoSyncWindow } from "@/lib/zohoSyncWindow";
 type ZohoSalesReceipt = {
   sales_receipt_id?: string;
   salesreceipt_id?: string;
+  date?: string;
+  receipt_date?: string;
   customer_id?: string;
   customer_name?: string;
   customer_name_formatted?: string;
   company_name?: string;
+  notes?: string;
+  note?: string;
   line_items?: Array<{
     name?: string;
     item_name?: string;
@@ -306,6 +310,18 @@ function monthFromReceiptDate(receipt: Record<string, unknown>, targetYear: numb
   return mo >= 1 && mo <= 12 ? mo : null;
 }
 
+/** Smaller = closer to the fee sheet month (used to prioritize Zoho detail fetches). */
+function receiptMonthDistance(
+  receipt: { date?: string; receipt_date?: string },
+  year: number,
+  targetMonth: number,
+): number {
+  const d = String(receipt.date ?? receipt.receipt_date ?? "").trim();
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(d);
+  if (!m) return 10_000;
+  return Math.abs((Number(m[1]) - year) * 12 + (Number(m[2]) - targetMonth));
+}
+
 async function fetchAllReceipts(
   accessToken: string,
   orgId: string,
@@ -494,7 +510,6 @@ export async function POST(request: Request) {
     const widenWindow = Boolean(body?.fullYear);
     const { dateStart, dateEnd } = buildZohoSyncWindow(year, targetMonth, widenWindow);
     const receipts = await fetchAllReceipts(accessToken, orgId, dateStart, dateEnd);
-    const maxDetailCalls = 500;
     let detailCalls = 0;
     let skippedDetailByLimit = 0;
     let detailFetchSuccess = 0;
@@ -529,6 +544,16 @@ export async function POST(request: Request) {
       matchedReceipts.push({ receipt: r, studentId });
     }
 
+    // List API returns no line items; detail fetches are capped. Prefer receipts near the
+    // sheet month so a Jul-dated "Aug Fri" bill is not starved by Jan stationery receipts.
+    matchedReceipts.sort((a, b) => {
+      const da = receiptMonthDistance(a.receipt, year, targetMonth);
+      const db = receiptMonthDistance(b.receipt, year, targetMonth);
+      if (da !== db) return da - db;
+      return String(b.receipt.date ?? "").localeCompare(String(a.receipt.date ?? ""));
+    });
+
+    const maxDetailCalls = 2500;
     const withItems = await mapWithConcurrency(matchedReceipts, 8, async ({ receipt, studentId }) => {
       let activeReceipt: Record<string, unknown> = receipt as Record<string, unknown>;
       let lineItems = pickLineItems(receipt);
