@@ -1489,7 +1489,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     setSyncNotice("");
     try {
       let detailOffset = 0;
-      const detailBatchSize = 100;
+      const detailBatchSize = 60;
       let totalFetched = 0;
       let totalSynced = 0;
       let totalUnmatched = 0;
@@ -1551,9 +1551,11 @@ export default function StudentsLessonTimeFeeRecordPage({
         }
 
         const nextOffset = Number(json.nextDetailOffset ?? detailOffset + detailBatchSize) || 0;
-        const done = Boolean(json.syncDone) || nextOffset >= matchedTotal || batches > 40;
+        const done = Boolean(json.syncDone) || nextOffset >= matchedTotal || batches > 50;
         detailOffset = nextOffset;
         if (done) break;
+        // Pace Zoho detail calls — org limit is 1000/day.
+        await new Promise((r) => window.setTimeout(r, 400));
       }
 
       if (Object.keys(mergedByStudentMonth).length > 0) {
@@ -2137,7 +2139,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                     }
                     disabled={syncingZoho}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    title="同步全年 Zoho receipts（全部學生）。月份以 Item & Description 為準（例如 Aug／9月）。可能需 1–3 分鐘。"
+                    title="按 Zoho Item & Description 認月份、Amount 寫已繳；分批同步全部學生。"
                   >
                     <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
                       <path
@@ -2150,6 +2152,50 @@ export default function StudentsLessonTimeFeeRecordPage({
                       />
                     </svg>
                     {syncingZoho ? "Syncing..." : "Sync Zoho Receipts"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        setSyncingZoho(true);
+                        setSyncNotice("Importing Excel tuition paid…");
+                        try {
+                          const resp = await fetch("/api/students-lesson-fee-record/import-excel", {
+                            method: "POST",
+                            credentials: "same-origin",
+                          });
+                          const json = (await resp.json()) as {
+                            ok?: boolean;
+                            error?: string;
+                            upserted?: number;
+                            unmatchedCount?: number;
+                            unmatchedExamples?: string[];
+                          };
+                          if (!resp.ok || !json.ok) throw new Error(json.error ?? "import_failed");
+                          setSyncNotice(
+                            `Excel imported: updated ${Number(json.upserted ?? 0)} month cells` +
+                              (json.unmatchedCount
+                                ? `; ${json.unmatchedCount} names unmatched` +
+                                  (json.unmatchedExamples?.length
+                                    ? ` (${json.unmatchedExamples.join(", ")})`
+                                    : "")
+                                : "") +
+                              ".",
+                          );
+                          await revalidateScheduleCachesNow();
+                          window.location.reload();
+                        } catch (e: unknown) {
+                          setSyncNotice(`Excel import failed: ${e instanceof Error ? e.message : String(e)}`);
+                        } finally {
+                          setSyncingZoho(false);
+                        }
+                      })();
+                    }}
+                    disabled={syncingZoho}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="用 data/tuition-fee-record-2026.xlsx（Tution Fee Record2026）覆寫 May–Dec 已繳，對齊人手真數目。"
+                  >
+                    Import Excel Paid
                   </button>
                 </div>
                 <div

@@ -56,8 +56,9 @@ export function zohoLineItemDescriptionText(li: Record<string, unknown>): string
 }
 
 /**
- * Fee month for a tuition line: Item & Description first (e.g. "Sep 21,28" / "9月"),
- * then receipt notes, then receipt date month as last resort.
+ * Fee month for a tuition line: **only** Item & Description (and receipt notes).
+ * Do not fall back to receipt date — that mis-attributes e.g. Sep-dated "Aug" lines
+ * into September and makes monthly paid diverge from Zoho Amount by description month.
  */
 export function resolveFeeMonthFromZohoLine(params: {
   lineItem: Record<string, unknown>;
@@ -68,6 +69,5 @@ export function resolveFeeMonthFromZohoLine(params: {
   if (fromItem) return fromItem;
   const fromNotes = parseFeeMonthFromText(String(params.receiptNotes ?? ""));
   if (fromNotes) return fromNotes;
-  const fallback = params.receiptDateMonth;
-  return fallback != null && fallback >= 1 && fallback <= 12 ? fallback : null;
+  return null;
 }

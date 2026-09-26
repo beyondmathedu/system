@@ -542,6 +542,7 @@ export async function POST(request: Request) {
     let totalLineItems = 0;
     let skippedZeroQuantity = 0;
     let skippedNonCourseLineItems = 0;
+    let skippedNoMonthLineItems = 0;
     let detailFetchPreDiscount = 0;
     const zohoMatchedKeys = new Set<string>();
     const zohoMissingNetKeys = new Set<string>();
@@ -582,7 +583,7 @@ export async function POST(request: Request) {
     const batching = body?.detailOffset != null || body?.detailBatchSize != null;
     const detailOffset = batching ? Math.max(0, Math.floor(Number(body?.detailOffset ?? 0)) || 0) : 0;
     const detailBatchSize = batching
-      ? Math.min(250, Math.max(40, Math.floor(Number(body?.detailBatchSize ?? 120)) || 120))
+      ? Math.min(80, Math.max(30, Math.floor(Number(body?.detailBatchSize ?? 60)) || 60))
       : matchedReceipts.length;
     const batchReceipts = matchedReceipts.slice(detailOffset, detailOffset + detailBatchSize);
     const nextDetailOffset = detailOffset + batchReceipts.length;
@@ -663,8 +664,8 @@ export async function POST(request: Request) {
       type ParsedLine = { month: number; lessonCount: number; gross: number; net: number };
       const parsed: ParsedLine[] = [];
       let nonMathGross = 0;
-      const receiptMonthFallback = monthFromReceiptDate(activeReceipt, year);
       const receiptNotes = String(activeReceipt.notes ?? activeReceipt.note ?? "");
+      const receiptMonthFallback = monthFromReceiptDate(activeReceipt, year);
 
       for (const li of lineItems) {
         totalLineItems += 1;
@@ -674,14 +675,18 @@ export async function POST(request: Request) {
           nonMathGross += lineItemGrossHkd(liRec);
           continue;
         }
+        // Month ONLY from Item & Description (or receipt notes) — never receipt date.
         const month = resolveFeeMonthFromZohoLine({
           lineItem: liRec,
           receiptNotes,
-          receiptDateMonth: receiptMonthFallback,
         });
-        if (!month) continue;
+        if (!month) {
+          skippedNoMonthLineItems += 1;
+          continue;
+        }
         parsedMonthLineItems += 1;
         const lessonCount = lineItemLessonCountWithFallback(liRec, receiptNotes);
+        // Tuition Paid = Zoho Amount column (not receipt Total / discount allocation).
         const gross = lineItemGrossHkd(liRec);
         const net = lineItemNetHkd(liRec);
         if (lessonCount <= 0 && gross <= 0 && net <= 0) {
@@ -692,6 +697,8 @@ export async function POST(request: Request) {
         zohoMatchedKeys.add(`${studentId}:${month}`);
       }
 
+      // If every tuition line landed on a different month than the receipt date,
+      // mark receipt-date month stale so full-year rebuild can clear wrong cells.
       if (parsed.length > 0 && receiptMonthFallback) {
         const resolvedMonths = new Set(parsed.map((row) => row.month));
         if (!resolvedMonths.has(receiptMonthFallback)) {
@@ -939,6 +946,7 @@ export async function POST(request: Request) {
         parsedMonthLineItems,
         skippedZeroQuantity,
         skippedNonCourseLineItems,
+        skippedNoMonthLineItems,
         detailFetchPreDiscount,
         zohoMatchedKeys: zohoMatchedKeys.size,
         zohoMissingNetKeys: zohoMissingNetKeys.size,

@@ -64,11 +64,20 @@ describe("resolveFeeMonthFromZohoLine", () => {
     ).toBe(8);
   });
 
-  it("falls back to receipt date when Item & Description has no month", () => {
+  it("does not fall back to receipt date when Item & Description has no month", () => {
     expect(
       resolveFeeMonthFromZohoLine({
         lineItem: { name: "F.6 Math Course", description: "" },
         receiptDateMonth: 8,
+      }),
+    ).toBeNull();
+  });
+
+  it("uses plain Aug description on a September-dated receipt (SR-01564 style)", () => {
+    expect(
+      resolveFeeMonthFromZohoLine({
+        lineItem: { name: "F.5 Math Course", description: "Aug" },
+        receiptDateMonth: 9,
       }),
     ).toBe(8);
   });
