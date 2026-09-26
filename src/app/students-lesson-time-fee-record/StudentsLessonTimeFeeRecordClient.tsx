@@ -1489,7 +1489,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     setSyncNotice("");
     try {
       const ctl = new AbortController();
-      const timeout = window.setTimeout(() => ctl.abort(), 90000);
+      const timeout = window.setTimeout(() => ctl.abort(), 180000);
       const resp = await fetch("/api/zoho/sync-submitted", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1574,7 +1574,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("aborted")) {
-        setSyncNotice("Sync timed out (>90s). Please try again. The system now syncs in batches, and the next attempt is usually faster.");
+        setSyncNotice("Sync timed out (>180s). Please try again with a narrower grade/search filter so fewer students sync at once.");
       } else {
         setSyncNotice(`Sync failed: ${msg}`);
       }
