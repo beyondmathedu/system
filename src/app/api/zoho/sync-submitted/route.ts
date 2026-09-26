@@ -928,8 +928,13 @@ export async function POST(request: Request) {
       fetchedReceipts: receipts.length,
       syncedRows: upserts.length,
       unmatchedReceipts,
+      detailOffset,
+      nextDetailOffset,
+      matchedReceiptTotal: matchedReceipts.length,
+      syncDone,
       debug: {
         matchedReceipts: matchedReceipts.length,
+        batchSize: batchReceipts.length,
         totalLineItems,
         parsedMonthLineItems,
         skippedZeroQuantity,

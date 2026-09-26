@@ -1488,57 +1488,88 @@ export default function StudentsLessonTimeFeeRecordPage({
     setSyncingZoho(true);
     setSyncNotice("");
     try {
-      const ctl = new AbortController();
-      const timeout = window.setTimeout(() => ctl.abort(), 180000);
-      const resp = await fetch("/api/zoho/sync-submitted", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          year: sheetYear,
-          month: Number(sheetMonth),
-          studentIds: opts?.studentIds,
-          idOnly: Boolean(opts?.idOnly),
-        }),
-        signal: ctl.signal,
-      });
-      window.clearTimeout(timeout);
-      const json = await resp.json();
-      if (!resp.ok || !json?.ok) {
-        throw new Error(String(json?.error ?? "sync_failed"));
+      let detailOffset = 0;
+      const detailBatchSize = 100;
+      let totalFetched = 0;
+      let totalSynced = 0;
+      let totalUnmatched = 0;
+      let matchedTotal = 0;
+      let batches = 0;
+      let lastJson: Record<string, unknown> | null = null;
+      const mergedByStudentMonth: Record<string, Record<number, number>> = {};
+      const mergedMonthMap: Record<string, number> = {};
+      const mergedLessonCountMap: Record<string, number> = {};
+
+      while (true) {
+        batches += 1;
+        setSyncNotice(
+          matchedTotal > 0
+            ? `Syncing Zoho… batch ${batches} (${Math.min(detailOffset, matchedTotal)}/${matchedTotal} receipts)`
+            : `Syncing Zoho… batch ${batches}`,
+        );
+        const ctl = new AbortController();
+        const timeout = window.setTimeout(() => ctl.abort(), 120000);
+        const resp = await fetch("/api/zoho/sync-submitted", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            year: sheetYear,
+            month: Number(sheetMonth),
+            studentIds: opts?.studentIds,
+            idOnly: Boolean(opts?.idOnly),
+            detailOffset,
+            detailBatchSize,
+          }),
+          signal: ctl.signal,
+        });
+        window.clearTimeout(timeout);
+        const json = (await resp.json()) as Record<string, unknown>;
+        lastJson = json;
+        if (!resp.ok || !json?.ok) {
+          throw new Error(String(json?.error ?? "sync_failed"));
+        }
+
+        totalFetched = Math.max(totalFetched, Number(json.fetchedReceipts ?? 0) || 0);
+        totalSynced += Number(json.syncedRows ?? 0) || 0;
+        totalUnmatched = Number(json.unmatchedReceipts ?? 0) || 0;
+        matchedTotal = Number(json.matchedReceiptTotal ?? 0) || matchedTotal;
+
+        const monthMap = (json.monthSubmittedByStudentId ?? {}) as Record<string, number>;
+        const lessonCountMap = (json.monthSubmittedLessonCountByStudentId ?? {}) as Record<string, number>;
+        const byStudentMonth = (json.submittedByStudentMonth ?? {}) as Record<
+          string,
+          Record<number, number>
+        >;
+        for (const [sid, months] of Object.entries(byStudentMonth)) {
+          mergedByStudentMonth[sid] = { ...(mergedByStudentMonth[sid] ?? {}), ...months };
+        }
+        for (const [sid, submitted] of Object.entries(monthMap)) {
+          mergedMonthMap[sid] = Number(submitted) || 0;
+        }
+        for (const [sid, lessonCount] of Object.entries(lessonCountMap)) {
+          mergedLessonCountMap[sid] = Number(lessonCount) || 0;
+        }
+
+        const nextOffset = Number(json.nextDetailOffset ?? detailOffset + detailBatchSize) || 0;
+        const done = Boolean(json.syncDone) || nextOffset >= matchedTotal || batches > 40;
+        detailOffset = nextOffset;
+        if (done) break;
       }
-      const debug = (json?.debug ?? {}) as {
-        matchedReceipts?: number;
-        totalLineItems?: number;
-        parsedMonthLineItems?: number;
-        detailCalls?: number;
-        skippedDetailByLimit?: number;
-        detailFetchSuccess?: number;
-        detailFetchEmpty?: number;
-        detailFetchError?: number;
-        detailErrorSamples?: string[];
-        preservedExistingMonths?: number;
-        preservedExistingSamples?: string[];
-      };
-      const monthMap = (json?.monthSubmittedByStudentId ?? {}) as Record<string, number>;
-      const lessonCountMap = (json?.monthSubmittedLessonCountByStudentId ?? {}) as Record<string, number>;
-      const byStudentMonth = (json?.submittedByStudentMonth ?? {}) as Record<
-        string,
-        Record<number, number>
-      >;
-      if (Object.keys(byStudentMonth).length > 0) {
+
+      if (Object.keys(mergedByStudentMonth).length > 0) {
         setSubmittedByStudentMonth((prev) => {
           const next = { ...prev };
-          for (const [sid, months] of Object.entries(byStudentMonth)) {
+          for (const [sid, months] of Object.entries(mergedByStudentMonth)) {
             next[sid] = { ...(next[sid] ?? {}), ...months };
           }
           return next;
         });
       }
-      if (Object.keys(monthMap).length > 0) {
+      if (Object.keys(mergedMonthMap).length > 0) {
         setRecordsByStudentId((prev) => {
           const next = { ...prev };
-          for (const [sid, submitted] of Object.entries(monthMap)) {
-            const lessonCount = lessonCountMap[sid];
+          for (const [sid, submitted] of Object.entries(mergedMonthMap)) {
+            const lessonCount = mergedLessonCountMap[sid];
             next[sid] = {
               ...(next[sid] ?? defaultRecordState()),
               submitted: Number(submitted) || 0,
@@ -1551,30 +1582,23 @@ export default function StudentsLessonTimeFeeRecordPage({
           return next;
         });
       }
+
+      const debug = (lastJson?.debug ?? {}) as {
+        skippedDetailByLimit?: number;
+        detailFetchSuccess?: number;
+        detailFetchError?: number;
+        preservedExistingMonths?: number;
+        clearedStaleMonths?: number;
+      };
       setSyncNotice(
-        `Zoho synced (${sheetYear}). Fetched ${Number(json?.fetchedReceipts ?? 0)} receipts; updated ${Number(json?.syncedRows ?? 0)} rows; ${Number(json?.unmatchedReceipts ?? 0)} unmatched; preserved ${Number(debug.preservedExistingMonths ?? 0)} existing month amount(s).${
-          Array.isArray(json?.unmatchedExamples) && json.unmatchedExamples.length
-            ? ` Unmatched examples: ${json.unmatchedExamples.join(" / ")}`
-            : ""
-        } Debug: matched ${Number(debug.matchedReceipts ?? 0)}, line items ${Number(debug.totalLineItems ?? 0)}, parsed-month items ${Number(debug.parsedMonthLineItems ?? 0)}, detail calls ${Number(debug.detailCalls ?? 0)}, skipped details ${Number(debug.skippedDetailByLimit ?? 0)}, detail success ${Number(debug.detailFetchSuccess ?? 0)}, detail empty ${Number(debug.detailFetchEmpty ?? 0)}, detail errors ${Number(debug.detailFetchError ?? 0)}${
-          Array.isArray(debug.detailErrorSamples) && debug.detailErrorSamples.length
-            ? `, detail error samples: ${debug.detailErrorSamples.join(" / ")}`
-            : ""
-        }${
-          Array.isArray(debug.preservedExistingSamples) && debug.preservedExistingSamples.length
-            ? `, preserved: ${debug.preservedExistingSamples.join(" / ")}`
-            : ""
-        }.`,
+        `Zoho synced (${sheetYear}). ${batches} batch(es); fetched ${totalFetched} receipts; matched ${matchedTotal}; updated ${totalSynced} rows; unmatched ${totalUnmatched}; cleared stale ${Number(debug.clearedStaleMonths ?? 0)}; skipped details ${Number(debug.skippedDetailByLimit ?? 0)}.`,
       );
-      // Always bust fee bootstrap cache after sync (even 0 upserts) so Sep/Aug views stay consistent.
       await revalidateScheduleCachesNow();
-      if (Number(json?.syncedRows ?? 0) > 0) {
-        window.location.reload();
-      }
+      window.location.reload();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("aborted")) {
-        setSyncNotice("Sync timed out (>180s). Please try again with a narrower grade/search filter so fewer students sync at once.");
+        setSyncNotice("Sync timed out on one batch. Please click Sync again — it continues from Zoho and is usually faster.");
       } else {
         setSyncNotice(`Sync failed: ${msg}`);
       }
