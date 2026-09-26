@@ -2106,13 +2106,14 @@ export default function StudentsLessonTimeFeeRecordPage({
                     type="button"
                     onClick={() =>
                       void syncZohoSubmitted({
-                        studentIds: filteredSortedStudents.map((s) => s.id),
+                        // Sync all students — not only the filtered table rows — otherwise
+                        // Sep/Aug Zoho paid stays $0 for anyone hidden by grade/search.
                         idOnly: false,
                       })
                     }
                     disabled={syncingZoho}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    title="拉單由該年 1 月起：Item & Description 寫嘅月份為準（例如 Jul 開單、Aug Fri 入 8 月）。其他月已有已繳會保留。"
+                    title="同步全年 Zoho receipts（全部學生）。月份以 Item & Description 為準（例如 Aug／9月）。可能需 1–3 分鐘。"
                   >
                     <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
                       <path
