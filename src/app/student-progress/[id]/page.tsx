@@ -10,7 +10,6 @@ import {
 } from "@/lib/studentProgressWorkbook";
 import { fetchStudentProgressForLevel } from "@/lib/studentProgressWorkbook.server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
-import { isTutorViewer } from "@/lib/tutorRoomAccess";
 import StudentProgressByIdClient, {
   type StudentProgressInitialPayload,
 } from "./StudentProgressByIdClient";
@@ -24,7 +23,7 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
   if (!viewer.userId) {
     redirect(`/login?next=${encodeURIComponent(`/student-progress/${id}`)}`);
   }
-  // Tutors / shared iPad may open a single student's progress (read-only) from Lesson Record.
+  // Admin / tutor / student may all edit progress. Students may only open their own record.
   // The list page `/student-progress` remains admin-only.
   if (viewer.role === "student") {
     await redirectIfInactiveStudentPortalBlocked(viewer);
@@ -33,7 +32,7 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
     if (studentId !== ownId) redirect(`/student-progress/${encodeURIComponent(ownId)}`);
   }
   const navViewer = await buildAppTopNavViewer(viewer);
-  const readOnly = viewer.role === "student" || isTutorViewer(viewer);
+  const readOnly = false;
 
   let initial: StudentProgressInitialPayload | null = null;
   try {

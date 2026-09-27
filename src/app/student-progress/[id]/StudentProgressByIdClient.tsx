@@ -808,13 +808,6 @@ export default function StudentProgressByIdClient({
               </Link>
               <h1 className="text-2xl font-bold tracking-tight">Student Lesson Record</h1>
             </div>
-            {readOnly ? (
-              <p className="mt-2 text-xs font-medium text-blue-100/95">
-                {isTutorViewerRole
-                  ? "檢視模式（Tutor／共用 iPad 不可修改進度表）"
-                  : "檢視模式（學生帳號不可修改進度表）"}
-              </p>
-            ) : null}
             <p className="mt-1 text-sm text-blue-100">
               Student ID: {studentId || "—"} | Student:{" "}
               {formatStudentDisplayNameOrEmpty(
