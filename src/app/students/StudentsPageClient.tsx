@@ -20,6 +20,8 @@ import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 import {
   loadHeldBackYearsByStudentIds,
 } from "@/lib/studentHeldBackYears";
+import { syncStudentsGradeToCurrentHistory } from "@/lib/studentGradeHistory";
+import { revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
 
 type Student = {
   id: string;
@@ -641,6 +643,21 @@ export default function StudentsPageClient({
         if (error) {
           setFormError(`Failed to save changes: ${error.message}`);
           return;
+        }
+
+        const syncedGrade = normalizeGradeCode(form.grade);
+        if (syncedGrade) {
+          const histSync = await syncStudentsGradeToCurrentHistory({
+            studentId: editingId,
+            grade: syncedGrade,
+          });
+          if (!histSync.ok && !histSync.tableMissing) {
+            setFormError(
+              `Student saved, but grade history sync failed: ${histSync.error ?? "unknown error"}`,
+            );
+            return;
+          }
+          await revalidateScheduleCachesNow();
         }
 
         const normalizedEditingId = normalizeStudentId(editingId);

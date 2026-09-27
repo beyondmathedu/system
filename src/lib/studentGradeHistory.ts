@@ -180,8 +180,9 @@ export async function upsertStudentGradeHistory(params: {
 
 /**
  * Set current academic year status to repeating / normal.
- * - repeating: keep current grade, status=repeating; also mirror legacy held_back_years
- * - normal: status=normal (grade unchanged unless nextGrade provided)
+ * Always syncs `students.grade` so Daily Timetable (history-first) and Student Info stay aligned.
+ * - repeating: keep grade, status=repeating; also mirror legacy held_back_years
+ * - normal: status=normal
  */
 export async function setCurrentAcademicYearStatus(params: {
   studentId: string;
@@ -192,6 +193,9 @@ export async function setCurrentAcademicYearStatus(params: {
 }): Promise<{ ok: boolean; error?: string; tableMissing?: boolean; academicYear: string }> {
   const academicYear = getCurrentAcademicYear();
   const grade = normalizeGradeCode(params.grade ?? params.currentGrade);
+  if (!grade) {
+    return { ok: false, error: "Invalid grade", academicYear };
+  }
   const status: GradeHistoryStatus = params.repeating ? "repeating" : "normal";
   const hist = await upsertStudentGradeHistory({
     studentId: params.studentId,
@@ -202,6 +206,15 @@ export async function setCurrentAcademicYearStatus(params: {
   });
   if (!hist.ok) {
     return { ...hist, academicYear };
+  }
+
+  const { supabase } = await import("@/lib/supabase");
+  const { error: studentErr } = await supabase
+    .from("students")
+    .update({ grade })
+    .eq("id", params.studentId);
+  if (studentErr) {
+    return { ok: false, error: studentErr.message, academicYear };
   }
 
   // Keep legacy held_back_years in sync so old promotion SQL still works until migrated.
@@ -222,6 +235,40 @@ export async function setCurrentAcademicYearStatus(params: {
   }
 
   return { ok: true, academicYear };
+}
+
+/**
+ * Sync Student Info grade into current academic year history (preserves repeating/normal when possible).
+ * Daily Timetable reads history first, so grade-only updates on `students` would otherwise leave Daily stale.
+ */
+export async function syncStudentsGradeToCurrentHistory(params: {
+  studentId: string;
+  grade: string;
+  /** Default: keep existing status, else normal. */
+  status?: GradeHistoryStatus;
+}): Promise<{ ok: boolean; error?: string; tableMissing?: boolean; academicYear: string }> {
+  const academicYear = getCurrentAcademicYear();
+  const grade = normalizeGradeCode(params.grade);
+  if (!grade) {
+    return { ok: false, error: "Invalid grade", academicYear };
+  }
+
+  let status: GradeHistoryStatus = params.status ?? "normal";
+  if (params.status == null) {
+    const existing = await loadGradeHistoryByStudentIds([params.studentId]);
+    const prev = existing.byStudentId[params.studentId]?.[academicYear];
+    if (prev?.status === "repeating") status = "repeating";
+    else if (prev?.status) status = prev.status === "promoted" ? "manual_adjustment" : prev.status;
+  }
+
+  const hist = await upsertStudentGradeHistory({
+    studentId: params.studentId,
+    academicYear,
+    grade,
+    status,
+    note: status === "manual_adjustment" ? "synced from Student Info" : "",
+  });
+  return { ...hist, academicYear };
 }
 
 /** Build a single-year history map entry helper for tests / UI. */

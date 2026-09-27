@@ -21,9 +21,10 @@ import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import ExamDateField from "./ExamDateField";
 import type { LessonScheduleRecord } from "./LessonScheduleGrid";
-import { formatGradeDisplay } from "@/lib/grade";
+import { formatGradeDisplay, normalizeGradeCode } from "@/lib/grade";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getActiveScheduleVersionDate, normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
+import { revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
 import {
   academicYearLabelZh,
   ensureCurrentYearHistoryFallback,
@@ -247,13 +248,16 @@ export default function StudentLessonsHubClient({
     if (!studentId || isTutorReadOnly || isStudentPortal) return;
     setAcademicStatusSaving(true);
     setAcademicStatusError("");
+    // Prefer Student Info grade over stale history (e.g. after mistaken Sept promotion).
+    const gradeToStore =
+      normalizeGradeCode(studentSummary.grade) || normalizeGradeCode(currentAyGrade) || currentAyGrade;
     const prev = gradeHistory;
     const nextStatus: GradeHistoryStatus = repeating ? "repeating" : "normal";
     setGradeHistory((map) => ({
       ...map,
       [currentAcademicYear]: {
         academicYear: currentAcademicYear,
-        grade: currentAyGrade,
+        grade: gradeToStore,
         status: nextStatus,
         note: repeating ? "repeating" : "",
       },
@@ -261,7 +265,8 @@ export default function StudentLessonsHubClient({
     try {
       const res = await setCurrentAcademicYearStatus({
         studentId,
-        currentGrade: currentAyGrade || studentSummary.grade,
+        currentGrade: gradeToStore,
+        grade: gradeToStore,
         repeating,
       });
       if (!res.ok) {
@@ -271,6 +276,8 @@ export default function StudentLessonsHubClient({
             ? "Grade History 表未建立：請在 Supabase 執行 supabase/supabase_student_grade_history.sql"
             : res.error ?? "儲存失敗",
         );
+      } else {
+        await revalidateScheduleCachesNow();
       }
     } finally {
       setAcademicStatusSaving(false);
@@ -837,7 +844,8 @@ export default function StudentLessonsHubClient({
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-amber-900/80">
-                  Repeating = 本學年（{currentAcademicYear}）繼續讀同一級，不在 9/1 升班。會寫入 Grade History，並同步舊版留班標記以相容升班 cron。
+                  Repeating = 本學年（{currentAcademicYear}）繼續讀同一級，不在 9/1 升班。會以 Student Info
+                  的 Grade 寫入 Grade History（Daily Timetable 以 History 為準），並同步舊版留班標記。
                 </p>
                 {historyRows.length ? (
                   <div className="mt-3 overflow-x-auto rounded-md border border-amber-200/80 bg-white">
