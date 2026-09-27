@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
@@ -33,6 +33,15 @@ import {
   trimCutOffSheet,
   type ProgressSheet,
 } from "@/lib/studentProgressWorkbook";
+import {
+  coerceProgressSelectionMap,
+  progressSelectionsEqual,
+  type ProgressSelectionMap,
+} from "@/lib/studentProgressSelections";
+import {
+  loadStudentProgressSelectionsClient,
+  saveStudentProgressSelectionsClient,
+} from "@/lib/studentProgressSelectionsClient";
 
 type StudentSummary = {
   id: string;
@@ -54,9 +63,10 @@ export type StudentProgressInitialPayload = {
   sheets: ProgressSheet[];
   cutOffSheet: ProgressSheet | null;
   yearGradeThresholds?: Record<number, number[]>;
+  progressSelections?: ProgressSelectionMap;
+  progressSelectionsUpdatedAt?: string | null;
+  progressSelectionsTableMissing?: boolean;
 };
-
-type ProgressSelectionMap = Record<string, string>;
 
 const PROGRESS_LEVEL_OPTIONS = ["Remedial", "Good", "Mastered"] as const;
 
@@ -87,6 +97,14 @@ function normalizeHeaderName(input: string): string {
 function getSelectionStorageKey(studentId: string): string {
   return `student-progress-selection:${studentId}`;
 }
+
+function getLocalMigratedKey(studentId: string): string {
+  return `student-progress-selection-migrated:${studentId}`;
+}
+
+type ProgressSaveStatus = "idle" | "saving" | "saved" | "error" | "table_missing";
+
+const SELECTION_SAVE_DEBOUNCE_MS = 600;
 
 function buildSelectionCellKey(sheetName: string, rowIndex: number, colIndex: number): string {
   return `${sheetName}::${rowIndex}::${colIndex}`;
@@ -519,7 +537,24 @@ export default function StudentProgressByIdClient({
     () => Boolean(initial && parseGradeLevel(initial.studentSummary.grade) && !(initial.sheets?.length)),
   );
   const [progressError, setProgressError] = useState("");
-  const [progressSelections, setProgressSelections] = useState<ProgressSelectionMap>({});
+  const [progressSelections, setProgressSelections] = useState<ProgressSelectionMap>(() =>
+    coerceProgressSelectionMap(initial?.progressSelections),
+  );
+  const [selectionSaveStatus, setSelectionSaveStatus] = useState<ProgressSaveStatus>(() => {
+    if (initial?.progressSelectionsUpdatedAt) return "saved";
+    if (initial?.progressSelections && Object.keys(initial.progressSelections).length > 0) {
+      return "saved";
+    }
+    return "idle";
+  });
+  const [selectionsUpdatedAt, setSelectionsUpdatedAt] = useState<string | null>(
+    () => initial?.progressSelectionsUpdatedAt ?? null,
+  );
+  const [selectionSaveError, setSelectionSaveError] = useState("");
+  const lastSavedSelectionsRef = useRef<ProgressSelectionMap>(
+    coerceProgressSelectionMap(initial?.progressSelections),
+  );
+  const skipNextSelectionSaveRef = useRef(true);
   const [yearGradeThresholds, setYearGradeThresholds] = useState<Record<number, number[]>>(
     () => initial?.yearGradeThresholds ?? DEFAULT_YEAR_GRADE_THRESHOLDS,
   );
@@ -653,36 +688,121 @@ export default function StudentProgressByIdClient({
     };
   }, [studentId, initial]);
 
+  const hydratedStudentIdRef = useRef<string>("");
+
+  // Load cloud selections (SSR initial + one-time localStorage migration).
   useEffect(() => {
     if (!studentId) {
       setProgressSelections({});
+      lastSavedSelectionsRef.current = {};
+      hydratedStudentIdRef.current = "";
       return;
     }
-    if (readOnly) {
-      setProgressSelections({});
-      return;
-    }
-    try {
-      const raw = window.localStorage.getItem(getSelectionStorageKey(studentId));
-      if (!raw) {
-        setProgressSelections({});
-        return;
-      }
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed && typeof parsed === "object") {
-        setProgressSelections(parsed as ProgressSelectionMap);
-      } else {
-        setProgressSelections({});
-      }
-    } catch {
-      setProgressSelections({});
-    }
-  }, [studentId, readOnly]);
+    if (hydratedStudentIdRef.current === studentId) return;
+    hydratedStudentIdRef.current = studentId;
 
+    let cancelled = false;
+
+    void (async () => {
+      let cloud: ProgressSelectionMap = {};
+      let updatedAt: string | null = null;
+
+      if (initial?.studentSummary.id === studentId) {
+        cloud = coerceProgressSelectionMap(initial.progressSelections);
+        updatedAt = initial.progressSelectionsUpdatedAt ?? null;
+      } else {
+        const loaded = await loadStudentProgressSelectionsClient(studentId);
+        if (cancelled) return;
+        if (loaded.error && !loaded.row) {
+          setSelectionSaveError(loaded.error);
+        }
+        cloud = loaded.row?.selections ?? {};
+        updatedAt = loaded.row?.updatedAt ?? null;
+      }
+
+      // One-time migrate browser-local progress into cloud when cloud is empty.
+      if (!readOnly && Object.keys(cloud).length === 0) {
+        try {
+          const migrated = window.localStorage.getItem(getLocalMigratedKey(studentId));
+          if (!migrated) {
+            const raw = window.localStorage.getItem(getSelectionStorageKey(studentId));
+            const local = raw ? coerceProgressSelectionMap(JSON.parse(raw) as unknown) : {};
+            if (Object.keys(local).length > 0) {
+              const saved = await saveStudentProgressSelectionsClient({
+                studentId,
+                selections: local,
+                updatedBy: viewerRole || "migrate-local",
+              });
+              if (saved.ok) {
+                cloud = local;
+                updatedAt = saved.updatedAt ?? updatedAt;
+                window.localStorage.setItem(getLocalMigratedKey(studentId), "1");
+              }
+            } else {
+              window.localStorage.setItem(getLocalMigratedKey(studentId), "1");
+            }
+          }
+        } catch {
+          // ignore local migration errors
+        }
+      }
+
+      if (cancelled) return;
+      skipNextSelectionSaveRef.current = true;
+      lastSavedSelectionsRef.current = cloud;
+      setProgressSelections(cloud);
+      setSelectionsUpdatedAt(updatedAt);
+      setSelectionSaveStatus(updatedAt || Object.keys(cloud).length > 0 ? "saved" : "idle");
+      setSelectionSaveError("");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [studentId, readOnly, initial, viewerRole]);
+
+  // Debounced cloud save + 「已儲存」 status.
   useEffect(() => {
     if (!studentId || readOnly) return;
-    window.localStorage.setItem(getSelectionStorageKey(studentId), JSON.stringify(progressSelections));
-  }, [studentId, progressSelections, readOnly]);
+    if (skipNextSelectionSaveRef.current) {
+      skipNextSelectionSaveRef.current = false;
+      return;
+    }
+    if (progressSelectionsEqual(progressSelections, lastSavedSelectionsRef.current)) return;
+
+    setSelectionSaveStatus("saving");
+    setSelectionSaveError("");
+    const snapshot = progressSelections;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const saved = await saveStudentProgressSelectionsClient({
+          studentId,
+          selections: snapshot,
+          updatedBy: viewerRole || "",
+        });
+        if (!saved.ok) {
+          setSelectionSaveStatus("error");
+          setSelectionSaveError(saved.error ?? "儲存失敗");
+          // Keep a local backup so work is not lost if cloud is briefly unavailable.
+          try {
+            window.localStorage.setItem(
+              getSelectionStorageKey(studentId),
+              JSON.stringify(snapshot),
+            );
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        lastSavedSelectionsRef.current = snapshot;
+        setSelectionsUpdatedAt(saved.updatedAt ?? new Date().toISOString());
+        setSelectionSaveStatus("saved");
+        setSelectionSaveError("");
+      })();
+    }, SELECTION_SAVE_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [studentId, progressSelections, readOnly, viewerRole]);
 
   useEffect(() => {
     const level = gradeLevel;
@@ -808,19 +928,49 @@ export default function StudentProgressByIdClient({
               </Link>
               <h1 className="text-2xl font-bold tracking-tight">Student Lesson Record</h1>
             </div>
-            <p className="mt-1 text-sm text-blue-100">
-              Student ID: {studentId || "—"} | Student:{" "}
-              {formatStudentDisplayNameOrEmpty(
-                {
-                  id: studentSummary.id,
-                  name_zh: studentSummary.nameZh,
-                  name_en: studentSummary.nameEn,
-                  nickname_en: studentSummary.nicknameEn,
-                },
-                "full",
-                "—",
-              )}
-            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-blue-100">
+              <span>
+                Student ID: {studentId || "—"} | Student:{" "}
+                {formatStudentDisplayNameOrEmpty(
+                  {
+                    id: studentSummary.id,
+                    name_zh: studentSummary.nameZh,
+                    name_en: studentSummary.nameEn,
+                    nickname_en: studentSummary.nicknameEn,
+                  },
+                  "full",
+                  "—",
+                )}
+              </span>
+              {!readOnly ? (
+                <span
+                  className={
+                    selectionSaveStatus === "error"
+                      ? "rounded-full bg-rose-500/25 px-2.5 py-0.5 text-xs font-semibold text-rose-50"
+                      : selectionSaveStatus === "saving"
+                        ? "rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-semibold text-blue-50"
+                        : selectionSaveStatus === "saved"
+                          ? "rounded-full bg-emerald-500/25 px-2.5 py-0.5 text-xs font-semibold text-emerald-50"
+                          : "rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-medium text-blue-100/90"
+                  }
+                  title={
+                    selectionSaveError ||
+                    (selectionsUpdatedAt ? `上次儲存：${selectionsUpdatedAt}` : undefined)
+                  }
+                >
+                  {selectionSaveStatus === "saving"
+                    ? "儲存中…"
+                    : selectionSaveStatus === "saved"
+                      ? "已儲存"
+                      : selectionSaveStatus === "error"
+                        ? "儲存失敗"
+                        : "尚未更改"}
+                </span>
+              ) : null}
+            </div>
+            {selectionSaveError ? (
+              <p className="mt-1 text-xs font-medium text-rose-100">{selectionSaveError}</p>
+            ) : null}
           </div>
 
           {studentLoaded && studentNotFound && (

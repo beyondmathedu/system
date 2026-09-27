@@ -9,6 +9,7 @@ import {
   type ProgressSheet,
 } from "@/lib/studentProgressWorkbook";
 import { fetchStudentProgressForLevel } from "@/lib/studentProgressWorkbook.server";
+import { loadStudentProgressSelectionsDurable } from "@/lib/studentProgressSelections.server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import StudentProgressByIdClient, {
   type StudentProgressInitialPayload,
@@ -37,7 +38,7 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
   let initial: StudentProgressInitialPayload | null = null;
   try {
     const supabase = await createSupabaseServerClient();
-    const [studentRes, examInfo] = await Promise.all([
+    const [studentRes, examInfo, selectionsRes] = await Promise.all([
       supabase
         .from("students")
         .select(
@@ -46,7 +47,12 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
         .eq("id", studentId)
         .maybeSingle(),
       loadExamInfoServer(supabase, studentId),
+      loadStudentProgressSelectionsDurable(studentId),
     ]);
+
+    const selections = selectionsRes.row?.selections ?? {};
+    const selectionsUpdatedAt = selectionsRes.row?.updatedAt ?? null;
+    const selectionsTableMissing = Boolean(selectionsRes.tableMissing);
 
     const data = studentRes.data;
     if (data) {
@@ -82,6 +88,9 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
         sheets,
         cutOffSheet,
         yearGradeThresholds,
+        progressSelections: selections,
+        progressSelectionsUpdatedAt: selectionsUpdatedAt,
+        progressSelectionsTableMissing: selectionsTableMissing,
       };
     } else {
       initial = {
@@ -102,6 +111,9 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
         sheets: [],
         cutOffSheet: null,
         yearGradeThresholds: undefined,
+        progressSelections: selections,
+        progressSelectionsUpdatedAt: selectionsUpdatedAt,
+        progressSelectionsTableMissing: selectionsTableMissing,
       };
     }
   } catch {
