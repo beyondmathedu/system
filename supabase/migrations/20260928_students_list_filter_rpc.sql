@@ -82,6 +82,9 @@ as $$
   end;
 $$;
 
+-- Return type changed (added takes_m1/takes_m2); CREATE OR REPLACE cannot alter OUT columns.
+drop function if exists public.list_students_for_page(integer, integer, text, text, text, date, integer);
+
 create or replace function public.list_students_for_page(
   p_offset integer,
   p_limit integer,
