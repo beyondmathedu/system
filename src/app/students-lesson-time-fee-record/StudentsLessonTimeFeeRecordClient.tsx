@@ -1490,7 +1490,6 @@ export default function StudentsLessonTimeFeeRecordPage({
     try {
       let detailOffset = 0;
       const detailBatchSize = 60;
-      let totalFetched = 0;
       let totalSynced = 0;
       let totalUnmatched = 0;
       let matchedTotal = 0;
@@ -1504,8 +1503,8 @@ export default function StudentsLessonTimeFeeRecordPage({
         batches += 1;
         setSyncNotice(
           matchedTotal > 0
-            ? `Syncing Zoho… batch ${batches} (${Math.min(detailOffset, matchedTotal)}/${matchedTotal} receipts)`
-            : `Syncing Zoho… batch ${batches}`,
+            ? `正在同步 Zoho… ${Math.min(detailOffset, matchedTotal)}／${matchedTotal} 張收據`
+            : `正在同步 Zoho…`,
         );
         const ctl = new AbortController();
         const timeout = window.setTimeout(() => ctl.abort(), 120000);
@@ -1529,7 +1528,6 @@ export default function StudentsLessonTimeFeeRecordPage({
           throw new Error(String(json?.error ?? "sync_failed"));
         }
 
-        totalFetched = Math.max(totalFetched, Number(json.fetchedReceipts ?? 0) || 0);
         totalSynced += Number(json.syncedRows ?? 0) || 0;
         totalUnmatched = Number(json.unmatchedReceipts ?? 0) || 0;
         matchedTotal = Number(json.matchedReceiptTotal ?? 0) || matchedTotal;
@@ -1592,17 +1590,22 @@ export default function StudentsLessonTimeFeeRecordPage({
         preservedExistingMonths?: number;
         clearedStaleMonths?: number;
       };
+      const skipped = Number(debug.skippedDetailByLimit ?? 0) || 0;
+      const extras: string[] = [];
+      if (totalUnmatched > 0) extras.push(`${totalUnmatched} 張收據未能對上學生`);
+      if (skipped > 0) extras.push(`今日 Zoho 查詢額度已用盡，尚有 ${skipped} 張未讀詳情，可稍後再 Sync`);
       setSyncNotice(
-        `Zoho synced (${sheetYear}). ${batches} batch(es); fetched ${totalFetched} receipts; matched ${matchedTotal}; updated ${totalSynced} rows; unmatched ${totalUnmatched}; cleared stale ${Number(debug.clearedStaleMonths ?? 0)}; skipped details ${Number(debug.skippedDetailByLimit ?? 0)}.`,
+        `Zoho 同步完成（${sheetYear}）。已配對 ${matchedTotal} 張收據，更新 ${totalSynced} 筆學費` +
+          (extras.length ? `；注意：${extras.join("；")}` : "。"),
       );
       await revalidateScheduleCachesNow();
       window.location.reload();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("aborted")) {
-        setSyncNotice("Sync timed out on one batch. Please click Sync again — it continues from Zoho and is usually faster.");
+        setSyncNotice("同步逾時。請再按一次 Sync，會由未完成處繼續。");
       } else {
-        setSyncNotice(`Sync failed: ${msg}`);
+        setSyncNotice(`同步失敗：${msg}`);
       }
     } finally {
       setSyncingZoho(false);
@@ -2173,19 +2176,19 @@ export default function StudentsLessonTimeFeeRecordPage({
                           };
                           if (!resp.ok || !json.ok) throw new Error(json.error ?? "import_failed");
                           setSyncNotice(
-                            `Excel imported: updated ${Number(json.upserted ?? 0)} month cells` +
+                            `Excel 匯入完成。已更新 ${Number(json.upserted ?? 0)} 個月份學費` +
                               (json.unmatchedCount
-                                ? `; ${json.unmatchedCount} names unmatched` +
+                                ? `；${json.unmatchedCount} 個姓名未能對上` +
                                   (json.unmatchedExamples?.length
-                                    ? ` (${json.unmatchedExamples.join(", ")})`
+                                    ? `（例如 ${json.unmatchedExamples.join("、")}）`
                                     : "")
                                 : "") +
-                              ".",
+                              "。",
                           );
                           await revalidateScheduleCachesNow();
                           window.location.reload();
                         } catch (e: unknown) {
-                          setSyncNotice(`Excel import failed: ${e instanceof Error ? e.message : String(e)}`);
+                          setSyncNotice(`Excel 匯入失敗：${e instanceof Error ? e.message : String(e)}`);
                         } finally {
                           setSyncingZoho(false);
                         }
