@@ -3,6 +3,9 @@ import path from "node:path";
 import { unstable_cache } from "next/cache";
 import {
   buildProgressPayloadFromSheets,
+  M1_SHEET,
+  M2_SHEET,
+  type ExtendedMathsOptions,
   type ProgressSheet,
   type StudentProgressWorkbookPayload,
 } from "@/lib/studentProgressWorkbook";
@@ -21,6 +24,8 @@ const ALL_SHEET_NAMES = [
   "F6 學校mock卷",
   "Cut Off",
   "Exam Schedule",
+  M1_SHEET,
+  M2_SHEET,
 ] as const;
 
 function cellToText(value: unknown): string {
@@ -63,7 +68,7 @@ const loadParsedSheetsCached = unstable_cache(
     }
     return out;
   },
-  ["student-progress-workbook-parsed-v5"],
+  ["student-progress-workbook-parsed-v6"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
@@ -73,10 +78,21 @@ const loadProgressPayloadForLevelCached = unstable_cache(
     const sheetsByName = new Map(Object.entries(sheetsRecord));
     return buildProgressPayloadFromSheets(sheetsByName, level);
   },
-  ["student-progress-sheets-v4"],
+  ["student-progress-sheets-v5"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
-export async function fetchStudentProgressForLevel(level: number): Promise<StudentProgressWorkbookPayload> {
-  return loadProgressPayloadForLevelCached(level);
+export async function fetchStudentProgressForLevel(
+  level: number,
+  options?: ExtendedMathsOptions,
+): Promise<StudentProgressWorkbookPayload> {
+  const base = await loadProgressPayloadForLevelCached(level);
+  if (!options?.takesM1 && !options?.takesM2) return base;
+
+  const sheetsRecord = await loadParsedSheetsCached();
+  const extra: ProgressSheet[] = [];
+  if (options.takesM1 && sheetsRecord[M1_SHEET]) extra.push(sheetsRecord[M1_SHEET]);
+  if (options.takesM2 && sheetsRecord[M2_SHEET]) extra.push(sheetsRecord[M2_SHEET]);
+  if (!extra.length) return base;
+  return { ...base, sheets: [...base.sheets, ...extra] };
 }

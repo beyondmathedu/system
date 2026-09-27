@@ -25,7 +25,7 @@ import {
   CUT_OFF_SHEET,
   DEFAULT_YEAR_GRADE_THRESHOLDS,
   F6_BY_YEARS_SHEET,
-  getCurrentGradeSheetNames,
+  getHighlightedProgressSheetNames,
   parseCutOffThresholds,
   parseGradeLevel,
   parseYear,
@@ -43,6 +43,8 @@ type StudentSummary = {
   school: string;
   textbookPublisher: string;
   mathLanguage: string;
+  takesM1: boolean;
+  takesM2: boolean;
 };
 
 export type StudentProgressInitialPayload = {
@@ -495,6 +497,8 @@ export default function StudentProgressByIdClient({
         school: "",
         textbookPublisher: "",
         mathLanguage: "English",
+        takesM1: false,
+        takesM2: false,
       },
   );
   const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>(
@@ -522,7 +526,13 @@ export default function StudentProgressByIdClient({
   const [cutOffSheet, setCutOffSheet] = useState<ProgressSheet | null>(() => initial?.cutOffSheet ?? null);
   const [activeSheetName, setActiveSheetName] = useState("");
   const gradeLevel = parseGradeLevel(studentSummary.grade);
-  const currentGradeSheetNames = new Set(gradeLevel ? getCurrentGradeSheetNames(gradeLevel) : []);
+  const extendedMaths = {
+    takesM1: Boolean(studentSummary.takesM1),
+    takesM2: Boolean(studentSummary.takesM2),
+  };
+  const currentGradeSheetNames = new Set(
+    gradeLevel ? getHighlightedProgressSheetNames(gradeLevel, extendedMaths) : [],
+  );
   const activeProgressSheet =
     progressSheets.find((sheet) => sheet.name === activeSheetName) ?? progressSheets[0] ?? null;
   const activeDisplaySheet =
@@ -565,7 +575,10 @@ export default function StudentProgressByIdClient({
     }
     if (activeSheetName && progressSheets.some((sheet) => sheet.name === activeSheetName)) return;
     if (gradeLevel) {
-      const preferred = getCurrentGradeSheetNames(gradeLevel);
+      const preferred = getHighlightedProgressSheetNames(gradeLevel, {
+        takesM1: studentSummary.takesM1,
+        takesM2: studentSummary.takesM2,
+      });
       const match = preferred.find((name) => progressSheets.some((sheet) => sheet.name === name));
       if (match) {
         setActiveSheetName(match);
@@ -573,7 +586,7 @@ export default function StudentProgressByIdClient({
       }
     }
     setActiveSheetName(progressSheets[0].name);
-  }, [progressSheets, gradeLevel, activeSheetName]);
+  }, [progressSheets, gradeLevel, activeSheetName, studentSummary.takesM1, studentSummary.takesM2]);
 
   useEffect(() => {
     if (!studentId) return;
@@ -589,7 +602,9 @@ export default function StudentProgressByIdClient({
       const [studentRes, exam] = await Promise.all([
         supabase
           .from("students")
-          .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language")
+          .select(
+            "id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language, takes_m1, takes_m2",
+          )
           .eq("id", studentId)
           .maybeSingle(),
         loadExamInfo(studentId),
@@ -609,6 +624,8 @@ export default function StudentProgressByIdClient({
           school: "",
           textbookPublisher: "",
           mathLanguage: "English",
+          takesM1: false,
+          takesM2: false,
         });
         setStudentNotFound(true);
         setStudentLoaded(true);
@@ -624,6 +641,8 @@ export default function StudentProgressByIdClient({
         school: data.school ?? "",
         textbookPublisher: data.textbook_publisher ?? "",
         mathLanguage: data.math_language ?? "English",
+        takesM1: Boolean(data.takes_m1),
+        takesM2: Boolean(data.takes_m2),
       });
       setStudentNotFound(false);
       setStudentLoaded(true);
@@ -675,11 +694,16 @@ export default function StudentProgressByIdClient({
       return;
     }
 
+    const takesM1 = Boolean(studentSummary.takesM1);
+    const takesM2 = Boolean(studentSummary.takesM2);
+
     // Apply browser Cut Off override onto SSR sheets without refetching workbook.
     if (
       initial &&
       initial.studentSummary.id === studentId &&
       parseGradeLevel(initial.studentSummary.grade) === level &&
+      Boolean(initial.studentSummary.takesM1) === takesM1 &&
+      Boolean(initial.studentSummary.takesM2) === takesM2 &&
       initial.sheets.length > 0
     ) {
       const savedCutOff = loadCutOffOverride();
@@ -706,7 +730,12 @@ export default function StudentProgressByIdClient({
 
     void (async () => {
       try {
-        const res = await fetch(`/api/student-progress/sheets?level=${level}`, {
+        const qs = new URLSearchParams({
+          level: String(level),
+          ...(takesM1 ? { m1: "1" } : {}),
+          ...(takesM2 ? { m2: "1" } : {}),
+        });
+        const res = await fetch(`/api/student-progress/sheets?${qs}`, {
           credentials: "same-origin",
         });
         if (!res.ok) throw new Error("Progress sheets request failed");
@@ -757,7 +786,7 @@ export default function StudentProgressByIdClient({
     return () => {
       cancelled = true;
     };
-  }, [gradeLevel, initial, studentId]);
+  }, [gradeLevel, initial, studentId, studentSummary.takesM1, studentSummary.takesM2]);
 
   return (
     <div className="min-h-screen bg-slate-100 py-10">

@@ -22,11 +22,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid level (1–6)" }, { status: 400 });
   }
 
+  const takesM1 = request.nextUrl.searchParams.get("m1") === "1";
+  const takesM2 = request.nextUrl.searchParams.get("m2") === "1";
+
   try {
-    const payload = await fetchStudentProgressForLevel(level);
+    const payload = await fetchStudentProgressForLevel(level, { takesM1, takesM2 });
     return NextResponse.json({
       ok: true,
       level,
+      takesM1,
+      takesM2,
       sheets: payload.sheets,
       cutOffSheet: payload.cutOffSheet,
       yearGradeThresholds: payload.yearGradeThresholds,

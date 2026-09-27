@@ -12,6 +12,8 @@ export type StudentProgressWorkbookPayload = {
 
 export const CUT_OFF_SHEET = "Cut Off";
 export const F6_BY_YEARS_SHEET = "F6 By Years";
+export const M1_SHEET = "M1";
+export const M2_SHEET = "M2";
 
 /** F.5+ students use F5 curriculum alongside DSE (F.6) progress sheets. */
 export const F6_PROGRESS_SHEET_NAMES = [
@@ -27,6 +29,19 @@ export const F6_PRIMARY_SHEET_NAMES = [
   "F6 By Years",
   "F6 學校mock卷",
 ] as const;
+
+export type ExtendedMathsOptions = {
+  takesM1?: boolean;
+  takesM2?: boolean;
+};
+
+/** Maths Extended sheets from student-progress-beyond-math.xlsx (independent of form grade). */
+export function getExtendedMathsSheetNames(options?: ExtendedMathsOptions): string[] {
+  const names: string[] = [];
+  if (options?.takesM1) names.push(M1_SHEET);
+  if (options?.takesM2) names.push(M2_SHEET);
+  return names;
+}
 
 const CUT_OFF_FIXED_LEVELS = ["5**", "5*", "5", "4", "3", "2"] as const;
 
@@ -75,6 +90,14 @@ export function getCurrentGradeSheetNames(level: number): string[] {
   if (level === 4) return ["F4"];
   if (level === 5) return ["F5", ...F6_PRIMARY_SHEET_NAMES];
   return [...F6_PRIMARY_SHEET_NAMES];
+}
+
+/** Grade tabs to highlight, plus M1/M2 when the student takes Maths Extended. */
+export function getHighlightedProgressSheetNames(
+  level: number,
+  options?: ExtendedMathsOptions,
+): string[] {
+  return [...getCurrentGradeSheetNames(level), ...getExtendedMathsSheetNames(options)];
 }
 
 function normalizeHeaderName(input: string): string {
@@ -235,8 +258,12 @@ export function syncF6ByYearsWithCutOff(f6Sheet: ProgressSheet, cutOffSheet: Pro
 export function buildProgressPayloadFromSheets(
   sheetsByName: ReadonlyMap<string, ProgressSheet>,
   level: number,
+  options?: ExtendedMathsOptions,
 ): StudentProgressWorkbookPayload {
-  const wantedSheets = getCumulativeSheetNames(level);
+  const wantedSheets = [
+    ...getCumulativeSheetNames(level),
+    ...getExtendedMathsSheetNames(options),
+  ];
   const parsed: ProgressSheet[] = [];
 
   const cutOffRaw = sheetsByName.get(CUT_OFF_SHEET) ?? null;

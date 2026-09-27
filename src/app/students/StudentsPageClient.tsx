@@ -33,6 +33,8 @@ type Student = {
   textbookPublisher: string;
   grade: string;
   mathLanguage: string;
+  takesM1: boolean;
+  takesM2: boolean;
   birthTs: number;
   searchBlob: string;
   heldBackYears: number[];
@@ -51,6 +53,8 @@ type StudentRow = {
   textbook_publisher: string | null;
   grade: string | null;
   math_language: string | null;
+  takes_m1?: boolean | null;
+  takes_m2?: boolean | null;
 };
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const STUDENTS_PAGE_SIZE = 80;
@@ -86,6 +90,8 @@ const emptyForm: StudentForm = {
   textbookPublisher: "",
   grade: "",
   mathLanguage: "English",
+  takesM1: false,
+  takesM2: false,
 };
 
 function buildStudentSearchBlob(student: {
@@ -412,13 +418,17 @@ export default function StudentsPageClient({
     return () => window.clearTimeout(timer);
   }, [fetchStudentsPage, query, statusFilter, inactiveKind]);
 
-  const onFieldChange = (field: keyof StudentForm, value: string) => {
+  const onFieldChange = (field: keyof StudentForm, value: string | boolean) => {
     setForm((prev) => {
-      if (field !== "grade") return { ...prev, [field]: value };
-      const next = { ...prev, grade: value };
-      const band = gradeToTextbookBand(value);
+      if (field === "takesM1" || field === "takesM2") {
+        return { ...prev, [field]: Boolean(value) };
+      }
+      if (field !== "grade") return { ...prev, [field]: value as string };
+      const grade = String(value);
+      const next = { ...prev, grade };
+      const band = gradeToTextbookBand(grade);
       if (!band || !prev.textbookPublisher) return next;
-      const resolved = resolveTextbookSelection(value, prev.textbookPublisher);
+      const resolved = resolveTextbookSelection(grade, prev.textbookPublisher);
       if (!resolved.publisher || !resolved.book) {
         next.textbookPublisher = "";
       }
@@ -429,10 +439,16 @@ export default function StudentsPageClient({
   const partialFieldsToForm = useCallback((fields: Partial<StudentForm>): StudentForm => {
     const next = { ...emptyForm };
     for (const [key, value] of Object.entries(fields) as Array<
-      [keyof StudentForm, string | undefined]
+      [keyof StudentForm, StudentForm[keyof StudentForm] | undefined]
     >) {
       if (value == null || value === "") continue;
-      next[key] = value;
+      if (key === "takesM1" || key === "takesM2") {
+        next[key] = Boolean(value);
+        continue;
+      }
+      if (typeof value === "string") {
+        next[key] = value;
+      }
     }
     return next;
   }, []);
@@ -708,6 +724,8 @@ export default function StudentsPageClient({
       textbookPublisher: target.textbookPublisher,
       grade: formatGradeDisplay(target.grade),
       mathLanguage: target.mathLanguage,
+      takesM1: target.takesM1,
+      takesM2: target.takesM2,
     });
   };
 
@@ -873,7 +891,33 @@ export default function StudentsPageClient({
                   </ClientOnlyAfterMount>
                 </fieldset>
 
-                <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-3 md:basis-[55%] md:flex-none md:pr-[1%] md:pb-[2px]">
+                <fieldset className="block md:basis-auto md:flex-none">
+                  <legend className="mb-1 block text-sm font-semibold text-slate-700">
+                    Maths Extended
+                  </legend>
+                  <div className="flex h-[42px] items-center gap-4 rounded-lg border border-slate-300 bg-white px-3">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={form.takesM1}
+                        onChange={(event) => onFieldChange("takesM1", event.target.checked)}
+                        className="h-4 w-4 accent-[#1d76c2]"
+                      />
+                      M1
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={form.takesM2}
+                        onChange={(event) => onFieldChange("takesM2", event.target.checked)}
+                        className="h-4 w-4 accent-[#1d76c2]"
+                      />
+                      M2
+                    </label>
+                  </div>
+                </fieldset>
+
+                <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-3 md:basis-[40%] md:flex-none md:pr-[1%] md:pb-[2px]">
                   {formNotice ? (
                     <p className="mr-auto text-sm font-medium text-emerald-700">{formNotice}</p>
                   ) : null}
@@ -1180,6 +1224,9 @@ export default function StudentsPageClient({
                     <SortableHeader label="Textbook publisher" columnKey="textbookPublisher" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                     <SortableHeader label="Grade" columnKey="grade" sortConfig={sortConfig} setSortConfig={setSortConfig} />
                     <SortableHeader label="Maths instruction" columnKey="mathLanguage" sortConfig={sortConfig} setSortConfig={setSortConfig} />
+                    <th className="sticky top-0 z-30 whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
+                      M1 / M2
+                    </th>
                     {isAdmin ? (
                       <th className="sticky top-0 z-30 min-w-[220px] whitespace-nowrap bg-slate-50 px-4 py-3 text-left text-xs font-bold tracking-wider text-slate-700">
                         Portal
@@ -1269,6 +1316,9 @@ export default function StudentsPageClient({
                         </td>
                         <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.mathLanguage}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-4 align-middle text-sm text-slate-700">
+                          {formatTakesMathsPapers(student)}
                         </td>
                         {isAdmin ? (
                           <td className="whitespace-nowrap px-4 py-3 align-middle text-xs text-slate-700">
@@ -1797,6 +1847,13 @@ async function fetchNextStudentIdFromDb(): Promise<string> {
   return body.nextId;
 }
 
+function formatTakesMathsPapers(student: Pick<Student, "takesM1" | "takesM2">): string {
+  if (student.takesM1 && student.takesM2) return "M1, M2";
+  if (student.takesM1) return "M1";
+  if (student.takesM2) return "M2";
+  return "—";
+}
+
 function mapRowToStudent(row: StudentRow): Student {
   const birthDate = row.birth_date ?? "";
   const parsedBirthTs = Date.parse(birthDate);
@@ -1812,6 +1869,8 @@ function mapRowToStudent(row: StudentRow): Student {
     textbookPublisher: row.textbook_publisher ?? "",
     grade: normalizeGradeCode(row.grade),
     mathLanguage: row.math_language ?? "English",
+    takesM1: Boolean(row.takes_m1),
+    takesM2: Boolean(row.takes_m2),
     heldBackYears: [] as number[],
     birthTs: Number.isFinite(parsedBirthTs) ? parsedBirthTs : Number.MAX_SAFE_INTEGER,
   };
@@ -1849,5 +1908,7 @@ function mapFormToRow(form: StudentForm) {
     textbook_publisher: textbookPublisher ? textbookPublisher : null,
     grade: grade ? grade : null,
     math_language: mathLanguage ? mathLanguage : null,
+    takes_m1: Boolean(form.takesM1),
+    takes_m2: Boolean(form.takesM2),
   };
 }

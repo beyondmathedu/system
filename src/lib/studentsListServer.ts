@@ -18,6 +18,8 @@ export type StudentsListRow = {
   textbook_publisher: string | null;
   grade: string | null;
   math_language: string | null;
+  takes_m1: boolean | null;
+  takes_m2: boolean | null;
 };
 
 /** Sub-filter when status is inactive. */
@@ -105,7 +107,7 @@ export async function listStudentsForPage(
   let query = supabase
     .from("students")
     .select(
-      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language",
+      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language, takes_m1, takes_m2",
       { count: "exact" },
     )
     .order("id", { ascending: true });
@@ -193,6 +195,8 @@ export async function listStudentsForPage(
         textbook_publisher: null,
         grade: row.grade,
         math_language: null,
+        takes_m1: null,
+        takes_m2: null,
       };
       if (!studentMatchesStatus(stub, inactivePeriodsById, status, inactiveKind, todayHkIso, year)) {
         continue;
@@ -218,7 +222,7 @@ export async function listStudentsForPage(
   const { data: pageData, error: pageErr } = await supabase
     .from("students")
     .select(
-      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language",
+      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language, takes_m1, takes_m2",
     )
     .in("id", pageIds);
   if (pageErr) throw new Error(pageErr.message);

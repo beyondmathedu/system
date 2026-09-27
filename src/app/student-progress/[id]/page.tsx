@@ -41,7 +41,9 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
     const [studentRes, examInfo] = await Promise.all([
       supabase
         .from("students")
-        .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language")
+        .select(
+          "id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language, takes_m1, takes_m2",
+        )
         .eq("id", studentId)
         .maybeSingle(),
       loadExamInfoServer(supabase, studentId),
@@ -58,13 +60,18 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
         school: String(data.school ?? ""),
         textbookPublisher: String(data.textbook_publisher ?? ""),
         mathLanguage: String(data.math_language ?? "English"),
+        takesM1: Boolean(data.takes_m1),
+        takesM2: Boolean(data.takes_m2),
       };
       const level = parseGradeLevel(summary.grade);
       let sheets: ProgressSheet[] = [];
       let cutOffSheet: ProgressSheet | null = null;
       let yearGradeThresholds: Record<number, number[]> | undefined;
       if (level) {
-        const payload = await fetchStudentProgressForLevel(level);
+        const payload = await fetchStudentProgressForLevel(level, {
+          takesM1: summary.takesM1,
+          takesM2: summary.takesM2,
+        });
         sheets = payload.sheets;
         cutOffSheet = payload.cutOffSheet;
         yearGradeThresholds = payload.yearGradeThresholds;
@@ -88,6 +95,8 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
           school: "",
           textbookPublisher: "",
           mathLanguage: "English",
+          takesM1: false,
+          takesM2: false,
         },
         studentNotFound: true,
         examInfo,
