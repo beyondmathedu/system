@@ -939,6 +939,8 @@ export async function POST(request: Request) {
       nextDetailOffset,
       matchedReceiptTotal: matchedReceipts.length,
       syncDone,
+      detailCalls,
+      dailyDetailQuotaHint: 1000,
       debug: {
         matchedReceipts: matchedReceipts.length,
         batchSize: batchReceipts.length,
@@ -987,8 +989,10 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           ok: false,
+          rateLimited: true,
           error:
-            "Zoho API 今日配額已到上限（1000）。請稍後再試，或等配額重置後重試同步。",
+            "Zoho API 今日配額已到上限（1000）。請稍後用「繼續 Sync」續傳，勿重新全量以免重頭清空已寫入資料。",
+          dailyDetailQuotaHint: 1000,
         },
         { status: 429 },
       );
