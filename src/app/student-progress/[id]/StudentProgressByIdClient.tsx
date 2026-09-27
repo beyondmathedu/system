@@ -11,6 +11,8 @@ import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
+import { getCurrentStudentGrade, loadGradeHistoryByStudentIds } from "@/lib/studentGradeHistory";
+import { loadHeldBackYearsByStudentIds } from "@/lib/studentHeldBackYears";
 import {
   isUpcomingExamDate,
   visibleExamContent,
@@ -634,7 +636,7 @@ export default function StudentProgressByIdClient({
     setStudentNotFound(false);
 
     void (async () => {
-      const [studentRes, exam] = await Promise.all([
+      const [studentRes, exam, gradeHistoryRes, heldBackRes] = await Promise.all([
         supabase
           .from("students")
           .select(
@@ -643,6 +645,8 @@ export default function StudentProgressByIdClient({
           .eq("id", studentId)
           .maybeSingle(),
         loadExamInfo(studentId),
+        loadGradeHistoryByStudentIds([studentId]),
+        loadHeldBackYearsByStudentIds([studentId]),
       ]);
 
       if (cancelled) return;
@@ -667,12 +671,19 @@ export default function StudentProgressByIdClient({
         return;
       }
 
+      const infoGrade = data.grade ?? "";
+      const effectiveGrade = getCurrentStudentGrade({
+        studentGrade: infoGrade,
+        historyByAcademicYear: gradeHistoryRes.byStudentId[studentId],
+        heldBackYears: heldBackRes.byStudentId[studentId] ?? [],
+      });
+
       setStudentSummary({
         id: data.id,
         nameZh: data.name_zh ?? "",
         nameEn: data.name_en ?? "",
         nicknameEn: data.nickname_en ?? "",
-        grade: data.grade ?? "",
+        grade: effectiveGrade || infoGrade,
         school: data.school ?? "",
         textbookPublisher: data.textbook_publisher ?? "",
         mathLanguage: data.math_language ?? "English",

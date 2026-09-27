@@ -30,6 +30,7 @@ import {
   ensureCurrentYearHistoryFallback,
   getCurrentAcademicYear,
   getCurrentAyGradeMismatch,
+  getCurrentStudentGrade,
   listGradeHistoryRows,
   setCurrentAcademicYearStatus,
   syncStudentsGradeToCurrentHistory,
@@ -244,6 +245,16 @@ export default function StudentLessonsHubClient({
   const currentAyRow = gradeHistory[currentAcademicYear];
   const currentAyStatus: GradeHistoryStatus = currentAyRow?.status ?? "normal";
   const currentAyGrade = currentAyRow?.grade || studentSummary.grade;
+  /** Same effective grade Daily uses for today. */
+  const effectiveGrade = useMemo(
+    () =>
+      getCurrentStudentGrade({
+        studentGrade: studentSummary.grade,
+        historyByAcademicYear: gradeHistory,
+        heldBackYears: initialBootstrap.heldBackYears ?? [],
+      }),
+    [studentSummary.grade, gradeHistory, initialBootstrap.heldBackYears],
+  );
   const historyRows = useMemo(() => listGradeHistoryRows(gradeHistory), [gradeHistory]);
   const [liveMismatch, setLiveMismatch] = useState(() =>
     getCurrentAyGradeMismatch({
@@ -497,10 +508,18 @@ export default function StudentLessonsHubClient({
                 </div>
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">Grade</p>
-                  <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(studentSummary.grade) || "—"}</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">
+                    {formatGradeDisplay(effectiveGrade) || "—"}
+                  </p>
                   {!isTutorReadOnly && !isStudentPortal && currentAyStatus === "repeating" ? (
                     <p className="mt-0.5 text-[10px] font-medium text-amber-800">
                       Repeating（{currentAcademicYear}）
+                    </p>
+                  ) : null}
+                  {liveMismatch ? (
+                    <p className="mt-0.5 text-[10px] font-semibold text-rose-700">
+                      警示：Info 存檔 {formatGradeDisplay(liveMismatch.infoGrade)} ≠ History{" "}
+                      {formatGradeDisplay(liveMismatch.historyGrade)}（頁面已跟 Daily／History）
                     </p>
                   ) : null}
                 </div>
@@ -854,7 +873,10 @@ export default function StudentLessonsHubClient({
                 <p className="text-xs font-semibold tracking-wider text-amber-900/80">Academic Status</p>
                 {liveMismatch ? (
                   <div className="mt-2 rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-900">
-                    <p className="font-semibold">年級不一致（Daily 會跟 History）</p>
+                    <p className="font-semibold">
+                      警示解決咩：Info 存檔同 History 唔一致時，Daily／各頁已跟 History；按下面同步可令
+                      Info 同 History 齊。
+                    </p>
                     <p className="mt-1">
                       Student Info：{formatGradeDisplay(liveMismatch.infoGrade)} · History（
                       {liveMismatch.academicYear}）：{formatGradeDisplay(liveMismatch.historyGrade)}
@@ -880,13 +902,16 @@ export default function StudentLessonsHubClient({
                   </div>
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900/70">
-                      Current Grade（History）
+                      Current Grade（同 Daily）
                     </p>
                     <p className="mt-0.5 text-sm font-bold text-amber-950">
-                      {formatGradeDisplay(currentAyGrade) || "—"}
+                      {formatGradeDisplay(effectiveGrade) || "—"}
                     </p>
                     <p className="mt-0.5 text-[10px] text-amber-900/70">
-                      Student Info：{formatGradeDisplay(studentSummary.grade) || "—"}
+                      Student Info 存檔：{formatGradeDisplay(studentSummary.grade) || "—"}
+                      {currentAyRow?.grade
+                        ? ` · History：${formatGradeDisplay(currentAyRow.grade)}`
+                        : ""}
                     </p>
                   </div>
                   <div>
@@ -918,8 +943,8 @@ export default function StudentLessonsHubClient({
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-amber-900/80">
-                  Repeating = 本學年（{currentAcademicYear}）繼續讀同一級，不在 9/1 升班。會以 Student Info
-                  的 Grade 寫入 Grade History（Daily Timetable 以 History 為準），並同步舊版留班標記。
+                  各頁 Grade 顯示與 Daily 同一套規則（History 優先）。警示 = Info 存檔同 History
+                  唔一致，要同步。升班預覽 = 9/1 前睇邊個會升／留班。Repeating = 本學年不升班。
                 </p>
                 {historyRows.length ? (
                   <div className="mt-3 overflow-x-auto rounded-md border border-amber-200/80 bg-white">

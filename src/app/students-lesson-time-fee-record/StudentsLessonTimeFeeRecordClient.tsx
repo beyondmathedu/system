@@ -81,19 +81,6 @@ import {
   LESSON_SYSTEM_START_YEAR,
 } from "@/lib/lessonSystemStart";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
-import {
-  ZOHO_DAILY_DETAIL_QUOTA,
-  addZohoDayDetailCalls,
-  clearZohoSyncCheckpoint,
-  formatHkTime,
-  loadZohoSyncCheckpoint,
-  loadZohoSyncDayMeta,
-  markZohoFullSyncSuccess,
-  saveZohoSyncCheckpoint,
-  zohoSyncProgressPercent,
-  type ZohoSyncCheckpoint,
-  type ZohoSyncDayMeta,
-} from "@/lib/zohoSyncCheckpoint";
 
 type StudentRow = {
   id: string;
@@ -895,17 +882,6 @@ export default function StudentsLessonTimeFeeRecordPage({
   const [searchText, setSearchText] = useState("");
   const [syncingZoho, setSyncingZoho] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
-  const [zohoCheckpoint, setZohoCheckpoint] = useState<ZohoSyncCheckpoint | null>(null);
-  const [zohoDayMeta, setZohoDayMeta] = useState<ZohoSyncDayMeta>(() => ({
-    dateKey: "",
-    detailCallsUsed: 0,
-  }));
-  const [zohoLiveProgress, setZohoLiveProgress] = useState<{
-    offset: number;
-    total: number;
-    batches: number;
-    detailCallsThisRun: number;
-  } | null>(null);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [feeTierBundle, setFeeTierBundle] = useState<StudentFeeTierBundle>(() =>
@@ -1212,32 +1188,6 @@ export default function StudentsLessonTimeFeeRecordPage({
     };
   }, [flushPendingOpeningBalances, flushPendingBalanceAdjustments]);
 
-  useEffect(() => {
-    setZohoCheckpoint(loadZohoSyncCheckpoint(sheetYear));
-    setZohoDayMeta(loadZohoSyncDayMeta());
-  }, [sheetYear]);
-
-  const zohoResumeAvailable = Boolean(
-    zohoCheckpoint &&
-      zohoCheckpoint.year === sheetYear &&
-      zohoCheckpoint.status !== "complete" &&
-      zohoCheckpoint.detailOffset > 0,
-  );
-  const zohoProgressOffset = syncingZoho
-    ? (zohoLiveProgress?.offset ?? zohoCheckpoint?.detailOffset ?? 0)
-    : (zohoCheckpoint?.detailOffset ?? 0);
-  const zohoProgressTotal = syncingZoho
-    ? (zohoLiveProgress?.total ?? zohoCheckpoint?.matchedTotal ?? 0)
-    : (zohoCheckpoint?.matchedTotal ?? 0);
-  const zohoProgressPct = zohoSyncProgressPercent(zohoProgressOffset, zohoProgressTotal);
-  const zohoQuotaUsed = zohoDayMeta.detailCallsUsed;
-  const zohoQuotaPct = Math.min(
-    100,
-    Math.round((zohoQuotaUsed / ZOHO_DAILY_DETAIL_QUOTA) * 100),
-  );
-  const zohoSyncedToday =
-    Boolean(zohoDayMeta.lastFullSuccessAt) && zohoDayMeta.lastFullSuccessYear === sheetYear;
-
   const scheduleSave = useCallback((studentId: string, patch: Partial<RecordState>) => {
     const key = `${studentId}:${sheetYear}:${sheetMonth}`;
     const existing = saveTimersRef.get(key);
@@ -1534,216 +1484,131 @@ export default function StudentsLessonTimeFeeRecordPage({
   }, [feeTierDraft]);
 
   const syncZohoSubmitted = useCallback(
-    async (opts?: { studentIds?: string[]; idOnly?: boolean; resume?: boolean }) => {
-      const resume = Boolean(opts?.resume);
-      const existing = loadZohoSyncCheckpoint(sheetYear);
-      if (
-        !resume &&
-        zohoDayMeta.lastFullSuccessAt &&
-        zohoDayMeta.lastFullSuccessYear === sheetYear
-      ) {
-        const ok = window.confirm(
-          `今日（香港時間）已成功全量 Sync ${sheetYear}（${formatHkTime(zohoDayMeta.lastFullSuccessAt)}）。\n\n再全量 Sync 會重頭清空再寫，並消耗 Zoho 一日配額。確定繼續？`,
-        );
-        if (!ok) return;
-      }
-
-      setSyncingZoho(true);
-      setSyncNotice(resume ? "繼續上次 Zoho Sync…" : "開始全量 Sync Zoho…");
-
-      let detailOffset = resume && existing ? existing.detailOffset : 0;
-      let detailCallsThisRun = resume && existing ? existing.detailCallsUsed : 0;
-      let totalFetched = resume && existing ? existing.totalFetched : 0;
-      let totalSynced = resume && existing ? existing.totalSynced : 0;
-      let totalUnmatched = resume && existing ? existing.totalUnmatched : 0;
-      let matchedTotal = resume && existing ? existing.matchedTotal : 0;
-      let batches = resume && existing ? existing.batchesDone : 0;
+    async (opts?: { studentIds?: string[]; idOnly?: boolean }) => {
+    setSyncingZoho(true);
+    setSyncNotice("");
+    try {
+      let detailOffset = 0;
       const detailBatchSize = 60;
+      let totalFetched = 0;
+      let totalSynced = 0;
+      let totalUnmatched = 0;
+      let matchedTotal = 0;
+      let batches = 0;
       let lastJson: Record<string, unknown> | null = null;
       const mergedByStudentMonth: Record<string, Record<number, number>> = {};
       const mergedMonthMap: Record<string, number> = {};
       const mergedLessonCountMap: Record<string, number> = {};
 
-      if (!resume) {
-        clearZohoSyncCheckpoint(sheetYear);
-        setZohoCheckpoint(null);
-      }
-
-      const persistCheckpoint = (status: ZohoSyncCheckpoint["status"], lastError?: string) => {
-        const cp: ZohoSyncCheckpoint = {
-          year: sheetYear,
-          detailOffset,
-          matchedTotal,
-          detailCallsUsed: detailCallsThisRun,
-          batchesDone: batches,
-          totalSynced,
-          totalFetched,
-          totalUnmatched,
-          status,
-          updatedAt: new Date().toISOString(),
-          lastError,
-        };
-        saveZohoSyncCheckpoint(cp);
-        setZohoCheckpoint(cp);
-      };
-
-      try {
-        while (true) {
-          batches += 1;
-          setZohoLiveProgress({
-            offset: detailOffset,
-            total: matchedTotal,
-            batches,
-            detailCallsThisRun,
-          });
-          setSyncNotice(
-            matchedTotal > 0
-              ? `Syncing Zoho… ${Math.min(detailOffset, matchedTotal)}/${matchedTotal} receipts（batch ${batches}）`
-              : `Syncing Zoho… batch ${batches}`,
-          );
-
-          const ctl = new AbortController();
-          const timeout = window.setTimeout(() => ctl.abort(), 120000);
-          let resp: Response;
-          try {
-            resp = await fetch("/api/zoho/sync-submitted", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                year: sheetYear,
-                month: Number(sheetMonth),
-                studentIds: opts?.studentIds,
-                idOnly: Boolean(opts?.idOnly),
-                detailOffset,
-                detailBatchSize,
-              }),
-              signal: ctl.signal,
-            });
-          } catch (fetchErr: unknown) {
-            window.clearTimeout(timeout);
-            const aborted =
-              (fetchErr instanceof DOMException && fetchErr.name === "AbortError") ||
-              (fetchErr instanceof Error && /abort/i.test(fetchErr.message));
-            persistCheckpoint(
-              aborted ? "timeout" : "error",
-              aborted ? "batch timeout" : fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
-            );
-            setSyncNotice(
-              aborted
-                ? `Sync 逾時，已停在 ${detailOffset}/${matchedTotal || "?"}。請撳「繼續 Sync」續傳。`
-                : `Sync 中斷：${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}。可撳「繼續 Sync」。`,
-            );
-            return;
-          }
-          window.clearTimeout(timeout);
-
-          const json = (await resp.json()) as Record<string, unknown>;
-          lastJson = json;
-          if (!resp.ok || !json?.ok) {
-            const rateLimited = Boolean(json?.rateLimited) || resp.status === 429;
-            const errMsg = String(json?.error ?? "sync_failed");
-            persistCheckpoint(rateLimited ? "rate_limited" : "error", errMsg);
-            setSyncNotice(
-              rateLimited
-                ? `Zoho 今日配額已到上限。已停在 ${detailOffset}/${matchedTotal || "?"} — 配額重置後撳「繼續 Sync」，唔好重新全量。`
-                : `Sync 失敗：${errMsg}。已停在 ${detailOffset}/${matchedTotal || "?"}，可撳「繼續 Sync」。`,
-            );
-            return;
-          }
-
-          const batchDetailCalls = Number(json.detailCalls ?? (json.debug as { detailCalls?: number })?.detailCalls ?? 0) || 0;
-          if (batchDetailCalls > 0) {
-            detailCallsThisRun += batchDetailCalls;
-            setZohoDayMeta(addZohoDayDetailCalls(batchDetailCalls));
-          }
-
-          totalFetched = Math.max(totalFetched, Number(json.fetchedReceipts ?? 0) || 0);
-          totalSynced += Number(json.syncedRows ?? 0) || 0;
-          totalUnmatched = Number(json.unmatchedReceipts ?? 0) || 0;
-          matchedTotal = Number(json.matchedReceiptTotal ?? 0) || matchedTotal;
-
-          const monthMap = (json.monthSubmittedByStudentId ?? {}) as Record<string, number>;
-          const lessonCountMap = (json.monthSubmittedLessonCountByStudentId ?? {}) as Record<
-            string,
-            number
-          >;
-          const byStudentMonth = (json.submittedByStudentMonth ?? {}) as Record<
-            string,
-            Record<number, number>
-          >;
-          for (const [sid, months] of Object.entries(byStudentMonth)) {
-            mergedByStudentMonth[sid] = { ...(mergedByStudentMonth[sid] ?? {}), ...months };
-          }
-          for (const [sid, submitted] of Object.entries(monthMap)) {
-            mergedMonthMap[sid] = Number(submitted) || 0;
-          }
-          for (const [sid, lessonCount] of Object.entries(lessonCountMap)) {
-            mergedLessonCountMap[sid] = Number(lessonCount) || 0;
-          }
-
-          const nextOffset = Number(json.nextDetailOffset ?? detailOffset + detailBatchSize) || 0;
-          detailOffset = nextOffset;
-          setZohoLiveProgress({
-            offset: detailOffset,
-            total: matchedTotal,
-            batches,
-            detailCallsThisRun,
-          });
-          persistCheckpoint("in_progress");
-
-          const done = Boolean(json.syncDone) || nextOffset >= matchedTotal || batches > 50;
-          if (done) break;
-          await new Promise((r) => window.setTimeout(r, 400));
-        }
-
-        if (Object.keys(mergedByStudentMonth).length > 0) {
-          setSubmittedByStudentMonth((prev) => {
-            const next = { ...prev };
-            for (const [sid, months] of Object.entries(mergedByStudentMonth)) {
-              next[sid] = { ...(next[sid] ?? {}), ...months };
-            }
-            return next;
-          });
-        }
-        if (Object.keys(mergedMonthMap).length > 0) {
-          setRecordsByStudentId((prev) => {
-            const next = { ...prev };
-            for (const [sid, submitted] of Object.entries(mergedMonthMap)) {
-              const lessonCount = mergedLessonCountMap[sid];
-              next[sid] = {
-                ...(next[sid] ?? defaultRecordState()),
-                submitted: Number(submitted) || 0,
-                submittedLessonCount:
-                  lessonCount != null && Number.isFinite(Number(lessonCount)) && Number(lessonCount) > 0
-                    ? Number(lessonCount)
-                    : (next[sid]?.submittedLessonCount ?? null),
-              };
-            }
-            return next;
-          });
-        }
-
-        const debug = (lastJson?.debug ?? {}) as {
-          skippedDetailByLimit?: number;
-          clearedStaleMonths?: number;
-        };
-        setZohoDayMeta(markZohoFullSyncSuccess(sheetYear));
-        setZohoCheckpoint(null);
-        setZohoLiveProgress(null);
+      while (true) {
+        batches += 1;
         setSyncNotice(
-          `Zoho 全量 Sync 完成（${sheetYear}）。${batches} batch；收據 ${totalFetched}；配對 ${matchedTotal}；更新 ${totalSynced} 格；未配對 ${totalUnmatched}；略過 detail ${Number(debug.skippedDetailByLimit ?? 0)}。建議一日只做一次。`,
+          matchedTotal > 0
+            ? `Syncing Zoho… batch ${batches} (${Math.min(detailOffset, matchedTotal)}/${matchedTotal} receipts)`
+            : `Syncing Zoho… batch ${batches}`,
         );
-        await revalidateScheduleCachesNow();
-        window.location.reload();
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        persistCheckpoint("error", msg);
-        setSyncNotice(`Sync 失敗：${msg}。已停在 ${detailOffset}/${matchedTotal || "?"}，可撳「繼續 Sync」。`);
-      } finally {
-        setSyncingZoho(false);
+        const ctl = new AbortController();
+        const timeout = window.setTimeout(() => ctl.abort(), 120000);
+        const resp = await fetch("/api/zoho/sync-submitted", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            year: sheetYear,
+            month: Number(sheetMonth),
+            studentIds: opts?.studentIds,
+            idOnly: Boolean(opts?.idOnly),
+            detailOffset,
+            detailBatchSize,
+          }),
+          signal: ctl.signal,
+        });
+        window.clearTimeout(timeout);
+        const json = (await resp.json()) as Record<string, unknown>;
+        lastJson = json;
+        if (!resp.ok || !json?.ok) {
+          throw new Error(String(json?.error ?? "sync_failed"));
+        }
+
+        totalFetched = Math.max(totalFetched, Number(json.fetchedReceipts ?? 0) || 0);
+        totalSynced += Number(json.syncedRows ?? 0) || 0;
+        totalUnmatched = Number(json.unmatchedReceipts ?? 0) || 0;
+        matchedTotal = Number(json.matchedReceiptTotal ?? 0) || matchedTotal;
+
+        const monthMap = (json.monthSubmittedByStudentId ?? {}) as Record<string, number>;
+        const lessonCountMap = (json.monthSubmittedLessonCountByStudentId ?? {}) as Record<string, number>;
+        const byStudentMonth = (json.submittedByStudentMonth ?? {}) as Record<
+          string,
+          Record<number, number>
+        >;
+        for (const [sid, months] of Object.entries(byStudentMonth)) {
+          mergedByStudentMonth[sid] = { ...(mergedByStudentMonth[sid] ?? {}), ...months };
+        }
+        for (const [sid, submitted] of Object.entries(monthMap)) {
+          mergedMonthMap[sid] = Number(submitted) || 0;
+        }
+        for (const [sid, lessonCount] of Object.entries(lessonCountMap)) {
+          mergedLessonCountMap[sid] = Number(lessonCount) || 0;
+        }
+
+        const nextOffset = Number(json.nextDetailOffset ?? detailOffset + detailBatchSize) || 0;
+        const done = Boolean(json.syncDone) || nextOffset >= matchedTotal || batches > 50;
+        detailOffset = nextOffset;
+        if (done) break;
+        // Pace Zoho detail calls — org limit is 1000/day.
+        await new Promise((r) => window.setTimeout(r, 400));
       }
+
+      if (Object.keys(mergedByStudentMonth).length > 0) {
+        setSubmittedByStudentMonth((prev) => {
+          const next = { ...prev };
+          for (const [sid, months] of Object.entries(mergedByStudentMonth)) {
+            next[sid] = { ...(next[sid] ?? {}), ...months };
+          }
+          return next;
+        });
+      }
+      if (Object.keys(mergedMonthMap).length > 0) {
+        setRecordsByStudentId((prev) => {
+          const next = { ...prev };
+          for (const [sid, submitted] of Object.entries(mergedMonthMap)) {
+            const lessonCount = mergedLessonCountMap[sid];
+            next[sid] = {
+              ...(next[sid] ?? defaultRecordState()),
+              submitted: Number(submitted) || 0,
+              submittedLessonCount:
+                lessonCount != null && Number.isFinite(Number(lessonCount)) && Number(lessonCount) > 0
+                  ? Number(lessonCount)
+                  : (next[sid]?.submittedLessonCount ?? null),
+            };
+          }
+          return next;
+        });
+      }
+
+      const debug = (lastJson?.debug ?? {}) as {
+        skippedDetailByLimit?: number;
+        detailFetchSuccess?: number;
+        detailFetchError?: number;
+        preservedExistingMonths?: number;
+        clearedStaleMonths?: number;
+      };
+      setSyncNotice(
+        `Zoho synced (${sheetYear}). ${batches} batch(es); fetched ${totalFetched} receipts; matched ${matchedTotal}; updated ${totalSynced} rows; unmatched ${totalUnmatched}; cleared stale ${Number(debug.clearedStaleMonths ?? 0)}; skipped details ${Number(debug.skippedDetailByLimit ?? 0)}.`,
+      );
+      await revalidateScheduleCachesNow();
+      window.location.reload();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("aborted")) {
+        setSyncNotice("Sync timed out on one batch. Please click Sync again — it continues from Zoho and is usually faster.");
+      } else {
+        setSyncNotice(`Sync failed: ${msg}`);
+      }
+    } finally {
+      setSyncingZoho(false);
+    }
     },
-    [sheetMonth, sheetYear, zohoDayMeta.lastFullSuccessAt, zohoDayMeta.lastFullSuccessYear],
+    [sheetMonth, sheetYear],
   );
 
   const { lessonDatesByStudentId, fullLessonDatesByStudentId, lColumnCount } = useMemo(() => {
@@ -2231,8 +2096,8 @@ export default function StudentsLessonTimeFeeRecordPage({
           <div className="p-4 sm:p-6">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="sticky top-0 z-50 -mx-2 mb-3 border-b border-slate-200 bg-white/95 px-2 pb-2 pt-1 backdrop-blur">
-                <div className="mb-3 flex flex-col items-stretch justify-between gap-3 lg:flex-row lg:items-start">
-                  <div className="min-w-0 flex-1">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
                     <div className="text-sm font-bold text-slate-700">
                       {sheetYear} / {MONTH_SHORT[sheetMonth - 1]} / Record Sheet
                       {bootstrapLoading ? (
@@ -2263,160 +2128,75 @@ export default function StudentsLessonTimeFeeRecordPage({
                       ) : null}
                     </div>
                   </div>
-                  <div className="flex w-full flex-col gap-2 sm:max-w-xl">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {zohoResumeAvailable ? (
-                        <button
-                          type="button"
-                          onClick={() => void syncZohoSubmitted({ idOnly: false, resume: true })}
-                          disabled={syncingZoho}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
-                          title="由上次中斷位置繼續，唔會重頭清空已寫入資料。"
-                        >
-                          {syncingZoho ? "Syncing…" : "繼續 Sync"}
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void syncZohoSubmitted({
-                            // Sync all students — not only the filtered table rows — otherwise
-                            // Sep/Aug Zoho paid stays $0 for anyone hidden by grade/search.
-                            idOnly: false,
-                          })
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void syncZohoSubmitted({
+                        // Sync all students — not only the filtered table rows — otherwise
+                        // Sep/Aug Zoho paid stays $0 for anyone hidden by grade/search.
+                        idOnly: false,
+                      })
+                    }
+                    disabled={syncingZoho}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="按 Zoho Item & Description 認月份、Amount 寫已繳；分批同步全部學生。"
+                  >
+                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                      <path
+                        transform="translate(0,-1.2)"
+                        d="M4.08 11.86a5.5 5.5 0 019.27-3.59l-.94.94a.75.75 0 001.06 1.06l2.5-2.5a.75.75 0 000-1.06l-2.5-2.5a.75.75 0 00-1.06 1.06l.99.99a7 7 0 00-11.3 5.59.75.75 0 001.5 0z"
+                      />
+                      <path
+                        transform="translate(0,1.2)"
+                        d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
+                      />
+                    </svg>
+                    {syncingZoho ? "Syncing..." : "Sync Zoho Receipts"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        setSyncingZoho(true);
+                        setSyncNotice("Importing Excel tuition paid…");
+                        try {
+                          const resp = await fetch("/api/students-lesson-fee-record/import-excel", {
+                            method: "POST",
+                            credentials: "same-origin",
+                          });
+                          const json = (await resp.json()) as {
+                            ok?: boolean;
+                            error?: string;
+                            upserted?: number;
+                            unmatchedCount?: number;
+                            unmatchedExamples?: string[];
+                          };
+                          if (!resp.ok || !json.ok) throw new Error(json.error ?? "import_failed");
+                          setSyncNotice(
+                            `Excel imported: updated ${Number(json.upserted ?? 0)} month cells` +
+                              (json.unmatchedCount
+                                ? `; ${json.unmatchedCount} names unmatched` +
+                                  (json.unmatchedExamples?.length
+                                    ? ` (${json.unmatchedExamples.join(", ")})`
+                                    : "")
+                                : "") +
+                              ".",
+                          );
+                          await revalidateScheduleCachesNow();
+                          window.location.reload();
+                        } catch (e: unknown) {
+                          setSyncNotice(`Excel import failed: ${e instanceof Error ? e.message : String(e)}`);
+                        } finally {
+                          setSyncingZoho(false);
                         }
-                        disabled={syncingZoho}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        title="按 Zoho Item & Description 認月份、Amount 寫已繳；分批同步全部學生。建議一日一次。"
-                      >
-                        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
-                          <path
-                            transform="translate(0,-1.2)"
-                            d="M4.08 11.86a5.5 5.5 0 019.27-3.59l-.94.94a.75.75 0 001.06 1.06l2.5-2.5a.75.75 0 000-1.06l-2.5-2.5a.75.75 0 00-1.06 1.06l.99.99a7 7 0 00-11.3 5.59.75.75 0 001.5 0z"
-                          />
-                          <path
-                            transform="translate(0,1.2)"
-                            d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
-                          />
-                        </svg>
-                        {syncingZoho
-                          ? "Syncing…"
-                          : zohoSyncedToday
-                            ? "再 Sync Zoho（全日）"
-                            : "Sync Zoho Receipts"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void (async () => {
-                            setSyncingZoho(true);
-                            setSyncNotice("Importing Excel tuition paid…");
-                            try {
-                              const resp = await fetch("/api/students-lesson-fee-record/import-excel", {
-                                method: "POST",
-                                credentials: "same-origin",
-                              });
-                              const json = (await resp.json()) as {
-                                ok?: boolean;
-                                error?: string;
-                                upserted?: number;
-                                unmatchedCount?: number;
-                                unmatchedExamples?: string[];
-                              };
-                              if (!resp.ok || !json.ok) throw new Error(json.error ?? "import_failed");
-                              setSyncNotice(
-                                `Excel imported: updated ${Number(json.upserted ?? 0)} month cells` +
-                                  (json.unmatchedCount
-                                    ? `; ${json.unmatchedCount} names unmatched` +
-                                      (json.unmatchedExamples?.length
-                                        ? ` (${json.unmatchedExamples.join(", ")})`
-                                        : "")
-                                    : "") +
-                                  ".",
-                              );
-                              await revalidateScheduleCachesNow();
-                              window.location.reload();
-                            } catch (e: unknown) {
-                              setSyncNotice(
-                                `Excel import failed: ${e instanceof Error ? e.message : String(e)}`,
-                              );
-                            } finally {
-                              setSyncingZoho(false);
-                            }
-                          })();
-                        }}
-                        disabled={syncingZoho}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                        title="用 data/tuition-fee-record-2026.xlsx（Tution Fee Record2026）覆寫 May–Dec 已繳，對齊人手真數目。"
-                      >
-                        Import Excel Paid
-                      </button>
-                    </div>
-                    <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-2.5 py-2 text-[11px] leading-snug text-emerald-950">
-                      <p className="font-semibold">
-                        建議每日下班前 Sync 一次（香港時間）。全量約用近一日 Zoho detail 配額（~
-                        {ZOHO_DAILY_DETAIL_QUOTA}）。
-                      </p>
-                      {zohoSyncedToday ? (
-                        <p className="mt-0.5">
-                          今日已成功全量 Sync
-                          {zohoDayMeta.lastFullSuccessAt
-                            ? `（${formatHkTime(zohoDayMeta.lastFullSuccessAt)}）`
-                            : ""}
-                          — 唔好再重頭 Sync，以免撞上限。
-                        </p>
-                      ) : null}
-                      {zohoResumeAvailable && zohoCheckpoint ? (
-                        <p className="mt-0.5 text-amber-900">
-                          有未完成進度：{zohoCheckpoint.detailOffset}/
-                          {zohoCheckpoint.matchedTotal || "?"} 張收據
-                          {zohoCheckpoint.status === "rate_limited"
-                            ? "（配額已滿，重置後撳「繼續 Sync」）"
-                            : " — 請撳「繼續 Sync」"}
-                          {zohoCheckpoint.lastError ? `；上次：${zohoCheckpoint.lastError}` : ""}
-                        </p>
-                      ) : null}
-                      <div className="mt-1.5 space-y-1">
-                        {(syncingZoho || zohoResumeAvailable) && zohoProgressTotal > 0 ? (
-                          <div>
-                            <div className="mb-0.5 flex justify-between text-[10px] font-medium text-emerald-900/80">
-                              <span>
-                                收據進度 {Math.min(zohoProgressOffset, zohoProgressTotal)}/
-                                {zohoProgressTotal}
-                              </span>
-                              <span>{zohoProgressPct}%</span>
-                            </div>
-                            <div className="h-1.5 overflow-hidden rounded-full bg-emerald-100">
-                              <div
-                                className="h-full rounded-full bg-emerald-600 transition-[width] duration-300"
-                                style={{ width: `${zohoProgressPct}%` }}
-                              />
-                            </div>
-                          </div>
-                        ) : null}
-                        <div>
-                          <div className="mb-0.5 flex justify-between text-[10px] font-medium text-emerald-900/80">
-                            <span>
-                              今日約用 Zoho detail API {zohoQuotaUsed}/{ZOHO_DAILY_DETAIL_QUOTA}
-                            </span>
-                            <span>{zohoQuotaPct}%</span>
-                          </div>
-                          <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
-                            <div
-                              className={`h-full rounded-full transition-[width] duration-300 ${
-                                zohoQuotaPct >= 90
-                                  ? "bg-rose-500"
-                                  : zohoQuotaPct >= 70
-                                    ? "bg-amber-500"
-                                    : "bg-slate-600"
-                              }`}
-                              style={{ width: `${zohoQuotaPct}%` }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                      })();
+                    }}
+                    disabled={syncingZoho}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="用 data/tuition-fee-record-2026.xlsx（Tution Fee Record2026）覆寫 May–Dec 已繳，對齊人手真數目。"
+                  >
+                    Import Excel Paid
+                  </button>
                 </div>
                 <div
                   className="mb-0 flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-slate-50 p-2"

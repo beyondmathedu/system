@@ -23,6 +23,7 @@ import {
 import {
   getCurrentAcademicYear,
   getCurrentAyGradeMismatch,
+  getCurrentStudentGrade,
   loadGradeHistoryByStudentIds,
   syncStudentsGradeToCurrentHistory,
 } from "@/lib/studentGradeHistory";
@@ -45,7 +46,9 @@ type Student = {
   birthTs: number;
   searchBlob: string;
   heldBackYears: number[];
-  /** Current AY history grade when it differs from Student Info. */
+  /** Resolved grade (same rules as Daily today). */
+  effectiveGrade: string;
+  /** Current AY history grade when it differs from Student Info cache. */
   historyGradeMismatch: string;
 };
 type SortDirection = "asc" | "desc";
@@ -88,7 +91,7 @@ export type StudentsPageInitialList = {
 
 type StudentForm = Omit<
   Student,
-  "id" | "birthTs" | "searchBlob" | "heldBackYears" | "historyGradeMismatch"
+  "id" | "birthTs" | "searchBlob" | "heldBackYears" | "effectiveGrade" | "historyGradeMismatch"
 >;
 
 const emptyForm: StudentForm = {
@@ -195,7 +198,7 @@ export default function StudentsPageClient({
       const { key } = sortConfig;
 
       if (key === "grade") {
-        result = gradeRank(a.grade) - gradeRank(b.grade);
+        result = gradeRank(a.effectiveGrade || a.grade) - gradeRank(b.effectiveGrade || b.grade);
       } else if (key === "birthDate") {
         result = a.birthTs - b.birthTs;
       } else {
@@ -822,11 +825,16 @@ export default function StudentsPageClient({
                 <p className="mt-1 text-xs text-blue-100/90">
                   System ID: {editingId ?? suggestedNextId} (auto-numbered, starting from 00001)
                 </p>
+                <p className="mt-1 text-xs text-blue-100/90">
+                  Grade 顯示同 Daily（History 優先）。紅色警示 = Info 存檔同 History 唔齊，要同步。升班預覽
+                  = 9/1 前睇邊個會升／留班。
+                </p>
               </div>
               {isAdmin ? (
                 <Link
                   href="/students/grade-promotion-preview"
                   className="rounded-lg border border-white/40 bg-white/15 px-3 py-2 text-xs font-semibold text-white hover:bg-white/25"
+                  title="9/1 升班前只讀預覽：邊個會升、邊個留班"
                 >
                   升班預覽
                 </Link>
@@ -876,7 +884,7 @@ export default function StudentsPageClient({
                 onChange={(v) => onFieldChange("school", v)}
               />
               <InputField
-                label="Grade"
+                label="Grade（Student Info；儲存後同步 History／Daily）"
                 value={form.grade}
                 onChange={(v) => onFieldChange("grade", v)}
                 type="select"
@@ -1341,10 +1349,11 @@ export default function StudentsPageClient({
                           {student.textbookPublisher}
                         </td>
                         <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
-                          {formatGradeDisplay(student.grade)}
+                          {formatGradeDisplay(student.effectiveGrade || student.grade)}
                           {student.historyGradeMismatch ? (
                             <span className="mt-0.5 block text-[10px] font-semibold text-rose-700">
-                              History≠Info（Daily: {formatGradeDisplay(student.historyGradeMismatch)}）
+                              警示：Info 存檔 {formatGradeDisplay(student.grade)} ≠ History{" "}
+                              {formatGradeDisplay(student.historyGradeMismatch)}（已以 History／Daily 顯示）
                             </span>
                           ) : null}
                           {student.heldBackYears?.length ? (
@@ -1916,6 +1925,7 @@ function mapRowToStudent(row: StudentRow): Student {
     takesM1: Boolean(row.takes_m1),
     takesM2: Boolean(row.takes_m2),
     heldBackYears: [] as number[],
+    effectiveGrade: normalizeGradeCode(row.grade),
     historyGradeMismatch: "",
     birthTs: Number.isFinite(parsedBirthTs) ? parsedBirthTs : Number.MAX_SAFE_INTEGER,
   };
@@ -1931,14 +1941,21 @@ async function attachHeldBackYears(students: Student[]): Promise<Student[]> {
   ]);
   const ay = getCurrentAcademicYear();
   return students.map((s) => {
+    const historyByAcademicYear = history.byStudentId[s.id];
+    const heldBackYears = heldById[s.id] ?? [];
     const mismatch = getCurrentAyGradeMismatch({
       studentGrade: s.grade,
-      historyByAcademicYear: history.byStudentId[s.id],
+      historyByAcademicYear,
       academicYear: ay,
     });
     return {
       ...s,
-      heldBackYears: heldById[s.id] ?? [],
+      heldBackYears,
+      effectiveGrade: getCurrentStudentGrade({
+        studentGrade: s.grade,
+        historyByAcademicYear,
+        heldBackYears,
+      }),
       historyGradeMismatch: mismatch ? mismatch.historyGrade : "",
     };
   });

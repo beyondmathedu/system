@@ -8,6 +8,7 @@ import {
   promotionYearForAcademicYear,
   type AcademicYearId,
 } from "@/lib/academicYear";
+import { hkTodayIso } from "@/lib/examDateVisibility";
 import { normalizeGradeCode } from "@/lib/grade";
 import { inferGradeAtSheetEnd } from "@/lib/inferStudentGrade";
 
@@ -95,6 +96,26 @@ export function getStudentGradeForDate(params: {
     currentGrade: params.currentGrade,
     sheetYear: Number(m[1]),
     sheetMonth: Number(m[2]),
+    historyByAcademicYear: params.historyByAcademicYear,
+    heldBackYears: params.heldBackYears,
+  });
+}
+
+/**
+ * Single source for "what grade is this student in now" across Students / Lessons / Daily (today).
+ * Same rules as Daily Timetable for today: Grade History for current AY, else students.grade
+ * (+ held-back Sept rollback when History is missing).
+ */
+export function getCurrentStudentGrade(params: {
+  studentGrade: string;
+  historyByAcademicYear?: GradeHistoryByAcademicYear | null;
+  heldBackYears?: ReadonlySet<number> | readonly number[] | null;
+  /** Defaults to today (Asia/Hong_Kong). */
+  asOfDateIso?: string;
+}): string {
+  return getStudentGradeForDate({
+    currentGrade: params.studentGrade,
+    dateIso: params.asOfDateIso ?? hkTodayIso(),
     historyByAcademicYear: params.historyByAcademicYear,
     heldBackYears: params.heldBackYears,
   });

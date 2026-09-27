@@ -55,6 +55,7 @@ import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
+import { getCurrentAyGradeMismatch, getCurrentStudentGrade } from "@/lib/studentGradeHistory";
 import { makeStudentInactiveDateCheckerFromPeriods, getInactiveMonthGapsInYearFromPeriods, type InactiveMonthGap } from "@/lib/studentVisibility";
 import {
   defaultLessonYear,
@@ -691,6 +692,23 @@ export function StudentLessonsYearPage({
   const gradeHistory = useMemo(
     () => initialHydrated?.gradeHistory ?? initialBootstrap?.gradeHistory ?? {},
     [initialHydrated?.gradeHistory, initialBootstrap?.gradeHistory],
+  );
+  const effectiveGrade = useMemo(
+    () =>
+      getCurrentStudentGrade({
+        studentGrade: studentSummary.grade,
+        historyByAcademicYear: gradeHistory,
+        heldBackYears,
+      }),
+    [studentSummary.grade, gradeHistory, heldBackYears],
+  );
+  const gradeMismatch = useMemo(
+    () =>
+      getCurrentAyGradeMismatch({
+        studentGrade: studentSummary.grade,
+        historyByAcademicYear: gradeHistory,
+      }),
+    [studentSummary.grade, gradeHistory],
   );
   const [accessReady, setAccessReady] = useState(() => Boolean(initialBootstrap));
   const [isReadOnlyViewer, setIsReadOnlyViewer] = useState(Boolean(initialReadOnly));
@@ -3024,7 +3042,13 @@ export function StudentLessonsYearPage({
                 </div>
                 <div>
                 <p className="text-xs font-semibold tracking-wider text-slate-500">Grade</p>
-                  <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(studentSummary.grade) || "—"}</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{formatGradeDisplay(effectiveGrade) || "—"}</p>
+                  {gradeMismatch ? (
+                    <p className="mt-0.5 text-[10px] font-semibold text-rose-700">
+                      警示：Info 存檔 {formatGradeDisplay(gradeMismatch.infoGrade)} ≠ History{" "}
+                      {formatGradeDisplay(gradeMismatch.historyGrade)}（已跟 Daily／History）
+                    </p>
+                  ) : null}
                 </div>
                 <div className="md:col-span-2">
                 <p className="text-xs font-semibold tracking-wider text-slate-500">School</p>

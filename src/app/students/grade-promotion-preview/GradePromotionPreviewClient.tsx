@@ -90,7 +90,8 @@ export default function GradePromotionPreviewClient({
               <h1 className="text-2xl font-bold tracking-tight">升班預覽（只讀）</h1>
             </div>
             <p className="mt-2 text-sm text-blue-100">
-              對應 9/1 自動升班邏輯。唔會改資料；正式執行仍靠 cron／sync API。
+              解決咩：9/1 自動升班前先睇名單，避免暑假 F.1 被誤升成 F.2（Daily／History
+              同 Info 不一致）。只讀預覽，唔會改資料；正式執行仍靠 cron。
             </p>
           </div>
 
@@ -119,26 +120,43 @@ export default function GradePromotionPreviewClient({
               <div className="flex flex-wrap gap-2">
                 {(
                   [
-                    ["all", "全部有變更"],
-                    ["promote", `升班 ${preview.counts.promote}`],
-                    ["repeat", `留班 ${preview.counts.repeat}`],
-                    ["sync_from_history", `跟 History ${preview.counts.sync_from_history}`],
-                    ["graduate_f6", `F6 ${preview.counts.graduate_f6}`],
+                    [
+                      "all",
+                      "全部有變更",
+                      preview.counts.promote +
+                        preview.counts.repeat +
+                        preview.counts.sync_from_history +
+                        preview.counts.graduate_f6,
+                    ],
+                    ["promote", "升班", preview.counts.promote],
+                    ["repeat", "留班", preview.counts.repeat],
+                    ["sync_from_history", "跟 History", preview.counts.sync_from_history],
+                    ["graduate_f6", "F6 畢業", preview.counts.graduate_f6],
                   ] as const
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setFilter(key)}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                      filter === key
-                        ? "bg-[#1d76c2] text-white"
-                        : "border border-slate-300 bg-white text-slate-700"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+                ).map(([key, label, count]) => {
+                  const active = filter === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setFilter(key)}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+                        active
+                          ? "bg-[#1d76c2] text-white"
+                          : "border border-slate-300 bg-white text-slate-700"
+                      }`}
+                    >
+                      {label}
+                      <span
+                        className={`min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-center tabular-nums ${
+                          active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             ) : null}
 

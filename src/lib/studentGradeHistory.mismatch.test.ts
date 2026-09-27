@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getCurrentAyGradeMismatch, historyEntry } from "@/lib/studentGradeHistory";
+import {
+  getCurrentAyGradeMismatch,
+  getCurrentStudentGrade,
+  historyEntry,
+} from "@/lib/studentGradeHistory";
 
 describe("getCurrentAyGradeMismatch", () => {
   it("returns null when grades match", () => {
@@ -41,5 +45,27 @@ describe("getCurrentAyGradeMismatch", () => {
         academicYear: "2026-27",
       }),
     ).toBeNull();
+  });
+});
+
+describe("getCurrentStudentGrade", () => {
+  it("matches Daily: History wins for current AY date", () => {
+    expect(
+      getCurrentStudentGrade({
+        studentGrade: "F1",
+        historyByAcademicYear: historyEntry("2026-27", "F2", "promoted"),
+        asOfDateIso: "2026-09-27",
+      }),
+    ).toBe("F2");
+  });
+
+  it("falls back to Student Info when History missing", () => {
+    expect(
+      getCurrentStudentGrade({
+        studentGrade: "F3",
+        historyByAcademicYear: {},
+        asOfDateIso: "2026-09-27",
+      }),
+    ).toBe("F3");
   });
 });

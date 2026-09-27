@@ -9,6 +9,8 @@ import {
   type ProgressSheet,
 } from "@/lib/studentProgressWorkbook";
 import { fetchStudentProgressForLevel } from "@/lib/studentProgressWorkbook.server";
+import { getCurrentStudentGrade, loadGradeHistoryByStudentIds } from "@/lib/studentGradeHistory";
+import { loadHeldBackYearsByStudentIds } from "@/lib/studentHeldBackYears";
 import { loadStudentProgressSelectionsDurable } from "@/lib/studentProgressSelections.server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import StudentProgressByIdClient, {
@@ -38,7 +40,7 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
   let initial: StudentProgressInitialPayload | null = null;
   try {
     const supabase = await createSupabaseServerClient();
-    const [studentRes, examInfo, selectionsRes] = await Promise.all([
+    const [studentRes, examInfo, selectionsRes, gradeHistoryRes, heldBackRes] = await Promise.all([
       supabase
         .from("students")
         .select(
@@ -48,6 +50,8 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
         .maybeSingle(),
       loadExamInfoServer(supabase, studentId),
       loadStudentProgressSelectionsDurable(studentId),
+      loadGradeHistoryByStudentIds([studentId]),
+      loadHeldBackYearsByStudentIds([studentId]),
     ]);
 
     const selections = selectionsRes.row?.selections ?? {};
@@ -56,12 +60,18 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
 
     const data = studentRes.data;
     if (data) {
+      const infoGrade = String(data.grade ?? "");
+      const effectiveGrade = getCurrentStudentGrade({
+        studentGrade: infoGrade,
+        historyByAcademicYear: gradeHistoryRes.byStudentId[studentId],
+        heldBackYears: heldBackRes.byStudentId[studentId] ?? [],
+      });
       const summary = {
         id: String(data.id),
         nameZh: String(data.name_zh ?? ""),
         nameEn: String(data.name_en ?? ""),
         nicknameEn: String(data.nickname_en ?? ""),
-        grade: String(data.grade ?? ""),
+        grade: effectiveGrade || infoGrade,
         school: String(data.school ?? ""),
         textbookPublisher: String(data.textbook_publisher ?? ""),
         mathLanguage: String(data.math_language ?? "English"),
