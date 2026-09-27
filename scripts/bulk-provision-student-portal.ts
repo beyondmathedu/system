@@ -304,6 +304,10 @@ async function main() {
         role: "student",
         student_id: studentId,
         tutor_id: null,
+        portal_auth_email: String(authUser.email ?? email).trim().toLowerCase(),
+        portal_student_id_login_only: /^[0-9]+@id\.beyondmath\.student$/.test(
+          String(authUser.email ?? "").trim().toLowerCase(),
+        ),
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" },

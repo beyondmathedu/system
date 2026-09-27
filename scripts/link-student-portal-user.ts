@@ -45,6 +45,8 @@ async function main() {
       role: "student",
       student_id: studentId,
       tutor_id: null,
+      portal_auth_email: email,
+      portal_student_id_login_only: false,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" },

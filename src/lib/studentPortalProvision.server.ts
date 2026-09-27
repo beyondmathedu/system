@@ -58,6 +58,17 @@ function normalizeEmail(raw: string | null | undefined): string {
   return String(raw ?? "").trim().toLowerCase();
 }
 
+function isMissingPortalAuthEmailColumnError(
+  error: { message?: string; code?: string } | null | undefined,
+): boolean {
+  const msg = String(error?.message ?? "").toLowerCase();
+  return (
+    msg.includes("portal_auth_email") ||
+    msg.includes("portal_student_id_login_only") ||
+    (msg.includes("column") && msg.includes("user_profiles") && msg.includes("does not exist"))
+  );
+}
+
 async function getAuthUsersByIds(
   sb: SupabaseClient,
   userIds: string[],
@@ -171,14 +182,29 @@ export async function getStudentPortalStatusBatch(
     ? Promise.resolve({ data: preloadedStudents as StudentRecord[], error: null })
     : sb.from("students").select("id, email, student_phone, grade").in("id", ids);
 
-  const [{ data: studentsRaw, error: studentsError }, { data: profilesRaw, error: profilesError }, periodRows] =
+  const profilesCachedPromise = sb
+    .from("user_profiles")
+    .select("user_id, role, student_id, portal_auth_email, portal_student_id_login_only")
+    .in("student_id", ids);
+
+  const [{ data: studentsRaw, error: studentsError }, profilesCachedRes, periodRows] =
     await Promise.all([
       studentsPromise,
-      sb.from("user_profiles").select("user_id, role, student_id").in("student_id", ids),
+      profilesCachedPromise,
       loadStudentInactivePeriodsBatchServer(sb, ids),
     ]);
   if (studentsError) throw new Error(studentsError.message);
-  if (profilesError) throw new Error(profilesError.message);
+
+  const missingPortalEmailCol = isMissingPortalAuthEmailColumnError(profilesCachedRes.error);
+  let profilesRaw: unknown[] | null = profilesCachedRes.data as unknown[] | null;
+  if (profilesCachedRes.error && !missingPortalEmailCol) {
+    throw new Error(profilesCachedRes.error.message);
+  }
+  if (missingPortalEmailCol) {
+    const fallback = await sb.from("user_profiles").select("user_id, role, student_id").in("student_id", ids);
+    if (fallback.error) throw new Error(fallback.error.message);
+    profilesRaw = (fallback.data ?? []) as unknown[];
+  }
 
   const studentsById = new Map<string, StudentRecord>();
   for (const row of studentsRaw ?? []) {
@@ -186,20 +212,38 @@ export async function getStudentPortalStatusBatch(
     if (sid) studentsById.set(sid, row as StudentRecord);
   }
 
-  const profileByStudentId = new Map<string, { user_id: string; role: string }>();
+  const profileByStudentId = new Map<
+    string,
+    {
+      user_id: string;
+      role: string;
+      portal_auth_email: string | null;
+      portal_student_id_login_only: boolean;
+    }
+  >();
   for (const row of profilesRaw ?? []) {
-    const sid = normalizeStudentId(String((row as { student_id?: string | null }).student_id ?? ""));
+    const typed = row as {
+      student_id?: string | null;
+      user_id?: string;
+      role?: string;
+      portal_auth_email?: string | null;
+      portal_student_id_login_only?: boolean | null;
+    };
+    const sid = normalizeStudentId(String(typed.student_id ?? ""));
     if (!sid) continue;
     profileByStudentId.set(sid, {
-      user_id: String((row as { user_id?: string }).user_id ?? ""),
-      role: String((row as { role?: string }).role ?? ""),
+      user_id: String(typed.user_id ?? ""),
+      role: String(typed.role ?? ""),
+      portal_auth_email: typed.portal_auth_email ? normalizeEmail(typed.portal_auth_email) : null,
+      portal_student_id_login_only: Boolean(typed.portal_student_id_login_only),
     });
   }
 
-  const linkedUserIds = [...profileByStudentId.values()]
-    .filter((p) => p.role === "student" && p.user_id)
+  // Only hit Auth Admin when cached email column is missing / empty.
+  const needAuthLookupIds = [...profileByStudentId.values()]
+    .filter((p) => p.role === "student" && p.user_id && (missingPortalEmailCol || !p.portal_auth_email))
     .map((p) => p.user_id);
-  const authById = await getAuthUsersByIds(sb, linkedUserIds);
+  const authById = needAuthLookupIds.length ? await getAuthUsersByIds(sb, needAuthLookupIds) : new Map();
   const periodsById = buildStudentInactivePeriodsById(periodRows);
   const todayIso = hkTodayIso();
   const year = defaultLessonYear();
@@ -224,7 +268,9 @@ export async function getStudentPortalStatusBatch(
     const profile = profileByStudentId.get(sid);
     const hasAccount = profile?.role === "student" && Boolean(profile.user_id);
     const authUser = hasAccount ? authById.get(profile!.user_id) : undefined;
-    const authEmail = authUser?.email ? normalizeEmail(authUser.email) : null;
+    const authEmail = hasAccount
+      ? profile!.portal_auth_email || (authUser?.email ? normalizeEmail(authUser.email) : null)
+      : null;
     const access = computeStudentPortalAccessState({
       studentId: sid,
       grade: student.grade,
@@ -241,7 +287,7 @@ export async function getStudentPortalStatusBatch(
       reactivateDate: access.reactivateDate,
       ready,
       readyReason,
-      studentIdLoginOnly: isStudentIdOnlyAuthEmail(authEmail),
+      studentIdLoginOnly: Boolean(profile?.portal_student_id_login_only) || isStudentIdOnlyAuthEmail(authEmail),
     };
   }
 
@@ -316,11 +362,28 @@ export async function provisionStudentPortalAccount(
       role: "student",
       student_id: sid,
       tutor_id: null,
+      portal_auth_email: authEmail,
+      portal_student_id_login_only: studentIdLoginOnly,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" },
   );
-  if (upsertError) throw new Error(upsertError.message);
+  if (upsertError && !isMissingPortalAuthEmailColumnError(upsertError)) {
+    throw new Error(upsertError.message);
+  }
+  if (upsertError && isMissingPortalAuthEmailColumnError(upsertError)) {
+    const { error: legacyUpsertError } = await sb.from("user_profiles").upsert(
+      {
+        user_id: authUser.id,
+        role: "student",
+        student_id: sid,
+        tutor_id: null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    if (legacyUpsertError) throw new Error(legacyUpsertError.message);
+  }
 
   return {
     ok: true,
@@ -399,6 +462,18 @@ export async function syncStudentPortalEmail(studentId: string): Promise<Student
 
   const { error } = await sb.auth.admin.updateUserById(userId, { email });
   if (error) throw new Error(error.message);
+
+  const { error: profileError } = await sb
+    .from("user_profiles")
+    .update({
+      portal_auth_email: email,
+      portal_student_id_login_only: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+  if (profileError && !isMissingPortalAuthEmailColumnError(profileError)) {
+    throw new Error(profileError.message);
+  }
 
   return {
     ok: true,
