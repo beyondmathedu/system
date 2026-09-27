@@ -7,6 +7,9 @@ export const TUTOR_STATUS_OCCASIONAL = "放假中";
 /** 共用 iPad 登入帳（Auth email）；可進全部課室並記錄出席／堂後小結 */
 export const TUTOR_SHARED_IPAD_EMAIL = "hk6896554@gmail.com";
 
+/** 共用 iPad 登入帳（public.tutors.id）；全部老師共用同一個登入 */
+export const TUTOR_SHARED_IPAD_ID = "T_IPAD";
+
 /** 共用 iPad 登入帳（public.tutors）；非真實授課導師 */
 export const TUTOR_SHARED_IPAD_DISPLAY_NAME = "iPad Shared";
 

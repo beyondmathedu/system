@@ -2,6 +2,10 @@ import "server-only";
 
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  TUTOR_SHARED_IPAD_EMAIL,
+  TUTOR_SHARED_IPAD_ID,
+} from "@/lib/tutorConstants";
 
 export type TutorAuthStatusRow = {
   tutorId: string;
@@ -22,6 +26,33 @@ function normalizeTutorId(raw: string): string {
 
 function normalizeEmail(raw: string | null | undefined): string {
   return String(raw ?? "").trim().toLowerCase();
+}
+
+async function findAuthUserByEmail(email: string): Promise<User | undefined> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
+  }
+  const target = normalizeEmail(email);
+  if (!target) return undefined;
+
+  const res = await fetch(
+    `${url}/auth/v1/admin/users?page=1&per_page=50&filter=${encodeURIComponent(target)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Auth email lookup failed (${res.status})`);
+  }
+  const body = (await res.json()) as { users?: User[] };
+  return (body.users ?? []).find((u) => normalizeEmail(u.email) === target);
 }
 
 async function getAuthUsersByIds(
@@ -66,6 +97,85 @@ async function resolveTutorAuthUserId(sb: SupabaseClient, tutorId: string): Prom
   return String((rows[0] as { user_id: string }).user_id);
 }
 
+/** Shared classroom login used by all tutors (iPad account). */
+export async function getSharedTutorLoginStatus(): Promise<TutorAuthStatusRow> {
+  const sb = getSupabaseAdmin();
+  const tid = TUTOR_SHARED_IPAD_ID;
+
+  try {
+    const userId = await resolveTutorAuthUserId(sb, tid);
+    const { data, error } = await sb.auth.admin.getUserById(userId);
+    if (!error && data.user) {
+      return {
+        tutorId: tid,
+        hasAccount: true,
+        authEmail: data.user.email ? normalizeEmail(data.user.email) : TUTOR_SHARED_IPAD_EMAIL,
+      };
+    }
+  } catch {
+    /* fall through to email lookup */
+  }
+
+  const byEmail = await findAuthUserByEmail(TUTOR_SHARED_IPAD_EMAIL);
+  if (byEmail) {
+    return {
+      tutorId: tid,
+      hasAccount: true,
+      authEmail: normalizeEmail(byEmail.email) || TUTOR_SHARED_IPAD_EMAIL,
+    };
+  }
+
+  return { tutorId: tid, hasAccount: false, authEmail: TUTOR_SHARED_IPAD_EMAIL };
+}
+
+export async function resetSharedTutorLoginPassword(password: string): Promise<TutorAuthActionResult> {
+  const trimmedPassword = String(password ?? "").trim();
+  if (trimmedPassword.length < 6) {
+    throw new Error("新密碼至少 6 個字元。");
+  }
+
+  const sb = getSupabaseAdmin();
+  const tid = TUTOR_SHARED_IPAD_ID;
+  let userId: string | null = null;
+
+  try {
+    userId = await resolveTutorAuthUserId(sb, tid);
+  } catch {
+    const byEmail = await findAuthUserByEmail(TUTOR_SHARED_IPAD_EMAIL);
+    userId = byEmail?.id ?? null;
+    if (userId) {
+      // Keep profile linked so future resets / role checks stay consistent.
+      const { error: upsertError } = await sb.from("user_profiles").upsert(
+        {
+          user_id: userId,
+          role: "tutor",
+          tutor_id: tid,
+          student_id: null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" },
+      );
+      if (upsertError) throw new Error(upsertError.message);
+    }
+  }
+
+  if (!userId) {
+    throw new Error(
+      `尚未找到共用登入帳（${TUTOR_SHARED_IPAD_EMAIL}）。請先在 Supabase Auth 建立此電郵用戶。`,
+    );
+  }
+
+  const { error } = await sb.auth.admin.updateUserById(userId, { password: trimmedPassword });
+  if (error) throw new Error(error.message);
+
+  return {
+    ok: true,
+    action: "reset-password",
+    message: "共用 Tutor 登入密碼已更新。所有老師用同一組電郵／密碼登入。",
+    userId,
+  };
+}
+
 export async function getTutorAuthStatusBatch(
   tutorIds: string[],
 ): Promise<Record<string, TutorAuthStatusRow>> {
@@ -94,6 +204,10 @@ export async function getTutorAuthStatusBatch(
   const authById = await getAuthUsersByIds(sb, linkedUserIds);
 
   for (const tid of ids) {
+    if (tid === TUTOR_SHARED_IPAD_ID) {
+      out[tid] = await getSharedTutorLoginStatus();
+      continue;
+    }
     const profile = profileByTutorId.get(tid);
     const hasAccount = Boolean(profile?.user_id);
     const authUser = hasAccount ? authById.get(profile!.user_id) : undefined;
@@ -114,9 +228,13 @@ export async function resetTutorPassword(
   const tid = normalizeTutorId(tutorId);
   if (!tid) throw new Error("Invalid tutor id");
 
+  if (tid === TUTOR_SHARED_IPAD_ID || tid.toLowerCase() === "shared") {
+    return resetSharedTutorLoginPassword(password);
+  }
+
   const trimmedPassword = String(password ?? "").trim();
   if (trimmedPassword.length < 6) {
-    throw new Error("Password must be at least 6 characters.");
+    throw new Error("新密碼至少 6 個字元。");
   }
 
   const sb = getSupabaseAdmin();
@@ -131,7 +249,7 @@ export async function resetTutorPassword(
   return {
     ok: true,
     action: "reset-password",
-    message: "Tutor login password updated.",
+    message: "Tutor 登入密碼已更新。",
     userId,
   };
 }

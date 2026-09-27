@@ -884,7 +884,7 @@ export default function StudentsPageClient({
                 onChange={(v) => onFieldChange("school", v)}
               />
               <InputField
-                label="Grade（Student Info；儲存後同步 History／Daily）"
+                label="Grade"
                 value={form.grade}
                 onChange={(v) => onFieldChange("grade", v)}
                 type="select"
