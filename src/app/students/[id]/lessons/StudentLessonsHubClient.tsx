@@ -29,8 +29,10 @@ import {
   academicYearLabelZh,
   ensureCurrentYearHistoryFallback,
   getCurrentAcademicYear,
+  getCurrentAyGradeMismatch,
   listGradeHistoryRows,
   setCurrentAcademicYearStatus,
+  syncStudentsGradeToCurrentHistory,
   type GradeHistoryByAcademicYear,
   type GradeHistoryStatus,
 } from "@/lib/studentGradeHistory";
@@ -243,6 +245,58 @@ export default function StudentLessonsHubClient({
   const currentAyStatus: GradeHistoryStatus = currentAyRow?.status ?? "normal";
   const currentAyGrade = currentAyRow?.grade || studentSummary.grade;
   const historyRows = useMemo(() => listGradeHistoryRows(gradeHistory), [gradeHistory]);
+  const [liveMismatch, setLiveMismatch] = useState(() =>
+    getCurrentAyGradeMismatch({
+      studentGrade: studentSummary.grade,
+      historyByAcademicYear: initialBootstrap.gradeHistory ?? {},
+    }),
+  );
+  useEffect(() => {
+    setLiveMismatch(
+      getCurrentAyGradeMismatch({
+        studentGrade: studentSummary.grade,
+        historyByAcademicYear: gradeHistory,
+      }),
+    );
+  }, [studentSummary.grade, gradeHistory]);
+
+  async function syncInfoGradeToHistory() {
+    if (!studentId || isTutorReadOnly || isStudentPortal) return;
+    const grade = normalizeGradeCode(studentSummary.grade);
+    if (!grade) {
+      setAcademicStatusError("Student Info 沒有有效年級。");
+      return;
+    }
+    setAcademicStatusSaving(true);
+    setAcademicStatusError("");
+    const prev = gradeHistory;
+    const keepRepeating = currentAyStatus === "repeating";
+    setGradeHistory((map) => ({
+      ...map,
+      [currentAcademicYear]: {
+        academicYear: currentAcademicYear,
+        grade,
+        status: keepRepeating ? "repeating" : "manual_adjustment",
+        note: "synced from Student Info",
+      },
+    }));
+    try {
+      const res = await syncStudentsGradeToCurrentHistory({
+        studentId,
+        grade,
+        status: keepRepeating ? "repeating" : "manual_adjustment",
+      });
+      if (!res.ok) {
+        setGradeHistory(prev);
+        setAcademicStatusError(res.error ?? "同步失敗");
+        return;
+      }
+      await revalidateScheduleCachesNow();
+      setLiveMismatch(null);
+    } finally {
+      setAcademicStatusSaving(false);
+    }
+  }
 
   async function saveAcademicRepeating(repeating: boolean) {
     if (!studentId || isTutorReadOnly || isStudentPortal) return;
@@ -798,6 +852,23 @@ export default function StudentLessonsHubClient({
             <div className="border-t border-slate-200 p-6">
               <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-3">
                 <p className="text-xs font-semibold tracking-wider text-amber-900/80">Academic Status</p>
+                {liveMismatch ? (
+                  <div className="mt-2 rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-900">
+                    <p className="font-semibold">年級不一致（Daily 會跟 History）</p>
+                    <p className="mt-1">
+                      Student Info：{formatGradeDisplay(liveMismatch.infoGrade)} · History（
+                      {liveMismatch.academicYear}）：{formatGradeDisplay(liveMismatch.historyGrade)}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={academicStatusSaving}
+                      onClick={() => void syncInfoGradeToHistory()}
+                      className="mt-2 inline-flex items-center rounded-md bg-rose-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-800 disabled:opacity-60"
+                    >
+                      以 Student Info 為準同步到 History
+                    </button>
+                  </div>
+                ) : null}
                 <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900/70">
@@ -809,10 +880,13 @@ export default function StudentLessonsHubClient({
                   </div>
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900/70">
-                      Current Grade
+                      Current Grade（History）
                     </p>
                     <p className="mt-0.5 text-sm font-bold text-amber-950">
                       {formatGradeDisplay(currentAyGrade) || "—"}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-amber-900/70">
+                      Student Info：{formatGradeDisplay(studentSummary.grade) || "—"}
                     </p>
                   </div>
                   <div>

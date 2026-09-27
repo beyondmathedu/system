@@ -307,4 +307,25 @@ export function ensureCurrentYearHistoryFallback(params: {
   return map;
 }
 
+/**
+ * True mismatch only when a real Grade History row exists for the current AY
+ * and its grade differs from Student Info (`students.grade`).
+ * Ignore synthetic fallback notes from ensureCurrentYearHistoryFallback.
+ */
+export function getCurrentAyGradeMismatch(params: {
+  studentGrade: string;
+  historyByAcademicYear?: GradeHistoryByAcademicYear | null;
+  academicYear?: string;
+}): { academicYear: string; infoGrade: string; historyGrade: string } | null {
+  const academicYear = params.academicYear ?? getCurrentAcademicYear();
+  const infoGrade = normalizeGradeCode(params.studentGrade);
+  const hist = params.historyByAcademicYear?.[academicYear];
+  if (!infoGrade || !hist?.grade) return null;
+  const note = String(hist.note ?? "");
+  if (note === "from students.grade" || note === "from held_back_years") return null;
+  const historyGrade = normalizeGradeCode(hist.grade);
+  if (!historyGrade || historyGrade === infoGrade) return null;
+  return { academicYear, infoGrade, historyGrade };
+}
+
 export { formatAcademicYearId, getAcademicYear, getAcademicYearForMonth, getCurrentAcademicYear, academicYearLabelZh };

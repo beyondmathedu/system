@@ -20,7 +20,12 @@ import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 import {
   loadHeldBackYearsByStudentIds,
 } from "@/lib/studentHeldBackYears";
-import { syncStudentsGradeToCurrentHistory } from "@/lib/studentGradeHistory";
+import {
+  getCurrentAcademicYear,
+  getCurrentAyGradeMismatch,
+  loadGradeHistoryByStudentIds,
+  syncStudentsGradeToCurrentHistory,
+} from "@/lib/studentGradeHistory";
 import { revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
 
 type Student = {
@@ -40,6 +45,8 @@ type Student = {
   birthTs: number;
   searchBlob: string;
   heldBackYears: number[];
+  /** Current AY history grade when it differs from Student Info. */
+  historyGradeMismatch: string;
 };
 type SortDirection = "asc" | "desc";
 type SortConfig = { key: keyof Student; direction: SortDirection } | null;
@@ -79,7 +86,10 @@ export type StudentsPageInitialList = {
   portalStatusById: Record<string, StudentPortalStatus>;
 };
 
-type StudentForm = Omit<Student, "id" | "birthTs" | "searchBlob" | "heldBackYears">;
+type StudentForm = Omit<
+  Student,
+  "id" | "birthTs" | "searchBlob" | "heldBackYears" | "historyGradeMismatch"
+>;
 
 const emptyForm: StudentForm = {
   nameZh: "",
@@ -802,14 +812,26 @@ export default function StudentsPageClient({
 
         <div className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="px-6 py-5 text-white" style={{ backgroundImage: PRIMARY_GRADIENT }}>
-            <h1 className="text-2xl font-bold tracking-tight">All Student Information</h1>
-            <p className="mt-1 text-sm text-blue-100">
-              Fill in the form below to add a student. A Portal account is opened automatically when
-              email and contact number pass validation.
-            </p>
-            <p className="mt-1 text-xs text-blue-100/90">
-              System ID: {editingId ?? suggestedNextId} (auto-numbered, starting from 00001)
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">All Student Information</h1>
+                <p className="mt-1 text-sm text-blue-100">
+                  Fill in the form below to add a student. A Portal account is opened automatically when
+                  email and contact number pass validation.
+                </p>
+                <p className="mt-1 text-xs text-blue-100/90">
+                  System ID: {editingId ?? suggestedNextId} (auto-numbered, starting from 00001)
+                </p>
+              </div>
+              {isAdmin ? (
+                <Link
+                  href="/students/grade-promotion-preview"
+                  className="rounded-lg border border-white/40 bg-white/15 px-3 py-2 text-xs font-semibold text-white hover:bg-white/25"
+                >
+                  升班預覽
+                </Link>
+              ) : null}
+            </div>
           </div>
 
           <div className="p-6">
@@ -1320,6 +1342,11 @@ export default function StudentsPageClient({
                         </td>
                         <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {formatGradeDisplay(student.grade)}
+                          {student.historyGradeMismatch ? (
+                            <span className="mt-0.5 block text-[10px] font-semibold text-rose-700">
+                              History≠Info（Daily: {formatGradeDisplay(student.historyGradeMismatch)}）
+                            </span>
+                          ) : null}
                           {student.heldBackYears?.length ? (
                             <span className="mt-0.5 block text-[10px] font-medium text-amber-800">
                               留班
@@ -1889,6 +1916,7 @@ function mapRowToStudent(row: StudentRow): Student {
     takesM1: Boolean(row.takes_m1),
     takesM2: Boolean(row.takes_m2),
     heldBackYears: [] as number[],
+    historyGradeMismatch: "",
     birthTs: Number.isFinite(parsedBirthTs) ? parsedBirthTs : Number.MAX_SAFE_INTEGER,
   };
   return { ...base, searchBlob: buildStudentSearchBlob(base) };
@@ -1896,11 +1924,24 @@ function mapRowToStudent(row: StudentRow): Student {
 
 async function attachHeldBackYears(students: Student[]): Promise<Student[]> {
   if (!students.length) return students;
-  const { byStudentId } = await loadHeldBackYearsByStudentIds(students.map((s) => s.id));
-  return students.map((s) => ({
-    ...s,
-    heldBackYears: byStudentId[s.id] ?? [],
-  }));
+  const ids = students.map((s) => s.id);
+  const [{ byStudentId: heldById }, history] = await Promise.all([
+    loadHeldBackYearsByStudentIds(ids),
+    loadGradeHistoryByStudentIds(ids),
+  ]);
+  const ay = getCurrentAcademicYear();
+  return students.map((s) => {
+    const mismatch = getCurrentAyGradeMismatch({
+      studentGrade: s.grade,
+      historyByAcademicYear: history.byStudentId[s.id],
+      academicYear: ay,
+    });
+    return {
+      ...s,
+      heldBackYears: heldById[s.id] ?? [],
+      historyGradeMismatch: mismatch ? mismatch.historyGrade : "",
+    };
+  });
 }
 
 function mapFormToRow(form: StudentForm) {
