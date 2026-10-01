@@ -38,20 +38,12 @@ const JUNIOR_CATALOG: TextbookPublisherGroup[] = [
 
 const SENIOR_CATALOG: TextbookPublisherGroup[] = [
   {
-    publisher: "Chung Tai",
-    books: [{ title: "Effective Learning" }],
-  },
-  {
     publisher: "Ephhk",
-    books: [
-      { title: "Mathematics in Focus" },
-      { title: "Maths Smart" },
-      { title: "Mathematics in Focus (2nd)" },
-    ],
+    books: [{ title: "Maths Smart" }, { title: "Mathematics in Focus (2nd)" }],
   },
   {
     publisher: "HKEP",
-    books: [{ title: "New Progress in Senior Mathematics" }, { title: "Maths Beyond" }],
+    books: [{ title: "Maths Beyond" }],
   },
   {
     publisher: "Modern",
@@ -59,17 +51,12 @@ const SENIOR_CATALOG: TextbookPublisherGroup[] = [
   },
   {
     publisher: "Oxford",
-    books: [
-      { title: "New Century Mathematics (2nd Edition)" },
-      { title: "New Century" },
-    ],
+    books: [{ title: "New Century" }],
   },
   {
     publisher: "Pearson",
     books: [
-      { title: "Mastering Mathematics" },
       { title: "Mastering Mathematics (2nd Edition)" },
-      { title: "Mathematics in Action (2nd Edition)" },
       { title: "Mathematics in Action (3rd)" },
     ],
   },
