@@ -2156,50 +2156,6 @@ export default function StudentsLessonTimeFeeRecordPage({
                     </svg>
                     {syncingZoho ? "Syncing..." : "Sync Zoho Receipts"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void (async () => {
-                        setSyncingZoho(true);
-                        setSyncNotice("Importing Excel tuition paid…");
-                        try {
-                          const resp = await fetch("/api/students-lesson-fee-record/import-excel", {
-                            method: "POST",
-                            credentials: "same-origin",
-                          });
-                          const json = (await resp.json()) as {
-                            ok?: boolean;
-                            error?: string;
-                            upserted?: number;
-                            unmatchedCount?: number;
-                            unmatchedExamples?: string[];
-                          };
-                          if (!resp.ok || !json.ok) throw new Error(json.error ?? "import_failed");
-                          setSyncNotice(
-                            `Excel 匯入完成。已更新 ${Number(json.upserted ?? 0)} 個月份學費` +
-                              (json.unmatchedCount
-                                ? `；${json.unmatchedCount} 個姓名未能對上` +
-                                  (json.unmatchedExamples?.length
-                                    ? `（例如 ${json.unmatchedExamples.join("、")}）`
-                                    : "")
-                                : "") +
-                              "。",
-                          );
-                          await revalidateScheduleCachesNow();
-                          window.location.reload();
-                        } catch (e: unknown) {
-                          setSyncNotice(`Excel 匯入失敗：${e instanceof Error ? e.message : String(e)}`);
-                        } finally {
-                          setSyncingZoho(false);
-                        }
-                      })();
-                    }}
-                    disabled={syncingZoho}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                    title="用 data/tuition-fee-record-2026.xlsx（Tution Fee Record2026）覆寫 May–Dec 已繳，對齊人手真數目。"
-                  >
-                    Import Excel Paid
-                  </button>
                 </div>
                 <div
                   className="mb-0 flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-slate-50 p-2"
