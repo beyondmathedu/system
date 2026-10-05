@@ -1,7 +1,9 @@
 import {
   formatTextbookPublisherValue,
+  resolveExtendedMathsTextbookSelection,
   resolveTextbookSelection,
 } from "@/lib/textbookPublisherCatalog";
+import { M1_SHEET, M2_SHEET } from "@/lib/studentProgressWorkbook";
 
 export type TextbookColumnPair = {
   headerEn: string;
@@ -75,15 +77,36 @@ function normalizeMatchKey(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function normalizeTextbookMatchText(value: string): string {
+  return normalizeMatchKey(value)
+    .replace(/\bmaths\b/g, "mathematics")
+    .replace(/\s*\(\s*\d+(?:st|nd|rd|th)?(?:\s*edition)?\s*\)/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function textbookNamesLooselyMatch(headerLabel: string, candidate: string): boolean {
+  const label = normalizeTextbookMatchText(headerLabel);
+  const query = normalizeTextbookMatchText(candidate);
+  if (!label || !query) return false;
+  return label === query || label.includes(query) || query.includes(label);
+}
+
+export type ProgressTextbookCatalog = "core" | "extended";
+
 export function selectTextbookColumnPair(
   pairs: TextbookColumnPair[],
   textbookPublisher: string,
   grade: string,
+  catalog: ProgressTextbookCatalog = "core",
 ): TextbookColumnPair | null {
   if (!pairs.length) return null;
   if (pairs.length === 1) return pairs[0];
 
-  const resolved = resolveTextbookSelection(grade, textbookPublisher);
+  const resolved =
+    catalog === "extended"
+      ? resolveExtendedMathsTextbookSelection(textbookPublisher)
+      : resolveTextbookSelection(grade, textbookPublisher);
   const formatted =
     resolved.publisher && resolved.book
       ? formatTextbookPublisherValue(resolved.publisher, resolved.book)
@@ -96,45 +119,75 @@ export function selectTextbookColumnPair(
   ].filter(Boolean);
 
   for (const candidate of candidates) {
-    const key = normalizeMatchKey(candidate);
-    const match = pairs.find((pair) => pair.label && normalizeMatchKey(pair.label) === key);
+    const match = pairs.find((pair) => pair.label && textbookNamesLooselyMatch(pair.label, candidate));
     if (match) return match;
-  }
-
-  if (resolved.book) {
-    const bookKey = normalizeMatchKey(resolved.book.title);
-    const fuzzy = pairs.find(
-      (pair) => pair.label && normalizeMatchKey(pair.label).includes(bookKey),
-    );
-    if (fuzzy) return fuzzy;
   }
 
   return pairs.find((pair) => pair.label === null) ?? pairs[0] ?? null;
 }
 
-export function getTextbookColumnDisplayLabel(textbookPublisher: string, grade: string): string {
-  const resolved = resolveTextbookSelection(grade, textbookPublisher);
+export function getTextbookColumnDisplayLabel(
+  textbookPublisher: string,
+  grade: string,
+  catalog: ProgressTextbookCatalog = "core",
+): string {
+  const resolved =
+    catalog === "extended"
+      ? resolveExtendedMathsTextbookSelection(textbookPublisher)
+      : resolveTextbookSelection(grade, textbookPublisher);
   if (resolved.book?.title) return resolved.book.title;
   if (resolved.publisher) return resolved.publisher;
   return "Textbook";
 }
 
+export function textbookOptionsForProgressSheet(
+  sheetName: string,
+  student: {
+    textbookPublisher?: string;
+    grade?: string;
+    m1TextbookPublisher?: string;
+    m2TextbookPublisher?: string;
+  },
+): { textbookPublisher: string; grade: string; catalog: ProgressTextbookCatalog } {
+  if (sheetName === M1_SHEET) {
+    return {
+      textbookPublisher: student.m1TextbookPublisher ?? "",
+      grade: student.grade ?? "",
+      catalog: "extended",
+    };
+  }
+  if (sheetName === M2_SHEET) {
+    return {
+      textbookPublisher: student.m2TextbookPublisher ?? "",
+      grade: student.grade ?? "",
+      catalog: "extended",
+    };
+  }
+  return {
+    textbookPublisher: student.textbookPublisher ?? "",
+    grade: student.grade ?? "",
+    catalog: "core",
+  };
+}
+
 export function buildProgressSheetColumns(
   headers: string[],
-  options?: { textbookPublisher?: string; grade?: string },
+  options?: { textbookPublisher?: string; grade?: string; catalog?: ProgressTextbookCatalog },
 ): ProgressSheetColumn[] {
+  const catalog = options?.catalog ?? "core";
   const pairs = findTextbookColumnPairs(headers);
   const selectedPair = selectTextbookColumnPair(
     pairs,
     options?.textbookPublisher ?? "",
     options?.grade ?? "",
+    catalog,
   );
   const selectedIndexes = selectedPair
     ? new Set([selectedPair.colIndexEn, selectedPair.colIndexZh])
     : new Set<number>();
   const displayLabel =
     selectedPair?.label ||
-    getTextbookColumnDisplayLabel(options?.textbookPublisher ?? "", options?.grade ?? "");
+    getTextbookColumnDisplayLabel(options?.textbookPublisher ?? "", options?.grade ?? "", catalog);
 
   const cols: ProgressSheetColumn[] = [];
   for (let i = 0; i < headers.length; i += 1) {

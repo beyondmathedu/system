@@ -4,6 +4,7 @@ import {
   findTextbookColumnPairs,
   parseTextbookHeaderLabel,
   selectTextbookColumnPair,
+  textbookOptionsForProgressSheet,
 } from "@/lib/studentProgressTextbookColumns";
 
 describe("parseTextbookHeaderLabel", () => {
@@ -69,6 +70,68 @@ describe("selectTextbookColumnPair", () => {
   });
 });
 
+describe("selectTextbookColumnPair for M1/M2 workbook headers", () => {
+  const m1Pairs = findTextbookColumnPairs([
+    "",
+    "Textbook:",
+    "Textbook:",
+    "Basic Concept",
+    "Date",
+    "Remarks",
+    "Textbook: Senior Secondary Oxford Math for the New Century",
+    "Textbook: Senior Secondary Oxford Math for the New Century",
+    "Textbook: HKDSE Mathematics in Action (Extended Part)",
+    "Textbook: HKDSE Mathematics in Action (Extended Part)",
+    "Textbook:Mathematics in Focus",
+    "Textbook:Mathematics in Focus",
+    "Textbook: New Progress in Senior Mathematics",
+    "Textbook: New Progress in Senior Mathematics",
+  ]);
+
+  it("maps Oxford New Century to the Oxford M1 columns", () => {
+    const selected = selectTextbookColumnPair(m1Pairs, "Oxford · New Century", "F.4");
+    expect(selected?.label).toBe("Senior Secondary Oxford Math for the New Century");
+  });
+
+  it("maps Pearson senior Maths in Action to the Extended Part columns", () => {
+    const selected = selectTextbookColumnPair(
+      m1Pairs,
+      "Pearson · Mathematics in Action (3rd)",
+      "F.5",
+    );
+    expect(selected?.label).toBe("HKDSE Mathematics in Action (Extended Part)");
+  });
+
+  it("maps Ephhk Mathematics in Focus to the Focus columns", () => {
+    const selected = selectTextbookColumnPair(
+      m1Pairs,
+      "Ephhk · Mathematics in Focus (2nd)",
+      "F.5",
+    );
+    expect(selected?.label).toBe("Mathematics in Focus");
+  });
+
+  it("uses the dedicated M1 textbook selection on the extended catalog", () => {
+    const selected = selectTextbookColumnPair(
+      m1Pairs,
+      "Oxford · Senior Secondary Oxford Math for the New Century",
+      "F.5",
+      "extended",
+    );
+    expect(selected?.label).toBe("Senior Secondary Oxford Math for the New Century");
+  });
+
+  it("uses Pearson Extended Part from the M1 textbook field", () => {
+    const selected = selectTextbookColumnPair(
+      m1Pairs,
+      "Pearson · HKDSE Mathematics in Action (Extended Part)",
+      "F.5",
+      "extended",
+    );
+    expect(selected?.label).toBe("HKDSE Mathematics in Action (Extended Part)");
+  });
+});
+
 describe("buildProgressSheetColumns", () => {
   it("keeps only the selected textbook pair in output columns", () => {
     const headers = [
@@ -89,5 +152,25 @@ describe("buildProgressSheetColumns", () => {
     expect(textbook && textbook.kind === "textbookCombined" ? textbook.displayLabel : "").toBe(
       "Maths in Action",
     );
+  });
+
+  it("uses M1 textbook selection for the M1 sheet", () => {
+    const headers = [
+      "",
+      "Textbook:",
+      "Textbook:",
+      "Textbook: Senior Secondary Oxford Math for the New Century",
+      "Textbook: Senior Secondary Oxford Math for the New Century",
+    ];
+    const cols = buildProgressSheetColumns(
+      headers,
+      textbookOptionsForProgressSheet("M1", {
+        textbookPublisher: "Pearson · Maths in Action",
+        grade: "F.4",
+        m1TextbookPublisher: "Oxford · Senior Secondary Oxford Math for the New Century",
+      }),
+    );
+    const textbook = cols.find((c) => c.kind === "textbookCombined");
+    expect(textbook && textbook.kind === "textbookCombined" ? textbook.colIndexEn : -1).toBe(3);
   });
 });

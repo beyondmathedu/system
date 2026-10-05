@@ -44,7 +44,7 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
       supabase
         .from("students")
         .select(
-          "id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language, takes_m1, takes_m2",
+          "id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language, takes_m1, takes_m2, m1_textbook_publisher, m2_textbook_publisher",
         )
         .eq("id", studentId)
         .maybeSingle(),
@@ -77,6 +77,8 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
         mathLanguage: String(data.math_language ?? "English"),
         takesM1: Boolean(data.takes_m1),
         takesM2: Boolean(data.takes_m2),
+        m1TextbookPublisher: String(data.m1_textbook_publisher ?? ""),
+        m2TextbookPublisher: String(data.m2_textbook_publisher ?? ""),
       };
       const level = parseGradeLevel(summary.grade);
       let sheets: ProgressSheet[] = [];
@@ -115,6 +117,8 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
           mathLanguage: "English",
           takesM1: false,
           takesM2: false,
+          m1TextbookPublisher: "",
+          m2TextbookPublisher: "",
         },
         studentNotFound: true,
         examInfo,

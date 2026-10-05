@@ -99,6 +99,30 @@ export function getTextbookCatalog(band: TextbookBand): TextbookPublisherGroup[]
   return band === "junior" ? JUNIOR_CATALOG : SENIOR_CATALOG;
 }
 
+/** M1/M2 workbook titles from student-progress-beyond-math.xlsx. */
+const EXTENDED_MATHS_CATALOG: TextbookPublisherGroup[] = [
+  {
+    publisher: "Oxford",
+    books: [{ title: "Senior Secondary Oxford Math for the New Century" }],
+  },
+  {
+    publisher: "Pearson",
+    books: [{ title: "HKDSE Mathematics in Action (Extended Part)" }],
+  },
+  {
+    publisher: "Ephhk",
+    books: [{ title: "Mathematics in Focus" }],
+  },
+  {
+    publisher: "HKEP",
+    books: [{ title: "New Progress in Senior Mathematics" }],
+  },
+];
+
+export function getExtendedMathsCatalog(): TextbookPublisherGroup[] {
+  return EXTENDED_MATHS_CATALOG;
+}
+
 export function formatTextbookPublisherValue(publisher: string, book: TextbookBook): string {
   return `${publisher} · ${book.title}`;
 }
@@ -126,6 +150,33 @@ function normalizeTitleForBand(band: TextbookBand, title: string): string {
   return LEGACY_TITLE_ALIASES[band][title] ?? title;
 }
 
+function resolveAgainstCatalog(
+  storedValue: string,
+  catalog: TextbookPublisherGroup[],
+  normalizeTitle?: (title: string) => string,
+): { publisher: string; book: TextbookBook | null } {
+  const parsed = parseTextbookPublisherValue(storedValue);
+  if (!parsed) return { publisher: "", book: null };
+
+  const group = catalog.find((g) => g.publisher === parsed.publisher);
+  if (!group) return { publisher: "", book: null };
+
+  if (!parsed.book) {
+    return { publisher: parsed.publisher, book: null };
+  }
+
+  const normalizedTitle = normalizeTitle ? normalizeTitle(parsed.book.title) : parsed.book.title;
+  const match = group.books.find((b) => b.title === normalizedTitle);
+  if (match) return { publisher: parsed.publisher, book: match };
+
+  const fuzzy = group.books.find(
+    (b) => b.title.toLowerCase() === normalizedTitle.toLowerCase(),
+  );
+  if (fuzzy) return { publisher: parsed.publisher, book: fuzzy };
+
+  return { publisher: parsed.publisher, book: null };
+}
+
 export function resolveTextbookSelection(
   grade: string,
   storedValue: string,
@@ -136,22 +187,13 @@ export function resolveTextbookSelection(
   const band = gradeToTextbookBand(grade);
   if (!band) return parsed;
 
-  const catalog = getTextbookCatalog(band);
-  const group = catalog.find((g) => g.publisher === parsed.publisher);
-  if (!group) return { publisher: "", book: null };
-
-  if (!parsed.book) {
-    return { publisher: parsed.publisher, book: null };
-  }
-
-  const normalizedTitle = normalizeTitleForBand(band, parsed.book.title);
-  const match = group.books.find((b) => b.title === normalizedTitle);
-  if (match) return { publisher: parsed.publisher, book: match };
-
-  const fuzzy = group.books.find(
-    (b) => b.title.toLowerCase() === normalizedTitle.toLowerCase(),
+  return resolveAgainstCatalog(storedValue, getTextbookCatalog(band), (title) =>
+    normalizeTitleForBand(band, title),
   );
-  if (fuzzy) return { publisher: parsed.publisher, book: fuzzy };
+}
 
-  return { publisher: parsed.publisher, book: null };
+export function resolveExtendedMathsTextbookSelection(
+  storedValue: string,
+): { publisher: string; book: TextbookBook | null } {
+  return resolveAgainstCatalog(storedValue, getExtendedMathsCatalog());
 }

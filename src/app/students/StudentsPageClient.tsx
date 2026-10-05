@@ -43,6 +43,8 @@ type Student = {
   mathLanguage: string;
   takesM1: boolean;
   takesM2: boolean;
+  m1TextbookPublisher: string;
+  m2TextbookPublisher: string;
   birthTs: number;
   searchBlob: string;
   heldBackYears: number[];
@@ -67,6 +69,8 @@ type StudentRow = {
   math_language: string | null;
   takes_m1?: boolean | null;
   takes_m2?: boolean | null;
+  m1_textbook_publisher?: string | null;
+  m2_textbook_publisher?: string | null;
 };
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const STUDENTS_PAGE_SIZE = 80;
@@ -107,6 +111,8 @@ const emptyForm: StudentForm = {
   mathLanguage: "English",
   takesM1: false,
   takesM2: false,
+  m1TextbookPublisher: "",
+  m2TextbookPublisher: "",
 };
 
 function buildStudentSearchBlob(student: {
@@ -435,8 +441,24 @@ export default function StudentsPageClient({
 
   const onFieldChange = (field: keyof StudentForm, value: string | boolean) => {
     setForm((prev) => {
-      if (field === "takesM1" || field === "takesM2") {
-        return { ...prev, [field]: Boolean(value) };
+      if (field === "takesM1") {
+        const takesM1 = Boolean(value);
+        return {
+          ...prev,
+          takesM1,
+          m1TextbookPublisher: takesM1 ? prev.m1TextbookPublisher : "",
+        };
+      }
+      if (field === "takesM2") {
+        const takesM2 = Boolean(value);
+        return {
+          ...prev,
+          takesM2,
+          m2TextbookPublisher: takesM2 ? prev.m2TextbookPublisher : "",
+        };
+      }
+      if (field === "m1TextbookPublisher" || field === "m2TextbookPublisher") {
+        return { ...prev, [field]: String(value) };
       }
       if (field !== "grade") return { ...prev, [field]: value as string };
       const grade = String(value);
@@ -459,6 +481,10 @@ export default function StudentsPageClient({
       if (value == null || value === "") continue;
       if (key === "takesM1" || key === "takesM2") {
         next[key] = Boolean(value);
+        continue;
+      }
+      if (key === "m1TextbookPublisher" || key === "m2TextbookPublisher") {
+        next[key] = String(value);
         continue;
       }
       if (typeof value === "string") {
@@ -756,6 +782,8 @@ export default function StudentsPageClient({
       mathLanguage: target.mathLanguage,
       takesM1: target.takesM1,
       takesM2: target.takesM2,
+      m1TextbookPublisher: target.m1TextbookPublisher,
+      m2TextbookPublisher: target.m2TextbookPublisher,
     });
   };
 
@@ -996,6 +1024,28 @@ export default function StudentsPageClient({
                   )}
                 </div>
               </div>
+              {form.takesM1 || form.takesM2 ? (
+                <div className="md:col-span-2 xl:col-span-3 flex flex-col gap-6">
+                  {form.takesM1 ? (
+                    <TextbookPublisherPicker
+                      variant="extended"
+                      title="M1 textbook publisher"
+                      hint="Choose the M1 book title shown on student progress"
+                      value={form.m1TextbookPublisher}
+                      onChange={(v) => onFieldChange("m1TextbookPublisher", v)}
+                    />
+                  ) : null}
+                  {form.takesM2 ? (
+                    <TextbookPublisherPicker
+                      variant="extended"
+                      title="M2 textbook publisher"
+                      hint="Choose the M2 book title shown on student progress"
+                      value={form.m2TextbookPublisher}
+                      onChange={(v) => onFieldChange("m2TextbookPublisher", v)}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             {formError && (
               <p className="mt-2 text-sm font-medium text-red-600">{formError}</p>
@@ -1370,7 +1420,7 @@ export default function StudentsPageClient({
                         <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.mathLanguage}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-4 align-middle text-sm text-slate-700">
+                        <td className="max-w-[280px] whitespace-pre-line px-4 py-4 align-middle text-sm leading-5 text-slate-700">
                           {formatTakesMathsPapers(student)}
                         </td>
                         {isAdmin ? (
@@ -1900,11 +1950,17 @@ async function fetchNextStudentIdFromDb(): Promise<string> {
   return body.nextId;
 }
 
-function formatTakesMathsPapers(student: Pick<Student, "takesM1" | "takesM2">): string {
-  if (student.takesM1 && student.takesM2) return "M1, M2";
-  if (student.takesM1) return "M1";
-  if (student.takesM2) return "M2";
-  return "—";
+function formatTakesMathsPapers(
+  student: Pick<Student, "takesM1" | "takesM2" | "m1TextbookPublisher" | "m2TextbookPublisher">,
+): string {
+  const parts: string[] = [];
+  if (student.takesM1) {
+    parts.push(student.m1TextbookPublisher ? `M1 · ${student.m1TextbookPublisher}` : "M1");
+  }
+  if (student.takesM2) {
+    parts.push(student.m2TextbookPublisher ? `M2 · ${student.m2TextbookPublisher}` : "M2");
+  }
+  return parts.join("\n") || "—";
 }
 
 function mapRowToStudent(row: StudentRow): Student {
@@ -1924,6 +1980,8 @@ function mapRowToStudent(row: StudentRow): Student {
     mathLanguage: row.math_language ?? "English",
     takesM1: Boolean(row.takes_m1),
     takesM2: Boolean(row.takes_m2),
+    m1TextbookPublisher: row.m1_textbook_publisher ?? "",
+    m2TextbookPublisher: row.m2_textbook_publisher ?? "",
     heldBackYears: [] as number[],
     effectiveGrade: normalizeGradeCode(row.grade),
     historyGradeMismatch: "",
@@ -1985,5 +2043,7 @@ function mapFormToRow(form: StudentForm) {
     math_language: mathLanguage ? mathLanguage : null,
     takes_m1: Boolean(form.takesM1),
     takes_m2: Boolean(form.takesM2),
+    m1_textbook_publisher: form.takesM1 && form.m1TextbookPublisher.trim() ? form.m1TextbookPublisher.trim() : null,
+    m2_textbook_publisher: form.takesM2 && form.m2TextbookPublisher.trim() ? form.m2TextbookPublisher.trim() : null,
   };
 }

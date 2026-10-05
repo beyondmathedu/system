@@ -20,6 +20,8 @@ export type StudentsListRow = {
   math_language: string | null;
   takes_m1: boolean | null;
   takes_m2: boolean | null;
+  m1_textbook_publisher: string | null;
+  m2_textbook_publisher: string | null;
 };
 
 /** Sub-filter when status is inactive. */
@@ -192,7 +194,7 @@ export async function listStudentsForPage(
   let query = supabase
     .from("students")
     .select(
-      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language, takes_m1, takes_m2",
+      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language, takes_m1, takes_m2, m1_textbook_publisher, m2_textbook_publisher",
       { count: "exact" },
     )
     .order("id", { ascending: true });
@@ -282,6 +284,8 @@ export async function listStudentsForPage(
         math_language: null,
         takes_m1: null,
         takes_m2: null,
+        m1_textbook_publisher: null,
+        m2_textbook_publisher: null,
       };
       if (!studentMatchesStatus(stub, inactivePeriodsById, status, inactiveKind, todayHkIso, year)) {
         continue;
@@ -307,7 +311,7 @@ export async function listStudentsForPage(
   const { data: pageData, error: pageErr } = await supabase
     .from("students")
     .select(
-      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language, takes_m1, takes_m2",
+      "id, name_zh, name_en, nickname_en, birth_date, student_phone, email, school, textbook_publisher, grade, math_language, takes_m1, takes_m2, m1_textbook_publisher, m2_textbook_publisher",
     )
     .in("id", pageIds);
   if (pageErr) throw new Error(pageErr.message);

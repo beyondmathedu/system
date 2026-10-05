@@ -21,6 +21,7 @@ import {
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import {
   buildProgressSheetColumns,
+  textbookOptionsForProgressSheet,
   type ProgressSheetColumn,
 } from "@/lib/studentProgressTextbookColumns";
 import {
@@ -56,6 +57,8 @@ type StudentSummary = {
   mathLanguage: string;
   takesM1: boolean;
   takesM2: boolean;
+  m1TextbookPublisher: string;
+  m2TextbookPublisher: string;
 };
 
 export type StudentProgressInitialPayload = {
@@ -519,6 +522,8 @@ export default function StudentProgressByIdClient({
         mathLanguage: "English",
         takesM1: false,
         takesM2: false,
+        m1TextbookPublisher: "",
+        m2TextbookPublisher: "",
       },
   );
   const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>(
@@ -640,7 +645,7 @@ export default function StudentProgressByIdClient({
         supabase
           .from("students")
           .select(
-            "id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language, takes_m1, takes_m2",
+            "id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, math_language, takes_m1, takes_m2, m1_textbook_publisher, m2_textbook_publisher",
           )
           .eq("id", studentId)
           .maybeSingle(),
@@ -665,6 +670,8 @@ export default function StudentProgressByIdClient({
           mathLanguage: "English",
           takesM1: false,
           takesM2: false,
+          m1TextbookPublisher: "",
+          m2TextbookPublisher: "",
         });
         setStudentNotFound(true);
         setStudentLoaded(true);
@@ -689,6 +696,8 @@ export default function StudentProgressByIdClient({
         mathLanguage: data.math_language ?? "English",
         takesM1: Boolean(data.takes_m1),
         takesM2: Boolean(data.takes_m2),
+        m1TextbookPublisher: data.m1_textbook_publisher ?? "",
+        m2TextbookPublisher: data.m2_textbook_publisher ?? "",
       });
       setStudentNotFound(false);
       setStudentLoaded(true);
@@ -1041,6 +1050,22 @@ export default function StudentProgressByIdClient({
                     <p className="text-xs font-semibold tracking-wider text-slate-500">Textbook publisher</p>
                     <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.textbookPublisher || "—"}</p>
                   </div>
+                  {studentSummary.takesM1 ? (
+                    <div>
+                      <p className="text-xs font-semibold tracking-wider text-slate-500">M1 textbook</p>
+                      <p className="mt-1 text-sm font-bold text-slate-900">
+                        {studentSummary.m1TextbookPublisher || "—"}
+                      </p>
+                    </div>
+                  ) : null}
+                  {studentSummary.takesM2 ? (
+                    <div>
+                      <p className="text-xs font-semibold tracking-wider text-slate-500">M2 textbook</p>
+                      <p className="mt-1 text-sm font-bold text-slate-900">
+                        {studentSummary.m2TextbookPublisher || "—"}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1084,10 +1109,10 @@ export default function StudentProgressByIdClient({
                     const sheet = activeProgressSheet;
                     const isCutOffSheet = sheet.name === CUT_OFF_SHEET;
                     const activeSheet = isCutOffSheet && cutOffSheet ? cutOffSheet : sheet;
-                    const columns = buildProgressSheetColumns(activeSheet.headers, {
-                      textbookPublisher: studentSummary.textbookPublisher,
-                      grade: studentSummary.grade,
-                    });
+                    const columns = buildProgressSheetColumns(
+                      activeSheet.headers,
+                      textbookOptionsForProgressSheet(sheet.name, studentSummary),
+                    );
                     const cutOffDisplay = isCutOffSheet ? buildCutOffDisplayModel(activeSheet) : null;
                     return (
                       <>

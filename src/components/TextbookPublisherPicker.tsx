@@ -3,16 +3,21 @@
 import { useMemo, useState } from "react";
 import {
   formatTextbookPublisherValue,
+  getExtendedMathsCatalog,
   getTextbookCatalog,
   gradeToTextbookBand,
+  resolveExtendedMathsTextbookSelection,
   resolveTextbookSelection,
   type TextbookBook,
 } from "@/lib/textbookPublisherCatalog";
 
 type Props = {
-  grade: string;
+  grade?: string;
   value: string;
   onChange: (value: string) => void;
+  variant?: "grade" | "extended";
+  title?: string;
+  hint?: string;
 };
 
 const PUBLISHER_BTN =
@@ -25,13 +30,27 @@ const BOOK_BTN =
 const BOOK_IDLE = "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50";
 const BOOK_ACTIVE = "border-[#1d76c2] bg-[#1d76c2]/5 text-[#1d76c2] ring-1 ring-[#1d76c2]/30";
 
-export default function TextbookPublisherPicker({ grade, value, onChange }: Props) {
-  const band = gradeToTextbookBand(grade);
-  const catalog = useMemo(() => (band ? getTextbookCatalog(band) : []), [band]);
+export default function TextbookPublisherPicker({
+  grade = "",
+  value,
+  onChange,
+  variant = "grade",
+  title,
+  hint,
+}: Props) {
+  const isExtended = variant === "extended";
+  const band = isExtended ? null : gradeToTextbookBand(grade);
+  const catalog = useMemo(
+    () => (isExtended ? getExtendedMathsCatalog() : band ? getTextbookCatalog(band) : []),
+    [band, isExtended],
+  );
 
   const resolved = useMemo(
-    () => resolveTextbookSelection(grade, value),
-    [grade, value],
+    () =>
+      isExtended
+        ? resolveExtendedMathsTextbookSelection(value)
+        : resolveTextbookSelection(grade, value),
+    [grade, isExtended, value],
   );
 
   const [publisherDraft, setPublisherDraft] = useState<string | null>(null);
@@ -50,9 +69,13 @@ export default function TextbookPublisherPicker({ grade, value, onChange }: Prop
 
   function selectPublisher(publisher: string) {
     setPublisherDraft(publisher);
-    const parsed = resolveTextbookSelection(grade, value);
-    if (parsed.publisher === publisher && parsed.book) {
-      onChange(formatTextbookPublisherValue(publisher, parsed.book));
+    const books = catalog.find((g) => g.publisher === publisher)?.books ?? [];
+    if (books.length === 1 && books[0]) {
+      onChange(formatTextbookPublisherValue(publisher, books[0]));
+      return;
+    }
+    if (resolved.publisher === publisher && resolved.book) {
+      onChange(formatTextbookPublisherValue(publisher, resolved.book));
     } else {
       onChange("");
     }
@@ -65,10 +88,19 @@ export default function TextbookPublisherPicker({ grade, value, onChange }: Prop
 
   const selectedBook = resolved.book;
 
-  if (!band) {
+  const heading = title ?? "Textbook publisher";
+  const subhint =
+    hint ??
+    (isExtended
+      ? "Choose the Maths Extended textbook used on the M1/M2 progress sheet"
+      : band === "junior"
+        ? "F.1–F.3 — choose publisher"
+        : "F.4–F.6 — choose publisher");
+
+  if (!isExtended && !band) {
     return (
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-semibold text-slate-700">Textbook publisher</span>
+        <span className="text-sm font-semibold text-slate-700">{heading}</span>
         <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500">
           Please select a grade (F.1–F.6) first.
         </p>
@@ -79,10 +111,8 @@ export default function TextbookPublisherPicker({ grade, value, onChange }: Prop
   return (
     <div className="flex flex-col gap-3 md:col-span-2 xl:col-span-3">
       <div>
-        <p className="mb-1 text-sm font-semibold text-slate-700">Textbook publisher</p>
-        <p className="mb-2 text-xs text-slate-500">
-          {band === "junior" ? "F.1–F.3" : "F.4–F.6"} — choose publisher
-        </p>
+        <p className="mb-1 text-sm font-semibold text-slate-700">{heading}</p>
+        <p className="mb-2 text-xs text-slate-500">{subhint}</p>
         <div className="flex flex-wrap gap-2">
           {catalog.map((group) => {
             const active = selectedPublisher === group.publisher;
