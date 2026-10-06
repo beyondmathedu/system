@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import StudentTextbookSummary from "@/components/StudentTextbookSummary";
 import AppTopNav from "@/components/AppTopNav";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import { supabase } from "@/lib/supabase";
@@ -1000,7 +1001,7 @@ export default function StudentProgressByIdClient({
           )}
 
           <div className="border-b border-slate-200 bg-slate-50 p-6">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,32%)_minmax(0,1fr)]">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">Student ID</p>
@@ -1046,26 +1047,13 @@ export default function StudentProgressByIdClient({
                       </div>
                     </>
                   ) : null}
-                  <div>
-                    <p className="text-xs font-semibold tracking-wider text-slate-500">Textbook publisher</p>
-                    <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.textbookPublisher || "—"}</p>
-                  </div>
-                  {studentSummary.takesM1 ? (
-                    <div>
-                      <p className="text-xs font-semibold tracking-wider text-slate-500">M1 textbook</p>
-                      <p className="mt-1 text-sm font-bold text-slate-900">
-                        {studentSummary.m1TextbookPublisher || "—"}
-                      </p>
-                    </div>
-                  ) : null}
-                  {studentSummary.takesM2 ? (
-                    <div>
-                      <p className="text-xs font-semibold tracking-wider text-slate-500">M2 textbook</p>
-                      <p className="mt-1 text-sm font-bold text-slate-900">
-                        {studentSummary.m2TextbookPublisher || "—"}
-                      </p>
-                    </div>
-                  ) : null}
+                  <StudentTextbookSummary
+                    textbookPublisher={studentSummary.textbookPublisher}
+                    takesM1={studentSummary.takesM1}
+                    takesM2={studentSummary.takesM2}
+                    m1TextbookPublisher={studentSummary.m1TextbookPublisher}
+                    m2TextbookPublisher={studentSummary.m2TextbookPublisher}
+                  />
                 </div>
               </div>
             </div>

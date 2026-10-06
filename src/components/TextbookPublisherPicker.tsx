@@ -18,6 +18,8 @@ type Props = {
   variant?: "grade" | "extended";
   title?: string;
   hint?: string;
+  className?: string;
+  badge?: string;
 };
 
 const PUBLISHER_BTN =
@@ -37,6 +39,8 @@ export default function TextbookPublisherPicker({
   variant = "grade",
   title,
   hint,
+  className,
+  badge,
 }: Props) {
   const isExtended = variant === "extended";
   const band = isExtended ? null : gradeToTextbookBand(grade);
@@ -54,13 +58,13 @@ export default function TextbookPublisherPicker({
   );
 
   const [publisherDraft, setPublisherDraft] = useState<string | null>(null);
-  const resetKey = `${band ?? ""}::${resolved.publisher}`;
-  const [lastResetKey, setLastResetKey] = useState(resetKey);
-  if (resetKey !== lastResetKey) {
-    setLastResetKey(resetKey);
+  const catalogKey = isExtended ? "extended" : (band ?? "");
+  const [lastCatalogKey, setLastCatalogKey] = useState(catalogKey);
+  if (catalogKey !== lastCatalogKey) {
+    setLastCatalogKey(catalogKey);
     setPublisherDraft(null);
   }
-  const selectedPublisher = resolved.publisher || publisherDraft;
+  const selectedPublisher = publisherDraft || resolved.publisher;
 
   const booksForPublisher = useMemo(() => {
     if (!selectedPublisher) return [];
@@ -94,13 +98,25 @@ export default function TextbookPublisherPicker({
     (isExtended
       ? "Choose the Maths Extended textbook used on the M1/M2 progress sheet"
       : band === "junior"
-        ? "F.1–F.3 — choose publisher"
-        : "F.4–F.6 — choose publisher");
+        ? "Compulsory Maths · F.1–F.3 publishers"
+        : "Compulsory Maths · F.4–F.6 publishers");
+
+  const headingBlock = (
+    <div className="mb-2 flex flex-wrap items-center gap-2">
+      {badge ? (
+        <span className="inline-flex items-center rounded-md bg-[#1d76c2] px-2 py-0.5 text-xs font-bold tracking-wide text-white">
+          {badge}
+        </span>
+      ) : null}
+      <p className="text-sm font-bold text-slate-900">{heading}</p>
+      <span className="text-xs font-medium text-slate-500">Optional</span>
+    </div>
+  );
 
   if (!isExtended && !band) {
     return (
-      <div className="flex flex-col gap-1">
-        <span className="text-sm font-semibold text-slate-700">{heading}</span>
+      <div className={className ?? "flex flex-col gap-1 md:col-span-2 xl:col-span-3"}>
+        {headingBlock}
         <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500">
           Please select a grade (F.1–F.6) first.
         </p>
@@ -109,9 +125,9 @@ export default function TextbookPublisherPicker({
   }
 
   return (
-    <div className="flex flex-col gap-3 md:col-span-2 xl:col-span-3">
+    <div className={className ?? "flex flex-col gap-3 md:col-span-2 xl:col-span-3"}>
       <div>
-        <p className="mb-1 text-sm font-semibold text-slate-700">{heading}</p>
+        {headingBlock}
         <p className="mb-2 text-xs text-slate-500">{subhint}</p>
         <div className="flex flex-wrap gap-2">
           {catalog.map((group) => {
@@ -155,7 +171,9 @@ export default function TextbookPublisherPicker({
         <p className="text-xs text-slate-600">
           Selected: <span className="font-medium text-slate-800">{value}</span>
         </p>
-      ) : null}
+      ) : (
+        <p className="text-xs text-slate-400">No textbook selected (optional)</p>
+      )}
     </div>
   );
 }

@@ -62,6 +62,10 @@ export type HydratedLessonYearBootstrap = {
     grade: string;
     school: string;
     textbookPublisher: string;
+    takesM1: boolean;
+    takesM2: boolean;
+    m1TextbookPublisher: string;
+    m2TextbookPublisher: string;
   };
   examInfo: { examDate: string; examContent: string };
   visibilityMode: "active" | "inactive";
@@ -118,6 +122,10 @@ export function hydrateLessonYearFromBootstrap(
         grade: "",
         school: "",
         textbookPublisher: "",
+        takesM1: false,
+        takesM2: false,
+        m1TextbookPublisher: "",
+        m2TextbookPublisher: "",
       },
       examInfo: {
         examDate: bootstrap.examInfo?.examDate ?? "",
@@ -166,6 +174,10 @@ export function hydrateLessonYearFromBootstrap(
       grade: data.grade ?? "",
       school: data.school ?? "",
       textbookPublisher: data.textbook_publisher ?? "",
+      takesM1: Boolean(data.takes_m1),
+      takesM2: Boolean(data.takes_m2),
+      m1TextbookPublisher: data.m1_textbook_publisher ?? "",
+      m2TextbookPublisher: data.m2_textbook_publisher ?? "",
     },
     examInfo: {
       examDate: bootstrap.examInfo?.examDate ?? "",

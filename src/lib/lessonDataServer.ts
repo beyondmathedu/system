@@ -1071,6 +1071,10 @@ export type StudentLessonsBootstrapStudent = {
   grade: string | null;
   school: string | null;
   textbook_publisher: string | null;
+  takes_m1: boolean | null;
+  takes_m2: boolean | null;
+  m1_textbook_publisher: string | null;
+  m2_textbook_publisher: string | null;
 };
 
 /** One pass for student lessons hub / year page (shared by API + RSC). */
@@ -1092,7 +1096,7 @@ export async function loadStudentLessonsBootstrap(
   ] = await Promise.all([
       supabase
         .from("students")
-        .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher")
+        .select("id, name_zh, name_en, nickname_en, grade, school, textbook_publisher, takes_m1, takes_m2, m1_textbook_publisher, m2_textbook_publisher")
         .eq("id", studentId)
         .maybeSingle(),
       loadExamInfoServer(supabase, studentId),

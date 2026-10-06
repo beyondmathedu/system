@@ -7,6 +7,10 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
 import ScheduleDuplicateRulesBanner from "@/components/ScheduleDuplicateRulesBanner";
 import { VirtualTableSpacerRow } from "@/components/VirtualTableSpacerRow";
+import StudentTextbookSummary, {
+  EMPTY_STUDENT_TEXTBOOK_FIELDS,
+  textbookFieldsFromStudentRow,
+} from "@/components/StudentTextbookSummary";
 import { supabase } from "@/lib/supabase";
 import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import type { StudentLessonsBootstrapPayload } from "@/lib/lessonDataServer";
@@ -176,6 +180,10 @@ type StudentSummary = {
   grade: string;
   school: string;
   textbookPublisher: string;
+  takesM1: boolean;
+  takesM2: boolean;
+  m1TextbookPublisher: string;
+  m2TextbookPublisher: string;
 };
 
 type ScheduleRecord = {
@@ -665,7 +673,7 @@ export function StudentLessonsYearPage({
       nicknameEn: "",
       grade: "",
       school: "",
-      textbookPublisher: "",
+      ...EMPTY_STUDENT_TEXTBOOK_FIELDS,
     },
   );
   const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>(() =>
@@ -1197,6 +1205,10 @@ export function StudentLessonsYearPage({
             grade?: string | null;
             school?: string | null;
             textbook_publisher?: string | null;
+            takes_m1?: boolean | null;
+            takes_m2?: boolean | null;
+            m1_textbook_publisher?: string | null;
+            m2_textbook_publisher?: string | null;
           } | null;
           examInfo?: { examDate?: string; examContent?: string };
           scheduleRecords?: unknown[];
@@ -1253,7 +1265,7 @@ export function StudentLessonsYearPage({
             nicknameEn: "",
             grade: "",
             school: "",
-            textbookPublisher: "",
+            ...EMPTY_STUDENT_TEXTBOOK_FIELDS,
           });
           setStudentNotFound(true);
           setStudentLoaded(true);
@@ -1267,7 +1279,7 @@ export function StudentLessonsYearPage({
           nicknameEn: data.nickname_en ?? "",
           grade: data.grade ?? "",
           school: data.school ?? "",
-          textbookPublisher: data.textbook_publisher ?? "",
+          ...textbookFieldsFromStudentRow(data),
         });
         const vis = body.visibilityMode;
         const rawVisMode = String(vis?.mode ?? "active").toLowerCase();
@@ -3020,7 +3032,7 @@ export function StudentLessonsYearPage({
           )}
 
           <div className="border-b border-slate-200 bg-slate-50 p-6">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,32%)_minmax(0,1fr)]">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
                 <p className="text-xs font-semibold tracking-wider text-slate-500">Student ID</p>
@@ -3071,10 +3083,13 @@ export function StudentLessonsYearPage({
                       </div>
                     </>
                   ) : null}
-                  <div>
-                    <p className="text-xs font-semibold tracking-wider text-slate-500">Textbook publisher</p>
-                    <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.textbookPublisher || "—"}</p>
-                  </div>
+                  <StudentTextbookSummary
+                    textbookPublisher={studentSummary.textbookPublisher}
+                    takesM1={studentSummary.takesM1}
+                    takesM2={studentSummary.takesM2}
+                    m1TextbookPublisher={studentSummary.m1TextbookPublisher}
+                    m2TextbookPublisher={studentSummary.m2TextbookPublisher}
+                  />
                 </div>
               </div>
             </div>

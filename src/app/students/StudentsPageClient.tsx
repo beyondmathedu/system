@@ -911,20 +911,15 @@ export default function StudentsPageClient({
                 value={form.school}
                 onChange={(v) => onFieldChange("school", v)}
               />
-              <InputField
-                label="Grade"
-                value={form.grade}
-                onChange={(v) => onFieldChange("grade", v)}
-                type="select"
-                options={["F.1", "F.2", "F.3", "F.4", "F.5", "F.6"]}
-              />
-              <TextbookPublisherPicker
-                grade={form.grade}
-                value={form.textbookPublisher}
-                onChange={(v) => onFieldChange("textbookPublisher", v)}
-              />
-              <div className="md:col-span-2 xl:col-span-3 flex flex-col gap-3 md:flex-row md:items-end md:gap-4">
-                <fieldset className="block md:basis-[45%] md:flex-none">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:col-span-2 xl:col-span-2">
+                <InputField
+                  label="Grade"
+                  value={form.grade}
+                  onChange={(v) => onFieldChange("grade", v)}
+                  type="select"
+                  options={["F.1", "F.2", "F.3", "F.4", "F.5", "F.6"]}
+                />
+                <fieldset className="min-w-0">
                   <legend className="mb-1 block text-sm font-semibold text-slate-700">
                     Maths instruction language
                   </legend>
@@ -965,12 +960,34 @@ export default function StudentsPageClient({
                     </div>
                   </ClientOnlyAfterMount>
                 </fieldset>
-
-                <fieldset className="block md:basis-auto md:flex-none">
+              </div>
+              <div className="md:col-span-2 xl:col-span-3 rounded-xl border border-slate-200 bg-white p-4">
+                <TextbookPublisherPicker
+                  grade={form.grade}
+                  value={form.textbookPublisher}
+                  onChange={(v) => onFieldChange("textbookPublisher", v)}
+                  badge="Compulsory"
+                  title="Textbook publisher"
+                  hint="Optional. Used on F.1–F.6 student progress sheets if chosen. You can add a student without this."
+                  className="flex flex-col gap-3"
+                />
+              </div>
+              <div className="md:col-span-2 xl:col-span-3 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center rounded-md bg-slate-800 px-2 py-0.5 text-xs font-bold tracking-wide text-white">
+                    Extended
+                  </span>
+                  <p className="text-sm font-bold text-slate-900">Maths Extended (M1 / M2)</p>
+                  <span className="text-xs font-medium text-slate-500">Optional</span>
+                </div>
+                <p className="mb-3 text-xs text-slate-500">
+                  Not required to add a student. Tick M1 and/or M2 only if needed, then you may also leave the paper textbook blank.
+                </p>
+                <fieldset className="min-w-0">
                   <legend className="mb-1 block text-sm font-semibold text-slate-700">
-                    Maths Extended
+                    Papers <span className="font-normal text-slate-500">(optional)</span>
                   </legend>
-                  <div className="flex h-[42px] items-center gap-4 rounded-lg border border-slate-300 bg-white px-3">
+                  <div className="flex h-[42px] max-w-md items-center gap-4 rounded-lg border border-slate-300 bg-white px-3">
                     <label className="inline-flex items-center gap-2 text-sm text-slate-800">
                       <input
                         type="checkbox"
@@ -991,61 +1008,72 @@ export default function StudentsPageClient({
                     </label>
                   </div>
                 </fieldset>
-
-                <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-3 md:basis-[40%] md:flex-none md:pr-[1%] md:pb-[2px]">
-                  {formNotice ? (
-                    <p className="mr-auto text-sm font-medium text-emerald-700">{formNotice}</p>
-                  ) : null}
+                {form.takesM1 || form.takesM2 ? (
+                  <div
+                    className={`mt-4 grid grid-cols-1 gap-4 ${
+                      form.takesM1 && form.takesM2 ? "xl:grid-cols-2" : ""
+                    }`}
+                  >
+                    {form.takesM1 ? (
+                      <div className="rounded-xl border border-[#1d76c2]/30 bg-[#1d76c2]/5 p-4">
+                        <TextbookPublisherPicker
+                          variant="extended"
+                          badge="M1"
+                          title="M1 textbook publisher"
+                          hint="Optional. Only for the M1 student progress sheet if chosen."
+                          value={form.m1TextbookPublisher}
+                          onChange={(v) => onFieldChange("m1TextbookPublisher", v)}
+                          className="flex flex-col gap-3"
+                        />
+                      </div>
+                    ) : null}
+                    {form.takesM2 ? (
+                      <div className="rounded-xl border border-violet-300 bg-violet-50/80 p-4">
+                        <TextbookPublisherPicker
+                          variant="extended"
+                          badge="M2"
+                          title="M2 textbook publisher"
+                          hint="Optional. Only for the M2 student progress sheet if chosen."
+                          value={form.m2TextbookPublisher}
+                          onChange={(v) => onFieldChange("m2TextbookPublisher", v)}
+                          className="flex flex-col gap-3"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <div className="md:col-span-2 xl:col-span-3 flex flex-wrap items-center justify-end gap-3">
+                {formNotice ? (
+                  <p className="mr-auto text-sm font-medium text-emerald-700">{formNotice}</p>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={saveStudent}
+                  disabled={savingForm}
+                  className="inline-flex items-center gap-2 rounded-lg px-6 py-2.5 text-base font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{ backgroundImage: PRIMARY_GRADIENT }}
+                >
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                    <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
+                  </svg>
+                  <span>{editingId ? "Save changes" : "Add student record"}</span>
+                </button>
+                {editingId && (
                   <button
                     type="button"
-                    onClick={saveStudent}
-                    disabled={savingForm}
-                    className="inline-flex items-center gap-2 rounded-lg px-6 py-2.5 text-base font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                    style={{ backgroundImage: PRIMARY_GRADIENT }}
+                    onClick={() => {
+                      setEditingId(null);
+                      setForm(emptyForm);
+                      setFormError("");
+                      setFormNotice("");
+                    }}
+                    className="rounded-lg border border-slate-300 bg-white px-6 py-2.5 text-base font-semibold text-slate-700 transition hover:bg-slate-50"
                   >
-                    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                      <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
-                    </svg>
-                    <span>{editingId ? "Save changes" : "Add student record"}</span>
+                    Cancel
                   </button>
-                  {editingId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingId(null);
-                        setForm(emptyForm);
-                        setFormError("");
-                        setFormNotice("");
-                      }}
-                      className="rounded-lg border border-slate-300 bg-white px-6 py-2.5 text-base font-semibold text-slate-700 transition hover:bg-slate-50"
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
+                )}
               </div>
-              {form.takesM1 || form.takesM2 ? (
-                <div className="md:col-span-2 xl:col-span-3 flex flex-col gap-6">
-                  {form.takesM1 ? (
-                    <TextbookPublisherPicker
-                      variant="extended"
-                      title="M1 textbook publisher"
-                      hint="Choose the M1 book title shown on student progress"
-                      value={form.m1TextbookPublisher}
-                      onChange={(v) => onFieldChange("m1TextbookPublisher", v)}
-                    />
-                  ) : null}
-                  {form.takesM2 ? (
-                    <TextbookPublisherPicker
-                      variant="extended"
-                      title="M2 textbook publisher"
-                      hint="Choose the M2 book title shown on student progress"
-                      value={form.m2TextbookPublisher}
-                      onChange={(v) => onFieldChange("m2TextbookPublisher", v)}
-                    />
-                  ) : null}
-                </div>
-              ) : null}
             </div>
             {formError && (
               <p className="mt-2 text-sm font-medium text-red-600">{formError}</p>
@@ -1264,10 +1292,7 @@ export default function StudentsPageClient({
               id={tableScrollId}
               className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
-              <ClientOnlyAfterMount
-                fallback={<StudentsTableSkeleton />}
-                disabled={Boolean(initialList)}
-              >
+              <ClientOnlyAfterMount fallback={<StudentsTableSkeleton />}>
               <table className={`divide-y divide-slate-200 ${isAdmin ? "min-w-[1780px]" : "min-w-[1500px]"}`}>
                 <thead className="bg-slate-50">
                   <tr className="divide-x divide-slate-200">

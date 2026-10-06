@@ -19,6 +19,10 @@ import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import AppTopNav from "@/components/AppTopNav";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
+import StudentTextbookSummary, {
+  EMPTY_STUDENT_TEXTBOOK_FIELDS,
+  textbookFieldsFromStudentRow,
+} from "@/components/StudentTextbookSummary";
 import ExamDateField from "./ExamDateField";
 import type { LessonScheduleRecord } from "./LessonScheduleGrid";
 import { formatGradeDisplay, normalizeGradeCode } from "@/lib/grade";
@@ -75,6 +79,10 @@ type StudentSummary = {
   grade: string;
   school: string;
   textbookPublisher: string;
+  takesM1: boolean;
+  takesM2: boolean;
+  m1TextbookPublisher: string;
+  m2TextbookPublisher: string;
 };
 
 function mapBootstrapPeriods(
@@ -104,7 +112,7 @@ function summaryFromBootstrap(
       nicknameEn: "",
       grade: "",
       school: "",
-      textbookPublisher: "",
+      ...EMPTY_STUDENT_TEXTBOOK_FIELDS,
     };
   }
   return {
@@ -114,7 +122,7 @@ function summaryFromBootstrap(
     nicknameEn: student.nickname_en ?? "",
     grade: student.grade ?? "",
     school: student.school ?? "",
-    textbookPublisher: student.textbook_publisher ?? "",
+    ...textbookFieldsFromStudentRow(student),
   };
 }
 
@@ -487,7 +495,7 @@ export default function StudentLessonsHubClient({
 
           <div className="border-b border-slate-200 bg-slate-50 p-6">
             <div className="space-y-5">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,5.5rem)_minmax(0,0.9fr)_minmax(0,4.5rem)_minmax(0,0.9fr)_minmax(16rem,2.2fr)]">
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-slate-500">Student ID</p>
                   <p className="mt-1 text-sm font-bold text-slate-900">{studentId || "—"}</p>
@@ -527,10 +535,13 @@ export default function StudentLessonsHubClient({
                   <p className="text-xs font-semibold tracking-wider text-slate-500">School</p>
                   <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.school || "—"}</p>
                 </div>
-                <div>
-                  <p className="text-xs font-semibold tracking-wider text-slate-500">Textbook publisher</p>
-                  <p className="mt-1 text-sm font-bold text-slate-900">{studentSummary.textbookPublisher || "—"}</p>
-                </div>
+                <StudentTextbookSummary
+                  textbookPublisher={studentSummary.textbookPublisher}
+                  takesM1={studentSummary.takesM1}
+                  takesM2={studentSummary.takesM2}
+                  m1TextbookPublisher={studentSummary.m1TextbookPublisher}
+                  m2TextbookPublisher={studentSummary.m2TextbookPublisher}
+                />
               </div>
 
               {!isTutorReadOnly ? (
