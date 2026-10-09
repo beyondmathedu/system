@@ -146,6 +146,12 @@ export function parseTextbookPublisherValue(raw: string): {
   return { publisher: s, book: null };
 }
 
+/** Display-only: Oxford · Book Title → Oxford */
+export function textbookPublisherDisplayName(raw: string): string {
+  const parsed = parseTextbookPublisherValue(raw);
+  return parsed?.publisher ?? "";
+}
+
 function normalizeTitleForBand(band: TextbookBand, title: string): string {
   return LEGACY_TITLE_ALIASES[band][title] ?? title;
 }

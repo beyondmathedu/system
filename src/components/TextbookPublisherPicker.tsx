@@ -146,7 +146,7 @@ export default function TextbookPublisherPicker({
         </div>
       </div>
 
-      {selectedPublisher ? (
+      {!isExtended && selectedPublisher && booksForPublisher.length > 1 ? (
         <div>
           <p className="mb-2 text-xs text-slate-500">Choose textbook ({selectedPublisher})</p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -167,13 +167,15 @@ export default function TextbookPublisherPicker({
         </div>
       ) : null}
 
-      {value ? (
-        <p className="text-xs text-slate-600">
-          Selected: <span className="font-medium text-slate-800">{value}</span>
-        </p>
-      ) : (
-        <p className="text-xs text-slate-400">No textbook selected (optional)</p>
-      )}
+      {!isExtended ? (
+        value ? (
+          <p className="text-xs text-slate-600">
+            Selected: <span className="font-medium text-slate-800">{value}</span>
+          </p>
+        ) : (
+          <p className="text-xs text-slate-400">No textbook selected (optional)</p>
+        )
+      ) : null}
     </div>
   );
 }

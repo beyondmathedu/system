@@ -9,7 +9,12 @@ import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import TextbookPublisherPicker from "@/components/TextbookPublisherPicker";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
-import { gradeToTextbookBand, resolveTextbookSelection } from "@/lib/textbookPublisherCatalog";
+import {
+  gradeToTextbookBand,
+  parseTextbookPublisherValue,
+  resolveTextbookSelection,
+  textbookPublisherDisplayName,
+} from "@/lib/textbookPublisherCatalog";
 import { parseStudentPasteBatch } from "@/lib/parseStudentPasteText";
 import {
   validateStudentContactPhone,
@@ -1420,8 +1425,8 @@ export default function StudentsPageClient({
                         <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {student.school}
                         </td>
-                        <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
-                          {student.textbookPublisher}
+                        <td className="max-w-[200px] whitespace-pre-line px-6 py-4 align-middle text-sm leading-5 text-slate-700">
+                          {formatTextbookPublisherLines(student.textbookPublisher)}
                         </td>
                         <td className="whitespace-nowrap px-6 py-4 align-middle text-sm text-slate-700">
                           {formatGradeDisplay(student.effectiveGrade || student.grade)}
@@ -1975,15 +1980,24 @@ async function fetchNextStudentIdFromDb(): Promise<string> {
   return body.nextId;
 }
 
+function formatTextbookPublisherLines(raw: string): string {
+  const parsed = parseTextbookPublisherValue(raw);
+  if (!parsed?.publisher) return "—";
+  if (!parsed.book?.title) return parsed.publisher;
+  return `${parsed.publisher}\n${parsed.book.title}`;
+}
+
 function formatTakesMathsPapers(
   student: Pick<Student, "takesM1" | "takesM2" | "m1TextbookPublisher" | "m2TextbookPublisher">,
 ): string {
   const parts: string[] = [];
   if (student.takesM1) {
-    parts.push(student.m1TextbookPublisher ? `M1 · ${student.m1TextbookPublisher}` : "M1");
+    const publisher = textbookPublisherDisplayName(student.m1TextbookPublisher);
+    parts.push(publisher ? `M1 · ${publisher}` : "M1");
   }
   if (student.takesM2) {
-    parts.push(student.m2TextbookPublisher ? `M2 · ${student.m2TextbookPublisher}` : "M2");
+    const publisher = textbookPublisherDisplayName(student.m2TextbookPublisher);
+    parts.push(publisher ? `M2 · ${publisher}` : "M2");
   }
   return parts.join("\n") || "—";
 }

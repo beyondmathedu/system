@@ -3105,7 +3105,7 @@ export function StudentLessonsYearPage({
                 Student Progress
               </Link>
             </div>
-            {targetYear === LESSON_SYSTEM_START_YEAR ? (
+            {!isStudentPortal && targetYear === LESSON_SYSTEM_START_YEAR ? (
               <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                 網站由 {LESSON_SYSTEM_START_LABEL_ZH} 起管理課表；{LESSON_SYSTEM_START_MONTH - 1}{" "}
                 月及之前之 Excel 紀錄不會顯示於此。

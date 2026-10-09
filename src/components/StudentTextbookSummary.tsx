@@ -1,3 +1,5 @@
+import { textbookPublisherDisplayName } from "@/lib/textbookPublisherCatalog";
+
 export type StudentTextbookFields = {
   textbookPublisher: string;
   takesM1: boolean;
@@ -47,12 +49,14 @@ export default function StudentTextbookSummary({
         </p>
         {takesM1 ? (
           <p className="whitespace-normal break-words">
-            <span className="font-bold">M1:</span> {m1TextbookPublisher || "—"}
+            <span className="font-bold">M1:</span>{" "}
+            {textbookPublisherDisplayName(m1TextbookPublisher) || "—"}
           </p>
         ) : null}
         {takesM2 ? (
           <p className="whitespace-normal break-words">
-            <span className="font-bold">M2:</span> {m2TextbookPublisher || "—"}
+            <span className="font-bold">M2:</span>{" "}
+            {textbookPublisherDisplayName(m2TextbookPublisher) || "—"}
           </p>
         ) : null}
       </div>
