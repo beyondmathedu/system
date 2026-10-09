@@ -3,8 +3,11 @@ import path from "node:path";
 import { unstable_cache } from "next/cache";
 import {
   buildProgressPayloadFromSheets,
+  F6_BY_TOPICS_SHEET,
+  F6_SHEET,
   M1_SHEET,
   M2_SHEET,
+  PU_SHEET,
   type ExtendedMathsOptions,
   type ProgressSheet,
   type StudentProgressWorkbookPayload,
@@ -19,11 +22,11 @@ const ALL_SHEET_NAMES = [
   "F3",
   "F4",
   "F5",
-  "F6 By Topics",
+  F6_BY_TOPICS_SHEET,
   "F6 By Years",
   "F6 學校mock卷",
   "Cut Off",
-  "Exam Schedule",
+  PU_SHEET,
   M1_SHEET,
   M2_SHEET,
 ] as const;
@@ -66,9 +69,18 @@ const loadParsedSheetsCached = unstable_cache(
       const parsed = parseSheetFromWorkbook(workbook, name, XLSX);
       if (parsed) out[name] = parsed;
     }
+    // Extra "F6" tab: identical structure to F6 By Topics (separate selection keys).
+    const topics = out[F6_BY_TOPICS_SHEET];
+    if (topics) {
+      out[F6_SHEET] = {
+        name: F6_SHEET,
+        headers: [...topics.headers],
+        rows: topics.rows.map((row) => [...row]),
+      };
+    }
     return out;
   },
-  ["student-progress-workbook-parsed-v7"],
+  ["student-progress-workbook-parsed-v10"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
@@ -78,7 +90,7 @@ const loadProgressPayloadForLevelCached = unstable_cache(
     const sheetsByName = new Map(Object.entries(sheetsRecord));
     return buildProgressPayloadFromSheets(sheetsByName, level);
   },
-  ["student-progress-sheets-v6"],
+  ["student-progress-sheets-v9"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 

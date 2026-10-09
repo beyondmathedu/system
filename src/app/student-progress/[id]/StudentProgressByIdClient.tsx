@@ -29,7 +29,10 @@ import {
   CUT_OFF_SHEET,
   DEFAULT_YEAR_GRADE_THRESHOLDS,
   F6_BY_YEARS_SHEET,
+  F6_SHEET,
+  PU_SHEET,
   getHighlightedProgressSheetNames,
+  isF6ByTopicsStyleSheet,
   parseCutOffThresholds,
   parseGradeLevel,
   parseYear,
@@ -46,6 +49,12 @@ import {
   loadStudentProgressSelectionsClient,
   saveStudentProgressSelectionsClient,
 } from "@/lib/studentProgressSelectionsClient";
+import {
+  PU_MIN_VISIBLE_ROWS,
+  getPuEntryAt,
+  patchPuEntryField,
+  visiblePuEntryCount,
+} from "@/lib/studentProgressPuNotes";
 
 type StudentSummary = {
   id: string;
@@ -368,7 +377,6 @@ const CUT_OFF_YEAR_HEADER_INPUT_CLASS =
 const CUT_OFF_TABLE_BODY_SCROLL_CLASS =
   "min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable_both-edges] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400";
 
-const F6_BY_TOPICS_SHEET = "F6 By Topics";
 const F6_YEARS_FROZEN_COL0_CLASS = "min-w-[4.5rem] max-w-[4.5rem]";
 
 type F6TopicColorKey = "lq-a1" | "lq-a2" | "lq-b" | "lq-a2-b";
@@ -507,6 +515,7 @@ export default function StudentProgressByIdClient({
   const isStudentViewer = viewerRole === "student";
   const isTutorViewerRole = viewerRole === "tutor";
   const canEditCutOff = !readOnly && viewerRole === "admin";
+  const canEditPu = !readOnly && viewerRole === "admin";
   const backHref = isStudentViewer
     ? studentPortalHomePath(studentId)
     : `/students/${encodeURIComponent(studentId)}/lessons`;
@@ -569,7 +578,9 @@ export default function StudentProgressByIdClient({
   );
   const [cutOffSheet, setCutOffSheet] = useState<ProgressSheet | null>(() => initial?.cutOffSheet ?? null);
   const [activeSheetName, setActiveSheetName] = useState("");
+  const [puRowFloor, setPuRowFloor] = useState(PU_MIN_VISIBLE_ROWS);
   const gradeLevel = parseGradeLevel(studentSummary.grade);
+  const puVisibleRowCount = Math.max(puRowFloor, visiblePuEntryCount(progressSelections));
   const extendedMaths = {
     takesM1: Boolean(studentSummary.takesM1),
     takesM2: Boolean(studentSummary.takesM2),
@@ -714,6 +725,10 @@ export default function StudentProgressByIdClient({
 
   // Load cloud selections (SSR initial + one-time localStorage migration).
   useEffect(() => {
+    setPuRowFloor(PU_MIN_VISIBLE_ROWS);
+  }, [studentId]);
+
+  useEffect(() => {
     if (!studentId) {
       setProgressSelections({});
       lastSavedSelectionsRef.current = {};
@@ -840,24 +855,30 @@ export default function StudentProgressByIdClient({
     const takesM2 = Boolean(studentSummary.takesM2);
 
     // Apply browser Cut Off override onto SSR sheets without refetching workbook.
-    if (
-      initial &&
-      initial.studentSummary.id === studentId &&
-      parseGradeLevel(initial.studentSummary.grade) === level &&
-      Boolean(initial.studentSummary.takesM1) === takesM1 &&
-      Boolean(initial.studentSummary.takesM2) === takesM2 &&
-      initial.sheets.length > 0
-    ) {
+    // If F.5+ payload is missing the new "F6" tab (stale SSR/cache), fall through to API.
+    const initialMatchesStudent =
+      Boolean(initial) &&
+      initial!.studentSummary.id === studentId &&
+      parseGradeLevel(initial!.studentSummary.grade) === level &&
+      Boolean(initial!.studentSummary.takesM1) === takesM1 &&
+      Boolean(initial!.studentSummary.takesM2) === takesM2 &&
+      initial!.sheets.length > 0;
+    const initialHasExpectedF6 =
+      level < 5 || initial!.sheets.some((sheet) => sheet.name === F6_SHEET);
+
+    if (initialMatchesStudent && initialHasExpectedF6) {
       const savedCutOff = loadCutOffOverride();
-      if (savedCutOff) {
-        setCutOffSheet(savedCutOff);
-        setProgressSheets(
-          initial.sheets.map((sheet) => {
+      const baseSheets = initial!.sheets;
+      const sheets = savedCutOff
+        ? baseSheets.map((sheet) => {
             if (sheet.name === CUT_OFF_SHEET) return savedCutOff;
             if (sheet.name === F6_BY_YEARS_SHEET) return syncF6ByYearsWithCutOff(sheet, savedCutOff);
             return sheet;
-          }),
-        );
+          })
+        : baseSheets;
+      setProgressSheets(sheets);
+      if (savedCutOff) {
+        setCutOffSheet(savedCutOff);
         const thresholds = parseCutOffThresholds([savedCutOff.headers, ...savedCutOff.rows]);
         setYearGradeThresholds({ ...DEFAULT_YEAR_GRADE_THRESHOLDS, ...thresholds });
       }
@@ -1097,12 +1118,88 @@ export default function StudentProgressByIdClient({
                   {(() => {
                     const sheet = activeProgressSheet;
                     const isCutOffSheet = sheet.name === CUT_OFF_SHEET;
+                    const isPuSheet = sheet.name === PU_SHEET;
                     const activeSheet = isCutOffSheet && cutOffSheet ? cutOffSheet : sheet;
                     const columns = buildProgressSheetColumns(
                       activeSheet.headers,
                       textbookOptionsForProgressSheet(sheet.name, studentSummary),
                     );
                     const cutOffDisplay = isCutOffSheet ? buildCutOffDisplayModel(activeSheet) : null;
+                    if (isPuSheet) {
+                      const puInputClass = canEditPu
+                        ? "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+                        : "cursor-default rounded-md border border-slate-300 bg-slate-100 px-2 py-1 text-sm text-slate-800";
+                      return (
+                        <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
+                          <p className="text-left text-base font-semibold text-slate-900">
+                            {studentSummary.school.trim() || "—"}
+                          </p>
+                          <div className="mt-6">
+                            <p className="text-sm font-bold text-slate-800">Date</p>
+                            <table className="mt-2 w-full min-w-[520px] border-separate border-spacing-0 text-sm">
+                              <tbody>
+                                {Array.from({ length: puVisibleRowCount }, (_, rowIndex) => {
+                                  const entry = getPuEntryAt(progressSelections, rowIndex);
+                                  return (
+                                    <tr key={`pu-row-${rowIndex}`} className="border-t border-slate-100">
+                                      <td className="w-[160px] whitespace-nowrap py-1.5 pr-3 align-top">
+                                        <input
+                                          type="date"
+                                          value={normalizeDateForInput(entry.date)}
+                                          readOnly={!canEditPu}
+                                          onChange={(e) => {
+                                            if (!canEditPu) return;
+                                            const nextValue = e.target.value;
+                                            setProgressSelections((prev) =>
+                                              patchPuEntryField(prev, rowIndex, "date", nextValue),
+                                            );
+                                            if (rowIndex >= puVisibleRowCount - 1) {
+                                              setPuRowFloor((floor) => Math.max(floor, rowIndex + 2));
+                                            }
+                                          }}
+                                          className={`min-w-[145px] ${puInputClass}`}
+                                        />
+                                      </td>
+                                      <td className="py-1.5 align-top">
+                                        <textarea
+                                          value={entry.note}
+                                          readOnly={!canEditPu}
+                                          onChange={(e) => {
+                                            if (!canEditPu) return;
+                                            const nextValue = e.target.value;
+                                            setProgressSelections((prev) =>
+                                              patchPuEntryField(prev, rowIndex, "note", nextValue),
+                                            );
+                                            if (rowIndex >= puVisibleRowCount - 1) {
+                                              setPuRowFloor((floor) => Math.max(floor, rowIndex + 2));
+                                            }
+                                          }}
+                                          rows={2}
+                                          className={`min-h-[2.5rem] w-full resize-y ${puInputClass}`}
+                                        />
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          {canEditPu ? (
+                            <div className="mt-3 flex shrink-0 flex-wrap gap-2 border-t border-slate-200 pt-3">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPuRowFloor((floor) => Math.max(floor, puVisibleRowCount) + 1)
+                                }
+                                className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
+                              >
+                                + Add Row
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    }
                     return (
                       <>
                         {isCutOffSheet && cutOffDisplay ? (
@@ -1218,7 +1315,7 @@ export default function StudentProgressByIdClient({
                         {activeSheet.rows.map((row, rowIndex) => {
                           if (isLegendDataRow(row)) return null;
                           const rowLevelValue = row[0] || "";
-                          const isF6TopicsSheet = sheet.name === F6_BY_TOPICS_SHEET;
+                          const isF6TopicsSheet = isF6ByTopicsStyleSheet(sheet.name);
                           const f6Col0Info = isF6TopicsSheet
                             ? getF6Col0Label(rowIndex, row, activeSheet.rows, columns)
                             : null;

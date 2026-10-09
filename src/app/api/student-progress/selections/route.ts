@@ -6,6 +6,7 @@ import {
   loadStudentProgressSelectionsDurable,
   saveStudentProgressSelectionsDurable,
 } from "@/lib/studentProgressSelections.server";
+import { mergePreservingPuSelections } from "@/lib/studentProgressPuNotes";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +66,15 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const selections = coerceProgressSelectionMap(body.selections);
+  let selections = coerceProgressSelectionMap(body.selections);
+  // PU notes are admin-only; tutors/students may still save other progress cells.
+  if (viewer.role !== "admin") {
+    const existing = await loadStudentProgressSelectionsDurable(studentId);
+    selections = mergePreservingPuSelections(
+      selections,
+      existing.row?.selections ?? {},
+    );
+  }
   const updatedBy =
     viewer.role === "student"
       ? `student:${studentId}`
