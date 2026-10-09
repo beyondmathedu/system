@@ -152,15 +152,25 @@ describe("buildProgressSheetColumns", () => {
     expect(textbook && textbook.kind === "textbookCombined" ? textbook.displayLabel : "").toBe(
       "Maths in Action",
     );
+    const basicIdx = cols.findIndex(
+      (c) => c.kind === "normal" && c.header === "Basic Concept",
+    );
+    const textbookIdx = cols.findIndex((c) => c.kind === "textbookCombined");
+    expect(textbookIdx).toBeLessThan(basicIdx);
   });
 
-  it("uses M1 textbook selection for the M1 sheet", () => {
+  it("places M1 textbook left of Basic Concept with publisher in the label", () => {
     const headers = [
       "",
       "Textbook:",
       "Textbook:",
+      "Basic Concept",
+      "Date",
+      "Remarks",
       "Textbook: Senior Secondary Oxford Math for the New Century",
       "Textbook: Senior Secondary Oxford Math for the New Century",
+      "Textbook: HKDSE Mathematics in Action (Extended Part)",
+      "Textbook: HKDSE Mathematics in Action (Extended Part)",
     ];
     const cols = buildProgressSheetColumns(
       headers,
@@ -170,7 +180,16 @@ describe("buildProgressSheetColumns", () => {
         m1TextbookPublisher: "Oxford · Senior Secondary Oxford Math for the New Century",
       }),
     );
-    const textbook = cols.find((c) => c.kind === "textbookCombined");
-    expect(textbook && textbook.kind === "textbookCombined" ? textbook.colIndexEn : -1).toBe(3);
+    const textbookIdx = cols.findIndex((c) => c.kind === "textbookCombined");
+    const basicIdx = cols.findIndex(
+      (c) => c.kind === "normal" && c.header === "Basic Concept",
+    );
+    expect(textbookIdx).toBeGreaterThanOrEqual(0);
+    expect(basicIdx).toBeGreaterThan(textbookIdx);
+    const textbook = cols[textbookIdx];
+    expect(textbook && textbook.kind === "textbookCombined" ? textbook.colIndexEn : -1).toBe(6);
+    expect(textbook && textbook.kind === "textbookCombined" ? textbook.displayLabel : "").toBe(
+      "Senior Secondary Oxford Math for the New Century (Oxford)",
+    );
   });
 });

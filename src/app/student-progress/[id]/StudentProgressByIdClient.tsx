@@ -506,6 +506,7 @@ export default function StudentProgressByIdClient({
   const viewerRole = String(navViewer?.role ?? "").toLowerCase();
   const isStudentViewer = viewerRole === "student";
   const isTutorViewerRole = viewerRole === "tutor";
+  const canEditCutOff = !readOnly && viewerRole === "admin";
   const backHref = isStudentViewer
     ? studentPortalHomePath(studentId)
     : `/students/${encodeURIComponent(studentId)}/lessons`;
@@ -583,7 +584,7 @@ export default function StudentProgressByIdClient({
   const activeLegendEntries = activeDisplaySheet ? extractLegendEntries(activeDisplaySheet.rows) : [];
 
   const commitCutOffSheet = (next: ProgressSheet) => {
-    if (readOnly) return;
+    if (!canEditCutOff) return;
     const trimmed = trimCutOffSheet(next);
     setCutOffSheet(trimmed);
     setProgressSheets((prev) =>
@@ -1142,14 +1143,15 @@ export default function StudentProgressByIdClient({
                                           <input
                                             type="text"
                                             value={cell}
+                                            readOnly={!canEditCutOff}
                                             onChange={(e) =>
                                               updateCutOffDisplayCell(displayRowIndex, displayColIndex, e.target.value)
                                             }
-                                            className={
+                                            className={`${
                                               displayColIndex === 0
                                                 ? CUT_OFF_YEAR_HEADER_INPUT_CLASS
                                                 : CUT_OFF_YEAR_INPUT_CLASS
-                                            }
+                                            }${canEditCutOff ? "" : " cursor-default bg-slate-100"}`}
                                           />
                                         </td>
                                       ))}
@@ -1158,15 +1160,17 @@ export default function StudentProgressByIdClient({
                                 </tbody>
                               </table>
                             </div>
-                            <div className="flex shrink-0 flex-wrap gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
-                              <button
-                                type="button"
-                                onClick={addCutOffRow}
-                                className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
-                              >
-                                + Add Row
-                              </button>
-                            </div>
+                            {canEditCutOff ? (
+                              <div className="flex shrink-0 flex-wrap gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+                                <button
+                                  type="button"
+                                  onClick={addCutOffRow}
+                                  className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
+                                >
+                                  + Add Row
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                         ) : (
                         <table className="min-w-full text-sm">
@@ -1177,7 +1181,7 @@ export default function StudentProgressByIdClient({
                               return (
                                 <th
                                   key={`${sheet.name}-head-textbook-${col.colIndexEn}`}
-                                  className="sticky left-0 z-30 min-w-[270px] whitespace-nowrap bg-slate-100 px-3 py-2 text-left font-semibold text-slate-700 shadow-[inset_-1px_0_0_rgba(226,232,240,1),inset_0_-1px_0_0_rgba(226,232,240,1)]"
+                                  className="sticky left-0 z-30 min-w-[270px] max-w-[320px] whitespace-normal bg-slate-100 px-3 py-2 text-left font-semibold text-slate-700 shadow-[inset_-1px_0_0_rgba(226,232,240,1),inset_0_-1px_0_0_rgba(226,232,240,1)]"
                                 >
                                   <span className="inline-block rounded bg-[#ffff00] px-2 py-0.5 text-xs font-bold leading-5 text-slate-900">
                                     {col.displayLabel}

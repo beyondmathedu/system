@@ -130,12 +130,17 @@ export function getTextbookColumnDisplayLabel(
   textbookPublisher: string,
   grade: string,
   catalog: ProgressTextbookCatalog = "core",
+  workbookLabel?: string | null,
 ): string {
   const resolved =
     catalog === "extended"
       ? resolveExtendedMathsTextbookSelection(textbookPublisher)
       : resolveTextbookSelection(grade, textbookPublisher);
-  if (resolved.book?.title) return resolved.book.title;
+  const title = workbookLabel || resolved.book?.title || "";
+  if (catalog === "extended" && title && resolved.publisher) {
+    return `${title} (${resolved.publisher})`;
+  }
+  if (title) return title;
   if (resolved.publisher) return resolved.publisher;
   return "Textbook";
 }
@@ -185,30 +190,48 @@ export function buildProgressSheetColumns(
   const selectedIndexes = selectedPair
     ? new Set([selectedPair.colIndexEn, selectedPair.colIndexZh])
     : new Set<number>();
-  const displayLabel =
-    selectedPair?.label ||
-    getTextbookColumnDisplayLabel(options?.textbookPublisher ?? "", options?.grade ?? "", catalog);
+  const displayLabel = getTextbookColumnDisplayLabel(
+    options?.textbookPublisher ?? "",
+    options?.grade ?? "",
+    catalog,
+    selectedPair?.label,
+  );
+
+  const textbookCol: ProgressSheetColumn | null = selectedPair
+    ? {
+        kind: "textbookCombined",
+        headerEn: selectedPair.headerEn,
+        headerZh: selectedPair.headerZh,
+        colIndexEn: selectedPair.colIndexEn,
+        colIndexZh: selectedPair.colIndexZh,
+        displayLabel,
+      }
+    : null;
 
   const cols: ProgressSheetColumn[] = [];
+  let textbookInserted = false;
   for (let i = 0; i < headers.length; i += 1) {
     const cur = headers[i] ?? "";
     const next = headers[i + 1] ?? "";
     if (isTextbookHeader(cur) && isTextbookHeader(next)) {
-      if (selectedPair && i === selectedPair.colIndexEn) {
-        cols.push({
-          kind: "textbookCombined",
-          headerEn: selectedPair.headerEn,
-          headerZh: selectedPair.headerZh,
-          colIndexEn: selectedPair.colIndexEn,
-          colIndexZh: selectedPair.colIndexZh,
-          displayLabel,
-        });
-      }
       i += 1;
       continue;
     }
     if (selectedIndexes.has(i)) continue;
+
+    // Keep textbook topic column immediately left of Basic Concept (M1/M2 Excel has books after Remarks).
+    if (
+      textbookCol &&
+      !textbookInserted &&
+      normalizeHeaderName(cur) === "basic concept"
+    ) {
+      cols.push(textbookCol);
+      textbookInserted = true;
+    }
     cols.push({ kind: "normal", header: cur, colIndex: i });
+  }
+  if (textbookCol && !textbookInserted) {
+    cols.unshift(textbookCol);
   }
   return cols;
 }
