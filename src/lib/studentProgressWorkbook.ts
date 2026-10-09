@@ -11,24 +11,34 @@ export type StudentProgressWorkbookPayload = {
 };
 
 export const CUT_OFF_SHEET = "Cut Off";
+export const F6_BY_TOPICS_SHEET = "F6 By Topics";
+/** Extra F6 tab: same template as F6 By Topics (cloned in workbook.server). */
+export const F6_SHEET = "F6";
 export const F6_BY_YEARS_SHEET = "F6 By Years";
+export const PU_SHEET = "PU";
 export const M1_SHEET = "M1";
 export const M2_SHEET = "M2";
 
 /** F.5+ students use F5 curriculum alongside DSE (F.6) progress sheets. */
 export const F6_PROGRESS_SHEET_NAMES = [
-  "F6 By Topics",
-  "F6 By Years",
+  F6_SHEET,
+  F6_BY_TOPICS_SHEET,
+  F6_BY_YEARS_SHEET,
   "F6 學校mock卷",
   "Cut Off",
-  "Exam Schedule",
+  PU_SHEET,
 ] as const;
 
 export const F6_PRIMARY_SHEET_NAMES = [
-  "F6 By Topics",
-  "F6 By Years",
+  F6_SHEET,
+  F6_BY_TOPICS_SHEET,
+  F6_BY_YEARS_SHEET,
   "F6 學校mock卷",
 ] as const;
+
+export function isF6ByTopicsStyleSheet(sheetName: string): boolean {
+  return sheetName === F6_BY_TOPICS_SHEET || sheetName === F6_SHEET;
+}
 
 export type ExtendedMathsOptions = {
   takesM1?: boolean;
