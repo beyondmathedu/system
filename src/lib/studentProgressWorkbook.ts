@@ -1,3 +1,8 @@
+import {
+  applyF6ByTopicsChapters,
+  isF6ByTopicsChapterSheet,
+} from "@/lib/studentProgressF6ByTopicsChapters";
+
 export type ProgressSheet = {
   name: string;
   headers: string[];
@@ -288,11 +293,14 @@ export function buildProgressPayloadFromSheets(
       continue;
     }
 
-    let rows = raw.rows;
+    let sheet: ProgressSheet = { name: sheetName, headers: raw.headers, rows: raw.rows };
     if (sheetName === F6_BY_YEARS_SHEET && loadedCutOffSheet) {
-      rows = syncF6ByYearsWithCutOff({ name: sheetName, headers: raw.headers, rows }, loadedCutOffSheet).rows;
+      sheet = syncF6ByYearsWithCutOff(sheet, loadedCutOffSheet);
     }
-    parsed.push({ name: sheetName, headers: raw.headers, rows });
+    if (isF6ByTopicsChapterSheet(sheetName)) {
+      sheet = applyF6ByTopicsChapters(sheet);
+    }
+    parsed.push(sheet);
   }
 
   const yearGradeThresholds = loadedCutOffSheet

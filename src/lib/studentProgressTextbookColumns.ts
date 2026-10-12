@@ -145,6 +145,35 @@ export function getTextbookColumnDisplayLabel(
   return "Textbook";
 }
 
+/** Silent progress-only fallback when publisher is unknown (not shown on student profile). */
+const DEFAULT_PROGRESS_OXFORD_CORE = formatTextbookPublisherValue("Oxford", {
+  title: "New Century",
+});
+const DEFAULT_PROGRESS_OXFORD_EXTENDED = formatTextbookPublisherValue("Oxford", {
+  title: "Senior Secondary Oxford Math for the New Century",
+});
+
+type ProgressTextbookOptions = {
+  textbookPublisher: string;
+  grade: string;
+  catalog: ProgressTextbookCatalog;
+  /** When set (silent Oxford default), column header shows this instead of the book title. */
+  displayLabel?: string;
+};
+
+function progressTextbookOrOxford(
+  stored: string | undefined,
+  catalog: ProgressTextbookCatalog,
+): { textbookPublisher: string; usedSilentOxford: boolean } {
+  const trimmed = String(stored ?? "").trim();
+  if (trimmed) return { textbookPublisher: trimmed, usedSilentOxford: false };
+  return {
+    textbookPublisher:
+      catalog === "extended" ? DEFAULT_PROGRESS_OXFORD_EXTENDED : DEFAULT_PROGRESS_OXFORD_CORE,
+    usedSilentOxford: true,
+  };
+}
+
 export function textbookOptionsForProgressSheet(
   sheetName: string,
   student: {
@@ -153,31 +182,43 @@ export function textbookOptionsForProgressSheet(
     m1TextbookPublisher?: string;
     m2TextbookPublisher?: string;
   },
-): { textbookPublisher: string; grade: string; catalog: ProgressTextbookCatalog } {
+): ProgressTextbookOptions {
+  const grade = student.grade ?? "";
   if (sheetName === M1_SHEET) {
+    const resolved = progressTextbookOrOxford(student.m1TextbookPublisher, "extended");
     return {
-      textbookPublisher: student.m1TextbookPublisher ?? "",
-      grade: student.grade ?? "",
+      textbookPublisher: resolved.textbookPublisher,
+      grade,
       catalog: "extended",
+      ...(resolved.usedSilentOxford ? { displayLabel: "Chapter" } : {}),
     };
   }
   if (sheetName === M2_SHEET) {
+    const resolved = progressTextbookOrOxford(student.m2TextbookPublisher, "extended");
     return {
-      textbookPublisher: student.m2TextbookPublisher ?? "",
-      grade: student.grade ?? "",
+      textbookPublisher: resolved.textbookPublisher,
+      grade,
       catalog: "extended",
+      ...(resolved.usedSilentOxford ? { displayLabel: "Chapter" } : {}),
     };
   }
+  const resolved = progressTextbookOrOxford(student.textbookPublisher, "core");
   return {
-    textbookPublisher: student.textbookPublisher ?? "",
-    grade: student.grade ?? "",
+    textbookPublisher: resolved.textbookPublisher,
+    grade,
     catalog: "core",
+    ...(resolved.usedSilentOxford ? { displayLabel: "Chapter" } : {}),
   };
 }
 
 export function buildProgressSheetColumns(
   headers: string[],
-  options?: { textbookPublisher?: string; grade?: string; catalog?: ProgressTextbookCatalog },
+  options?: {
+    textbookPublisher?: string;
+    grade?: string;
+    catalog?: ProgressTextbookCatalog;
+    displayLabel?: string;
+  },
 ): ProgressSheetColumn[] {
   const catalog = options?.catalog ?? "core";
   const pairs = findTextbookColumnPairs(headers);
@@ -190,12 +231,14 @@ export function buildProgressSheetColumns(
   const selectedIndexes = selectedPair
     ? new Set([selectedPair.colIndexEn, selectedPair.colIndexZh])
     : new Set<number>();
-  const displayLabel = getTextbookColumnDisplayLabel(
-    options?.textbookPublisher ?? "",
-    options?.grade ?? "",
-    catalog,
-    selectedPair?.label,
-  );
+  const displayLabel =
+    options?.displayLabel?.trim() ||
+    getTextbookColumnDisplayLabel(
+      options?.textbookPublisher ?? "",
+      options?.grade ?? "",
+      catalog,
+      selectedPair?.label,
+    );
 
   const textbookCol: ProgressSheetColumn | null = selectedPair
     ? {

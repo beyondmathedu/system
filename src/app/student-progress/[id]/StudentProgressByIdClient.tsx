@@ -421,6 +421,7 @@ const F6_TOPIC_COLOR_BY_TEXT: Record<string, F6TopicColorKey> = {
   [normalizeTopicText("Linear Programming")]: "lq-b",
   [normalizeTopicText("Arithmetic,Geometric Sequence")]: "lq-b",
   [normalizeTopicText("3D Trigonometry")]: "lq-b",
+  [normalizeTopicText("Trigonometry")]: "lq-b",
   [normalizeTopicText("指數及對數函數")]: "lq-b",
   [normalizeTopicText("排列，組合，概率")]: "lq-b",
   [normalizeTopicText("一元二次方程")]: "lq-b",
@@ -428,9 +429,12 @@ const F6_TOPIC_COLOR_BY_TEXT: Record<string, F6TopicColorKey> = {
   [normalizeTopicText("線性規劃")]: "lq-b",
   [normalizeTopicText("等差/等比序列")]: "lq-b",
   [normalizeTopicText("3D 三角學")]: "lq-b",
+  [normalizeTopicText("三角學")]: "lq-b",
   // LQ A2 B — purple
   [normalizeTopicText("Coordinate Geometry")]: "lq-a2-b",
+  [normalizeTopicText("(Equation Straight Line)")]: "lq-a2-b",
   [normalizeTopicText("座標幾何")]: "lq-a2-b",
+  [normalizeTopicText("(直線方程)")]: "lq-a2-b",
 };
 
 function getF6TopicColorKey(row: string[], columns: SheetColumn[]): F6TopicColorKey | null {
@@ -856,19 +860,17 @@ export default function StudentProgressByIdClient({
 
     // Apply browser Cut Off override onto SSR sheets without refetching workbook.
     // If F.5+ payload is missing the new "F6" tab (stale SSR/cache), fall through to API.
-    const initialMatchesStudent =
-      Boolean(initial) &&
-      initial!.studentSummary.id === studentId &&
-      parseGradeLevel(initial!.studentSummary.grade) === level &&
-      Boolean(initial!.studentSummary.takesM1) === takesM1 &&
-      Boolean(initial!.studentSummary.takesM2) === takesM2 &&
-      initial!.sheets.length > 0;
-    const initialHasExpectedF6 =
-      level < 5 || initial!.sheets.some((sheet) => sheet.name === F6_SHEET);
-
-    if (initialMatchesStudent && initialHasExpectedF6) {
+    if (
+      initial &&
+      initial.studentSummary.id === studentId &&
+      parseGradeLevel(initial.studentSummary.grade) === level &&
+      Boolean(initial.studentSummary.takesM1) === takesM1 &&
+      Boolean(initial.studentSummary.takesM2) === takesM2 &&
+      initial.sheets.length > 0 &&
+      (level < 5 || initial.sheets.some((sheet) => sheet.name === F6_SHEET))
+    ) {
       const savedCutOff = loadCutOffOverride();
-      const baseSheets = initial!.sheets;
+      const baseSheets = initial.sheets;
       const sheets = savedCutOff
         ? baseSheets.map((sheet) => {
             if (sheet.name === CUT_OFF_SHEET) return savedCutOff;

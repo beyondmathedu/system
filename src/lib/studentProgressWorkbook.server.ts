@@ -80,7 +80,7 @@ const loadParsedSheetsCached = unstable_cache(
     }
     return out;
   },
-  ["student-progress-workbook-parsed-v10"],
+  ["student-progress-workbook-parsed-v11"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
@@ -90,7 +90,7 @@ const loadProgressPayloadForLevelCached = unstable_cache(
     const sheetsByName = new Map(Object.entries(sheetsRecord));
     return buildProgressPayloadFromSheets(sheetsByName, level);
   },
-  ["student-progress-sheets-v9"],
+  ["student-progress-sheets-v10"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
