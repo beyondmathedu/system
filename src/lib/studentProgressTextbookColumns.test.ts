@@ -70,6 +70,64 @@ describe("selectTextbookColumnPair", () => {
   });
 });
 
+describe("textbookOptionsForProgressSheet silent Oxford default", () => {
+  it("defaults blank core publisher to Oxford · New Century with Chapter header", () => {
+    expect(textbookOptionsForProgressSheet("F.3", { grade: "F.3" })).toEqual({
+      textbookPublisher: "Oxford · New Century",
+      grade: "F.3",
+      catalog: "core",
+      displayLabel: "Chapter",
+    });
+  });
+
+  it("defaults blank M1/M2 publisher to Oxford extended title with Chapter header", () => {
+    const oxfordExtended =
+      "Oxford · Senior Secondary Oxford Math for the New Century";
+    expect(
+      textbookOptionsForProgressSheet("M1", { grade: "F.5", m1TextbookPublisher: "" }),
+    ).toMatchObject({
+      textbookPublisher: oxfordExtended,
+      catalog: "extended",
+      displayLabel: "Chapter",
+    });
+    expect(
+      textbookOptionsForProgressSheet("M2", { grade: "F.5", m2TextbookPublisher: "  " }),
+    ).toMatchObject({
+      textbookPublisher: oxfordExtended,
+      catalog: "extended",
+      displayLabel: "Chapter",
+    });
+  });
+
+  it("keeps an explicit Pearson selection without Chapter override", () => {
+    const opts = textbookOptionsForProgressSheet("F.2", {
+      grade: "F.2",
+      textbookPublisher: "Pearson · Maths in Action",
+    });
+    expect(opts.textbookPublisher).toBe("Pearson · Maths in Action");
+    expect(opts.displayLabel).toBeUndefined();
+  });
+
+  it("uses Oxford column but shows Chapter when publisher is blank", () => {
+    const cols = buildProgressSheetColumns(
+      [
+        "",
+        "Textbook: New Century",
+        "Textbook: New Century",
+        "Textbook: Maths in Action",
+        "Textbook: Maths in Action",
+        "Basic Concept",
+      ],
+      textbookOptionsForProgressSheet("F.1", { grade: "F.1", textbookPublisher: "" }),
+    );
+    const textbook = cols.find((c) => c.kind === "textbookCombined");
+    expect(textbook && textbook.kind === "textbookCombined" ? textbook.colIndexEn : -1).toBe(1);
+    expect(textbook && textbook.kind === "textbookCombined" ? textbook.displayLabel : "").toBe(
+      "Chapter",
+    );
+  });
+});
+
 describe("selectTextbookColumnPair for M1/M2 workbook headers", () => {
   const m1Pairs = findTextbookColumnPairs([
     "",
