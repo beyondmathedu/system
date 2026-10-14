@@ -147,6 +147,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
 
   const initialTutorVisibility = {
     inactiveNames: Array.from(tutorVisibility.inactiveNames),
+    inactiveFromByName: Object.fromEntries(tutorVisibility.inactiveFromByName),
     activeSelectNames: tutorVisibility.activeSelectNames,
     activeAliasToNickname: Object.fromEntries(tutorVisibility.activeAliasToNickname),
   };

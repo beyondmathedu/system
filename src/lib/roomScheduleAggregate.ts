@@ -7,8 +7,7 @@ import {
   type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { isInactiveTutorName } from "@/lib/tutorVisibility";
-import { fetchInactiveTutorNames } from "@/lib/tutorVisibilityCore";
+import { fetchInactiveTutorFromByName, shouldBlankInactiveTutorForDate } from "@/lib/tutorVisibilityCore";
 import {
   isScheduleAttendanceMarked,
   isTutorMonthAttendanceMarked,
@@ -407,9 +406,9 @@ async function fetchRoomScheduleAggregateUncached(
     }
   }
 
-  const inactiveNames = await fetchInactiveTutorNames(getSupabaseAdmin());
+  const inactiveFromByName = await fetchInactiveTutorFromByName(getSupabaseAdmin());
   for (const r of out) {
-    if (isInactiveTutorName(inactiveNames, r.tutor)) r.tutor = "";
+    if (shouldBlankInactiveTutorForDate(inactiveFromByName, r.tutor, r.dateIso)) r.tutor = "";
   }
 
   const sortedRows = sortAggregatedRoomRows(out);

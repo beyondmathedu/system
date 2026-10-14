@@ -6,9 +6,11 @@ import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { supabase } from "@/lib/supabase";
+import { hkTodayIso } from "@/lib/examDateVisibility";
 import {
   TUTOR_SHARED_IPAD_EMAIL,
   TUTOR_SHARED_IPAD_ID,
+  TUTOR_STATUS_INACTIVE,
 } from "@/lib/tutorConstants";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 
@@ -40,6 +42,8 @@ type Teacher = {
   nameEn: string;
   birthDate: string;
   status: TeacherStatus;
+  /** YYYY-MM-DD when status is Inactive; lessons on/after this date show TBD. */
+  inactiveFromDate: string;
   colorHex: string;
   mpfEnabled: boolean;
 };
@@ -51,6 +55,7 @@ type TeacherRow = {
   name_en?: string;
   birth_date?: string | null;
   status?: string;
+  inactive_from_date?: string | null;
   color_hex?: string | null;
   mpf_enabled?: boolean | null;
 };
@@ -122,6 +127,16 @@ function isMissingMpfColumnError(message: string): boolean {
   return /\bmpf_enabled\b/i.test(message) && /\bdoes not exist\b/i.test(message);
 }
 
+function isMissingInactiveFromDateColumnError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("inactive_from_date") && (m.includes("does not exist") || m.includes("schema cache"));
+}
+
+function normalizeInactiveFromDate(raw: string | null | undefined): string {
+  const s = String(raw ?? "").trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+}
+
 function mapRowToTeacher(row: TeacherRow): Teacher {
   const status = (row.status ?? "工作中").trim();
   const zh = (row.name_zh ?? "").trim();
@@ -130,6 +145,9 @@ function mapRowToTeacher(row: TeacherRow): Teacher {
   const nameZh = zh || (!en && nm ? nm : zh);
   const nameEn = en;
   const primary = nameZh || nameEn || nm;
+  const resolvedStatus = TEACHER_STATUS_OPTIONS.includes(status as TeacherStatus)
+    ? (status as TeacherStatus)
+    : "工作中";
   return {
     id: row.id,
     name: primary,
@@ -137,9 +155,11 @@ function mapRowToTeacher(row: TeacherRow): Teacher {
     nameZh,
     nameEn,
     birthDate: (row.birth_date ?? "").trim(),
-    status: TEACHER_STATUS_OPTIONS.includes(status as TeacherStatus)
-      ? (status as TeacherStatus)
-      : "工作中",
+    status: resolvedStatus,
+    inactiveFromDate:
+      resolvedStatus === TUTOR_STATUS_INACTIVE
+        ? normalizeInactiveFromDate(row.inactive_from_date)
+        : "",
     colorHex: (row.color_hex ?? "").trim(),
     mpfEnabled: Boolean(row.mpf_enabled),
   };
@@ -153,6 +173,7 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
   const [teacherNameEn, setTeacherNameEn] = useState("");
   const [teacherBirthDate, setTeacherBirthDate] = useState("");
   const [teacherStatus, setTeacherStatus] = useState<TeacherStatus>("工作中");
+  const [teacherInactiveFromDate, setTeacherInactiveFromDate] = useState("");
   const [teacherMpfEnabled, setTeacherMpfEnabled] = useState(false);
   const [tutorColorHex, setTutorColorHex] = useState(DEFAULT_TUTOR_COLOR);
   const [hexTextDraft, setHexTextDraft] = useState(DEFAULT_TUTOR_COLOR);
@@ -289,10 +310,17 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
   const loadTeachers = useCallback(async () => {
     setDataError("");
     const fullSelect =
+      "id, name, name_zh, name_en, birth_date, status, inactive_from_date, color_hex, mpf_enabled";
+    const noLeaveSelect =
       "id, name, name_zh, name_en, birth_date, status, color_hex, mpf_enabled";
     const baseSelect = "id, name, name_zh, name_en, birth_date, status, color_hex";
 
     let { data, error } = await supabase.from("tutors").select(fullSelect).order("id");
+    if (error && isMissingInactiveFromDateColumnError(error.message)) {
+      const retry = await supabase.from("tutors").select(noLeaveSelect).order("id");
+      data = retry.data as typeof data;
+      error = retry.error;
+    }
     if (error && isMissingMpfColumnError(error.message)) {
       const retry = await supabase.from("tutors").select(baseSelect).order("id");
       data = retry.data as typeof data;
@@ -380,6 +408,7 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     setTeacherNameEn("");
     setTeacherBirthDate("");
     setTeacherStatus("工作中");
+    setTeacherInactiveFromDate("");
     setTeacherMpfEnabled(false);
     setTutorColorHex(DEFAULT_TUTOR_COLOR);
     setHexTextDraft(DEFAULT_TUTOR_COLOR);
@@ -403,6 +432,11 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     setTeacherNameEn(target.nameEn);
     setTeacherBirthDate(target.birthDate);
     setTeacherStatus(target.status);
+    setTeacherInactiveFromDate(
+      target.status === TUTOR_STATUS_INACTIVE
+        ? target.inactiveFromDate || hkTodayIso()
+        : "",
+    );
     setTeacherMpfEnabled(target.mpfEnabled);
     const hex = resolveTutorColorHex(target.colorHex);
     setTutorColorHex(hex);
@@ -482,6 +516,10 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
     }
 
     const today = new Date().toISOString().slice(0, 10);
+    const leaveIso =
+      teacherStatus === TUTOR_STATUS_INACTIVE
+        ? normalizeInactiveFromDate(teacherInactiveFromDate) || hkTodayIso()
+        : null;
     setFormError("");
     setIsSaving(true);
 
@@ -494,10 +532,28 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
           name_en: nameEn,
           birth_date: birthDate || null,
           status: teacherStatus,
+          inactive_from_date: leaveIso,
           color_hex: tutorColorHex,
           mpf_enabled: teacherMpfEnabled,
         })
         .eq("id", editingId);
+
+      if (updateErr && isMissingInactiveFromDateColumnError(updateErr.message)) {
+        updateErr = (
+          await supabase
+            .from("tutors")
+            .update({
+              name,
+              name_zh: nameZh,
+              name_en: nameEn,
+              birth_date: birthDate || null,
+              status: teacherStatus,
+              color_hex: tutorColorHex,
+              mpf_enabled: teacherMpfEnabled,
+            })
+            .eq("id", editingId)
+        ).error;
+      }
 
       if (updateErr && isMissingMpfColumnError(updateErr.message)) {
         updateErr = (
@@ -564,10 +620,28 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
           name_en: nameEn,
           birth_date: birthDate || null,
           status: teacherStatus,
+          inactive_from_date: leaveIso,
           color_hex: tutorColorHex,
           mpf_enabled: teacherMpfEnabled,
         },
       ]);
+
+      if (insertErr && isMissingInactiveFromDateColumnError(insertErr.message)) {
+        insertErr = (
+          await supabase.from("tutors").insert([
+            {
+              id: newId,
+              name,
+              name_zh: nameZh,
+              name_en: nameEn,
+              birth_date: birthDate || null,
+              status: teacherStatus,
+              color_hex: tutorColorHex,
+              mpf_enabled: teacherMpfEnabled,
+            },
+          ])
+        ).error;
+      }
 
       if (insertErr && isMissingMpfColumnError(insertErr.message)) {
         insertErr = (
@@ -825,7 +899,15 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
                   <span className="mb-1 block text-sm font-semibold text-slate-700">Status</span>
                   <select
                     value={teacherStatus}
-                    onChange={(event) => setTeacherStatus(event.target.value as TeacherStatus)}
+                    onChange={(event) => {
+                      const next = event.target.value as TeacherStatus;
+                      setTeacherStatus(next);
+                      if (next === TUTOR_STATUS_INACTIVE) {
+                        setTeacherInactiveFromDate((prev) => prev || hkTodayIso());
+                      } else {
+                        setTeacherInactiveFromDate("");
+                      }
+                    }}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
                   >
                     {TEACHER_STATUS_OPTIONS.map((s) => (
@@ -835,6 +917,21 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
                     ))}
                   </select>
                 </label>
+
+                {teacherStatus === TUTOR_STATUS_INACTIVE ? (
+                  <label className="block min-w-[150px]">
+                    <span className="mb-1 block text-sm font-semibold text-slate-700">
+                      Leave from
+                    </span>
+                    <input
+                      type="date"
+                      value={teacherInactiveFromDate || hkTodayIso()}
+                      onChange={(event) => setTeacherInactiveFromDate(event.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)]"
+                      title="Lessons on/after this date show TBD; earlier lessons keep this tutor name"
+                    />
+                  </label>
+                ) : null}
               </div>
 
               <div className="flex gap-2 pl-1">
@@ -1032,6 +1129,11 @@ export default function TeacherPageClient({ navViewer = null }: { navViewer?: Ap
                           >
                             {TEACHER_STATUS_DISPLAY[teacher.status]}
                           </span>
+                          {teacher.status === TUTOR_STATUS_INACTIVE && teacher.inactiveFromDate ? (
+                            <span className="mt-0.5 block text-[10px] font-medium text-slate-500">
+                              from {teacher.inactiveFromDate}
+                            </span>
+                          ) : null}
                         </td>
                       </tr>
                     );

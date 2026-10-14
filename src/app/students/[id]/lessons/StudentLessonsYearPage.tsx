@@ -55,7 +55,7 @@ async function retrySaveLessonScheduleRecords(
   const mod = await import("@/lib/queueSaveLessonScheduleRecords");
   return mod.retrySaveLessonScheduleRecords(...args);
 }
-import { loadInactiveTutorNames } from "@/lib/tutorVisibility";
+import { loadInactiveTutorFromByName, shouldBlankInactiveTutorForDate } from "@/lib/tutorVisibility";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { isLegacyBmStudentId, normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
@@ -952,14 +952,15 @@ export function StudentLessonsYearPage({
   const [filterTutor, setFilterTutor] = useState("");
   const [filterType, setFilterType] = useState("");
   const [sortConfig, setSortConfig] = useState<ScheduleSortConfig>(null);
-  const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(new Set());
+  const [inactiveFromByName, setInactiveFromByName] = useState<Map<string, string>>(new Map());
   const yearMin = getLessonSystemStartIso(targetYear);
   const yearMax = `${targetYear}-12-31`;
 
-  function displayTutorInCell(raw: string): string {
+  function displayTutorInCell(raw: string, dateIso: string): string {
     const t = raw.trim();
     if (!t) return "—";
-    if (inactiveTutorNames.has(t)) return "—";
+    // Before leave-start keep name; on/after leave-start show blank.
+    if (shouldBlankInactiveTutorForDate(inactiveFromByName, t, dateIso)) return "—";
     return t;
   }
 
@@ -1083,8 +1084,8 @@ export function StudentLessonsYearPage({
   useEffect(() => {
     let mounted = true;
     void (async () => {
-      const names = await loadInactiveTutorNames();
-      if (mounted) setInactiveTutorNames(names);
+      const leaveByName = await loadInactiveTutorFromByName();
+      if (mounted) setInactiveFromByName(leaveByName);
     })();
     return () => {
       mounted = false;
@@ -4775,7 +4776,7 @@ export function StudentLessonsYearPage({
                           ) : null}
                           {!isStudentPortal ? (
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">
-                            {displayTutorInCell(r.tutor)}
+                            {displayTutorInCell(r.tutor, r.date)}
                           </td>
                           ) : null}
                           <td className="w-[20%] min-w-[220px] px-4 py-3 text-sm text-slate-700 align-top break-words whitespace-normal">

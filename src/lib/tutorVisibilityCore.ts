@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { hkTodayIso } from "@/lib/examDateVisibility";
 import {
   isSharedIpadTutorDisplayName,
   TUTOR_STATUS_ACTIVE,
@@ -13,22 +14,48 @@ function tutorStatusSelectRank(status: string): number {
   return 2;
 }
 
+function isIsoDate(raw: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw);
+}
+
+function isMissingInactiveFromDateColumnError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("inactive_from_date") && (m.includes("does not exist") || m.includes("schema cache"));
+}
+
 export type TutorVisibility = {
   inactiveNames: Set<string>;
+  /** Inactive tutor display-name aliases → leave-start YYYY-MM-DD (may be ""). */
+  inactiveFromByName: Map<string, string>;
   activeSelectNames: string[];
   activeAliasToNickname: Map<string, string>;
 };
 
+function emptyVisibility(): TutorVisibility {
+  return {
+    inactiveNames: new Set(),
+    inactiveFromByName: new Map(),
+    activeSelectNames: [],
+    activeAliasToNickname: new Map(),
+  };
+}
+
 export async function fetchTutorVisibility(
   supabase: SupabaseClient,
 ): Promise<TutorVisibility> {
-  const { data, error } = await supabase.from("tutors").select("name, name_zh, name_en, status, id");
-
-  if (error || !data?.length) {
-    return { inactiveNames: new Set(), activeSelectNames: [], activeAliasToNickname: new Map() };
+  let { data, error } = await supabase
+    .from("tutors")
+    .select("name, name_zh, name_en, status, id, inactive_from_date");
+  if (error && isMissingInactiveFromDateColumnError(error.message)) {
+    const retry = await supabase.from("tutors").select("name, name_zh, name_en, status, id");
+    data = retry.data as typeof data;
+    error = retry.error;
   }
 
+  if (error || !data?.length) return emptyVisibility();
+
   const inactiveNames = new Set<string>();
+  const inactiveFromByName = new Map<string, string>();
   const activeEntries: { status: string; nickname: string }[] = [];
   const activeAliasToNickname = new Map<string, string>();
 
@@ -37,10 +64,16 @@ export async function fetchTutorVisibility(
     const n = String((row as { name?: string }).name ?? "").trim();
     const z = String((row as { name_zh?: string }).name_zh ?? "").trim();
     const en = String((row as { name_en?: string }).name_en ?? "").trim();
+    const leaveRaw = String((row as { inactive_from_date?: string | null }).inactive_from_date ?? "")
+      .trim()
+      .slice(0, 10);
+    const leaveIso = isIsoDate(leaveRaw) ? leaveRaw : "";
     if (st === TUTOR_STATUS_INACTIVE) {
-      if (n) inactiveNames.add(n);
-      if (z) inactiveNames.add(z);
-      if (en) inactiveNames.add(en);
+      for (const label of [n, z, en]) {
+        if (!label) continue;
+        inactiveNames.add(label);
+        inactiveFromByName.set(label, leaveIso);
+      }
       continue;
     }
     const nickname = n || z || en;
@@ -68,29 +101,50 @@ export async function fetchTutorVisibility(
     activeSelectNames.push(e.nickname);
   }
 
-  return { inactiveNames, activeSelectNames, activeAliasToNickname };
+  return { inactiveNames, inactiveFromByName, activeSelectNames, activeAliasToNickname };
 }
 
 export async function fetchInactiveTutorNames(supabase: SupabaseClient): Promise<Set<string>> {
-  const { data, error } = await supabase
-    .from("tutors")
-    .select("name, name_zh, name_en")
-    .eq("status", TUTOR_STATUS_INACTIVE);
+  const vis = await fetchTutorVisibility(supabase);
+  return vis.inactiveNames;
+}
 
-  if (error) return new Set<string>();
-  const out = new Set<string>();
-  for (const row of data ?? []) {
-    const r = row as { name?: string | null; name_zh?: string | null; name_en?: string | null };
-    for (const v of [r.name, r.name_zh, r.name_en]) {
-      const t = String(v ?? "").trim();
-      if (t) out.add(t);
-    }
-  }
-  return out;
+export async function fetchInactiveTutorFromByName(
+  supabase: SupabaseClient,
+): Promise<Map<string, string>> {
+  const vis = await fetchTutorVisibility(supabase);
+  return vis.inactiveFromByName;
 }
 
 export function isInactiveTutorName(inactiveNames: Set<string>, displayName: string): boolean {
   const t = displayName.trim();
   if (!t || t === "—" || t === "待定") return false;
   return inactiveNames.has(t);
+}
+
+/**
+ * Blank inactive tutors from leave-start date onward (inclusive).
+ * If leave date missing: keep past/today name, blank only strictly future (today HK).
+ */
+export function shouldBlankInactiveTutorForDate(
+  inactiveFromByName: ReadonlyMap<string, string> | ReadonlySet<string>,
+  displayName: string,
+  dateIso: string,
+  todayIso = hkTodayIso(),
+): boolean {
+  const t = displayName.trim();
+  if (!t || t === "—" || t === "待定") return false;
+  const d = String(dateIso ?? "").trim();
+  if (!isIsoDate(d)) return false;
+
+  if (inactiveFromByName instanceof Set) {
+    if (!inactiveFromByName.has(t)) return false;
+    return d > todayIso;
+  }
+
+  const leaveMap = inactiveFromByName as ReadonlyMap<string, string>;
+  if (!leaveMap.has(t)) return false;
+  const leave = String(leaveMap.get(t) ?? "").trim();
+  if (isIsoDate(leave)) return d >= leave;
+  return d > todayIso;
 }

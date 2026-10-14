@@ -21,7 +21,7 @@ import {
 } from "@/lib/queueSaveLessonYearState";
 import { revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
 import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
-import { loadTutorVisibility } from "@/lib/tutorVisibility";
+import { loadTutorVisibility, shouldBlankInactiveTutorForDate } from "@/lib/tutorVisibility";
 import { isSharedIpadTutorDisplayName } from "@/lib/tutorConstants";
 import { attendanceAfterRegularToggle } from "@/lib/lessonScheduleVersions";
 import { formatGradeDisplay } from "@/lib/grade";
@@ -57,6 +57,8 @@ type Props = {
   /** Server-loaded tutor dropdown options (serializable). */
   initialTutorVisibility?: {
     inactiveNames: string[];
+    /** name → leave-start YYYY-MM-DD (empty string allowed) */
+    inactiveFromByName?: Record<string, string>;
     activeSelectNames: string[];
     activeAliasToNickname: Record<string, string>;
   } | null;
@@ -154,8 +156,14 @@ export default function RoomScheduleTable({
   const [teacherOptions, setTeacherOptions] = useState<string[]>(
     () => initialTutorVisibility?.activeSelectNames ?? [],
   );
-  const [inactiveTutorNames, setInactiveTutorNames] = useState<Set<string>>(
-    () => new Set(initialTutorVisibility?.inactiveNames ?? []),
+  const [inactiveFromByName, setInactiveFromByName] = useState<Map<string, string>>(
+    () =>
+      new Map(
+        Object.entries(
+          initialTutorVisibility?.inactiveFromByName ??
+            Object.fromEntries((initialTutorVisibility?.inactiveNames ?? []).map((n) => [n, ""])),
+        ),
+      ),
   );
   const [activeTutorAliasToNickname, setActiveTutorAliasToNickname] = useState<Map<string, string>>(
     () => new Map(Object.entries(initialTutorVisibility?.activeAliasToNickname ?? {})),
@@ -587,7 +595,7 @@ export default function RoomScheduleTable({
       const v = await loadTutorVisibility();
       if (!mounted) return;
       setTeacherOptions(v.activeSelectNames);
-      setInactiveTutorNames(v.inactiveNames);
+      setInactiveFromByName(v.inactiveFromByName);
       setActiveTutorAliasToNickname(v.activeAliasToNickname);
     })();
     return () => {
@@ -1109,7 +1117,10 @@ export default function RoomScheduleTable({
                     value={(() => {
                       const raw = r.tutor?.trim() ?? "";
                       if (!raw || raw === "—") return "TBD";
-                      if (inactiveTutorNames.has(raw)) return "TBD";
+                      // Before leave-start: keep name. On/after leave-start → TBD.
+                      if (shouldBlankInactiveTutorForDate(inactiveFromByName, raw, r.dateIso)) {
+                        return "TBD";
+                      }
                       const mapped = activeTutorAliasToNickname.get(raw);
                       return normalizeTutorLabel(mapped ?? raw);
                     })()}
@@ -1122,11 +1133,25 @@ export default function RoomScheduleTable({
                     suppressHydrationWarning
                   >
                     <option value="TBD">TBD</option>
-                    {teacherOptions.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
+                    {(() => {
+                      const raw = r.tutor?.trim() ?? "";
+                      const mapped = activeTutorAliasToNickname.get(raw);
+                      const shown =
+                        raw &&
+                        raw !== "—" &&
+                        !shouldBlankInactiveTutorForDate(inactiveFromByName, raw, r.dateIso)
+                          ? normalizeTutorLabel(mapped ?? raw)
+                          : "";
+                      const names =
+                        shown && shown !== "TBD" && !teacherOptions.includes(shown)
+                          ? [shown, ...teacherOptions]
+                          : teacherOptions;
+                      return names.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ));
+                    })()}
                   </select>
                 </td>
                 <td className="px-3 py-2 align-middle">
