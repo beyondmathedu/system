@@ -69,7 +69,7 @@ function isLegendDataRow(row: string[]): boolean {
 }
 
 export function isF6ByTopicsChapterSheet(sheetName: string): boolean {
-  return sheetName === "F6 By Topics" || sheetName === "F6";
+  return sheetName === "F6 By Topics";
 }
 
 /** Replace workbook topic rows with the canonical Chapter list; keep legend rows. */
