@@ -33,13 +33,13 @@ describe("applyF6ByTopicsChapters", () => {
     expect(sheet.rows[21]?.[0]).toBe("Remedial");
   });
 
-  it("also applies to the F6 clone sheet", () => {
+  it("does not rewrite the publisher-based F6 sheet", () => {
     const sheet = applyF6ByTopicsChapters({
       name: "F6",
       headers: ["", "Textbook: New Century", "Textbook: New Century", "Basic Concept"],
-      rows: [["F.6", "x", "y"]],
+      rows: [["F.6", "Arithmetic Sequences", "等差數列"]],
     });
-    expect(sheet.rows[0]?.[1]).toBe("Factorization,Basic Equation Solving");
-    expect(sheet.rows).toHaveLength(F6_BY_TOPICS_CHAPTERS.length);
+    expect(sheet.rows).toHaveLength(1);
+    expect(sheet.rows[0]?.[1]).toBe("Arithmetic Sequences");
   });
 });

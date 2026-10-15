@@ -17,7 +17,11 @@ export type StudentProgressWorkbookPayload = {
 
 export const CUT_OFF_SHEET = "Cut Off";
 export const F6_BY_TOPICS_SHEET = "F6 By Topics";
-/** Extra F6 tab: same template as F6 By Topics (cloned in workbook.server). */
+/**
+ * Extra F6 tab: publisher textbook columns from the workbook (like F1–F5).
+ * Cloned from the raw "F6 By Topics" Excel sheet in workbook.server — not the
+ * canonical DSE chapter list used by the "F6 By Topics" tab.
+ */
 export const F6_SHEET = "F6";
 export const F6_BY_YEARS_SHEET = "F6 By Years";
 export const PU_SHEET = "PU";
@@ -41,8 +45,9 @@ export const F6_PRIMARY_SHEET_NAMES = [
   "F6 學校mock卷",
 ] as const;
 
+/** LQ colour / col0 labelling — only the dedicated By Topics tab. */
 export function isF6ByTopicsStyleSheet(sheetName: string): boolean {
-  return sheetName === F6_BY_TOPICS_SHEET || sheetName === F6_SHEET;
+  return sheetName === F6_BY_TOPICS_SHEET;
 }
 
 export type ExtendedMathsOptions = {

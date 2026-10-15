@@ -69,7 +69,8 @@ const loadParsedSheetsCached = unstable_cache(
       const parsed = parseSheetFromWorkbook(workbook, name, XLSX);
       if (parsed) out[name] = parsed;
     }
-    // Extra "F6" tab: identical structure to F6 By Topics (separate selection keys).
+    // Extra "F6" tab: raw publisher chapters from Excel (like F1–F5), before
+    // "F6 By Topics" is rewritten to the canonical DSE chapter list.
     const topics = out[F6_BY_TOPICS_SHEET];
     if (topics) {
       out[F6_SHEET] = {
@@ -80,7 +81,7 @@ const loadParsedSheetsCached = unstable_cache(
     }
     return out;
   },
-  ["student-progress-workbook-parsed-v11"],
+  ["student-progress-workbook-parsed-v12"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
@@ -90,7 +91,7 @@ const loadProgressPayloadForLevelCached = unstable_cache(
     const sheetsByName = new Map(Object.entries(sheetsRecord));
     return buildProgressPayloadFromSheets(sheetsByName, level);
   },
-  ["student-progress-sheets-v10"],
+  ["student-progress-sheets-v11"],
   { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
