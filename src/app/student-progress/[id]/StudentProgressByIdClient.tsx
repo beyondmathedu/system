@@ -300,42 +300,42 @@ function getProgressLevelKey(value: string): "remedial" | "good" | "mastered" | 
   return null;
 }
 
+const PROGRESS_LEVEL_COLORS = {
+  remedial: { bg: "bg-red-600", border: "border-red-700", soft: "bg-red-600/90" },
+  good: { bg: "bg-[#ff6a00]", border: "border-[#e05e00]", soft: "bg-[#ff6a00]/90" },
+  mastered: { bg: "bg-[#1d76c2]", border: "border-[#1866a8]", soft: "bg-[#1d76c2]/90" },
+} as const;
+
 function getProgressLevelSelectClass(value: string): string {
   const key = getProgressLevelKey(value);
-  if (key === "remedial") {
-    return "border-rose-300 bg-rose-50 text-rose-800";
-  }
-  if (key === "good") {
-    return "border-amber-300 bg-amber-50 text-amber-800";
-  }
-  if (key === "mastered") {
-    return "border-emerald-300 bg-emerald-50 text-emerald-800";
-  }
-  return "border-slate-300 bg-white text-slate-800";
+  if (!key) return "border-slate-300 bg-white text-slate-800";
+  const colors = PROGRESS_LEVEL_COLORS[key];
+  return `${colors.border} ${colors.bg} text-white`;
 }
 
 function getProgressLevelRowClass(levelValue: string): string {
   const key = getProgressLevelKey(levelValue);
-  if (key === "remedial") return "bg-rose-50/70";
-  if (key === "good") return "bg-amber-50/70";
-  if (key === "mastered") return "bg-emerald-50/70";
-  return "";
+  return key ? PROGRESS_LEVEL_COLORS[key].soft : "";
 }
 
 function getProgressLevelStickyBgClass(levelValue: string): string {
   const key = getProgressLevelKey(levelValue);
-  if (key === "remedial") return "bg-rose-50/70";
-  if (key === "good") return "bg-amber-50/70";
-  if (key === "mastered") return "bg-emerald-50/70";
-  return "bg-white";
+  return key ? PROGRESS_LEVEL_COLORS[key].soft : "bg-white";
 }
 
 function getProgressLevelCellClass(levelValue: string): string {
   const key = getProgressLevelKey(levelValue);
-  if (key === "remedial") return "font-semibold text-rose-800";
-  if (key === "good") return "font-semibold text-amber-800";
-  if (key === "mastered") return "font-semibold text-emerald-800";
+  if (key === "remedial" || key === "good" || key === "mastered") {
+    return "font-semibold text-white";
+  }
   return "text-slate-700";
+}
+
+function getProgressLevelLegendPillClass(key: string): string {
+  if (key === "remedial") return `${PROGRESS_LEVEL_COLORS.remedial.bg} text-white`;
+  if (key === "good") return `${PROGRESS_LEVEL_COLORS.good.bg} text-white`;
+  if (key === "mastered") return `${PROGRESS_LEVEL_COLORS.mastered.bg} text-white`;
+  return "bg-slate-200 text-slate-700";
 }
 
 const LEGEND_ORDER = ["remedial", "good", "mastered"] as const;
@@ -1587,13 +1587,16 @@ export default function StudentProgressByIdClient({
 
                 {activeLegendEntries.length > 0 ? (
                   <div className="shrink-0 overflow-x-auto border-t border-slate-200 bg-slate-50 px-4 py-2.5">
-                    <div className="whitespace-nowrap text-sm">
-                      {activeLegendEntries.map((entry, entryIndex) => (
-                        <span key={entry.key} className={getProgressLevelCellClass(entry.label)}>
-                          {entryIndex > 0 ? <span className="mx-5 font-normal text-slate-300">|</span> : null}
-                          <span className="font-bold">{entry.label}</span>
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                      {activeLegendEntries.map((entry) => (
+                        <span key={entry.key} className="inline-flex items-center gap-2">
+                          <span
+                            className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold tracking-wide shadow-sm ${getProgressLevelLegendPillClass(entry.key)}`}
+                          >
+                            {entry.label}
+                          </span>
                           {entry.description ? (
-                            <span className="ml-2 font-normal text-slate-700">{entry.description}</span>
+                            <span className="font-normal text-slate-600">{entry.description}</span>
                           ) : null}
                         </span>
                       ))}
