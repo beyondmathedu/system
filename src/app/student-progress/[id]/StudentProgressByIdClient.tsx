@@ -34,6 +34,7 @@ import {
   getHighlightedProgressSheetNames,
   isF6ByTopicsStyleSheet,
   parseCutOffThresholds,
+  appendNextCutOffYear,
   parseGradeLevel,
   parseYear,
   syncF6ByYearsWithCutOff,
@@ -658,6 +659,11 @@ export default function StudentProgressByIdClient({
     const headers = [cutOffSheet.headers[0] ?? "Level 等級", newYear, ...cutOffSheet.headers.slice(1)];
     const rows = cutOffSheet.rows.map((row) => [row[0] ?? "", "", ...row.slice(1)]);
     commitCutOffSheet({ ...cutOffSheet, headers, rows });
+  };
+
+  const addF6ByYearsYear = () => {
+    if (!cutOffSheet) return;
+    commitCutOffSheet(appendNextCutOffYear(cutOffSheet));
   };
 
   useEffect(() => {
@@ -1767,6 +1773,18 @@ export default function StudentProgressByIdClient({
                     );
                   })()}
                 </div>
+
+                {canEditCutOff && activeProgressSheet?.name === F6_BY_YEARS_SHEET ? (
+                  <div className="flex shrink-0 flex-wrap gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={addF6ByYearsYear}
+                      className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
+                    >
+                      + Add Year
+                    </button>
+                  </div>
+                ) : null}
 
                 {activeLegendEntries.length > 0 ? (
                   <div className="shrink-0 overflow-x-auto border-t border-slate-200 bg-slate-50 px-4 py-2.5">

@@ -253,17 +253,17 @@ export function normalizeMockSetLabels(raw: unknown): string[] {
 export const F6_MOCK_SET_OPTIONS = sortMockSetLabels(F6_MOCK_SET_OPTIONS_UNSORTED);
 
 export const F6_MOCK_YEAR_OPTIONS = [
-  "1213",
-  "1314",
-  "1415",
-  "1617",
-  "1819",
-  "2021",
-  "2122",
-  "2223",
-  "2324",
-  "2425",
   "2526",
+  "2425",
+  "2324",
+  "2223",
+  "2122",
+  "2021",
+  "1819",
+  "1617",
+  "1415",
+  "1314",
+  "1213",
 ] as const;
 
 export function normalizeMockYearLabels(raw: unknown): string[] {
@@ -276,5 +276,5 @@ export function normalizeMockYearLabels(raw: unknown): string[] {
     seen.add(label);
     out.push(label);
   }
-  return out.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  return out.sort((a, b) => b.localeCompare(a, "en", { numeric: true }));
 }
