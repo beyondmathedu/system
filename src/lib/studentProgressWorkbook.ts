@@ -242,6 +242,16 @@ function buildBlankF6ByYearsRow(headers: string[], dseColIndex: number, year: nu
   return row;
 }
 
+export function appendNextCutOffYear(sheet: ProgressSheet): ProgressSheet {
+  const years = extractCutOffYears(sheet);
+  const nextYear = (years.length ? Math.max(...years) : new Date().getFullYear()) + 1;
+  return {
+    ...sheet,
+    headers: [...sheet.headers, `${nextYear}/0(%)`],
+    rows: sheet.rows.map((row) => [...row, ""]),
+  };
+}
+
 function extractCutOffYears(sheet: ProgressSheet): number[] {
   const years: number[] = [];
   for (let col = 1; col < sheet.headers.length; col += 1) {
@@ -257,7 +267,7 @@ export function syncF6ByYearsWithCutOff(f6Sheet: ProgressSheet, cutOffSheet: Pro
   const dseColIndex = findHeaderColumnIndex(f6Sheet.headers, ["dse"]);
   if (dseColIndex < 0) return f6Sheet;
 
-  const cutOffYears = extractCutOffYears(cutOffSheet);
+  const cutOffYears = extractCutOffYears(cutOffSheet).sort((a, b) => b - a);
   const rowByYear = new Map<number, string[]>();
   const trailingRows: string[][] = [];
 

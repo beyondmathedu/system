@@ -16,11 +16,11 @@ describe("normalizeMockSetLabels", () => {
 });
 
 describe("normalizeMockYearLabels", () => {
-  it("keeps the school-mock years in numeric order", () => {
-    expect(normalizeMockYearLabels(["2526", "1213", "1617", "1213", " "])).toEqual([
-      "1213",
-      "1617",
+  it("sorts school-mock years from largest to smallest", () => {
+    expect(normalizeMockYearLabels(["1213", "2526", "1617", "2526", " "])).toEqual([
       "2526",
+      "1617",
+      "1213",
     ]);
   });
 });

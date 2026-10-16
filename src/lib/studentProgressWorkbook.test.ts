@@ -6,9 +6,11 @@ import {
   getCurrentGradeSheetNames,
   getExtendedMathsSheetNames,
   getHighlightedProgressSheetNames,
+  appendNextCutOffYear,
   M1_SHEET,
   M2_SHEET,
   stripF6LqLabelRows,
+  syncF6ByYearsWithCutOff,
 } from "@/lib/studentProgressWorkbook";
 
 describe("getCumulativeSheetNames", () => {
@@ -46,6 +48,41 @@ describe("getCurrentGradeSheetNames", () => {
 
   it("highlights F6 primary sheets for level 6", () => {
     expect(getCurrentGradeSheetNames(6)).toEqual([...F6_PRIMARY_SHEET_NAMES]);
+  });
+});
+
+describe("appendNextCutOffYear", () => {
+  it("appends the next year after the highest Cut Off year", () => {
+    const sheet = appendNextCutOffYear({
+      name: "Cut Off",
+      headers: ["Level 等級", "2026/176(%)", "2025/191(%)"],
+      rows: [
+        ["5**", "167(95)", "172(90)"],
+        ["2", "64(33)", "64(33)"],
+      ],
+    });
+    expect(sheet.headers.at(-1)).toBe("2027/0(%)");
+    expect(sheet.rows[0]).toEqual(["5**", "167(95)", "172(90)", ""]);
+    expect(appendNextCutOffYear(sheet).headers.at(-1)).toBe("2028/0(%)");
+  });
+});
+
+describe("syncF6ByYearsWithCutOff", () => {
+  it("lists DSE years from largest to smallest", () => {
+    const sheet = syncF6ByYearsWithCutOff(
+      {
+        name: "F6 By Years",
+        headers: ["", "DSE", "Paper 1", "%", "Grade"],
+        rows: [["F.6", "2024", "10", "0", "-"]],
+      },
+      {
+        name: "Cut Off",
+        headers: ["Level 等級", "2026/176(%)", "2012/198(%)", "2027/0(%)"],
+        rows: [["2", "64(33)", "64(33)", ""]],
+      },
+    );
+    expect(sheet.rows.map((row) => row[1])).toEqual(["2027", "2026", "2012"]);
+    expect(sheet.rows[0]?.[0]).toBe("F.6");
   });
 });
 
