@@ -1390,15 +1390,24 @@ export default function StudentProgressByIdClient({
                       <tbody>
                         {activeSheet.rows.map((row, rowIndex) => {
                           if (isLegendDataRow(row)) return null;
+                          const textbookCol = columns.find((col) => col.kind === "textbookCombined");
+                          if (textbookCol && textbookCol.kind === "textbookCombined") {
+                            const chapterEn = String(row[textbookCol.colIndexEn] ?? "").trim();
+                            const chapterZh = String(row[textbookCol.colIndexZh] ?? "").trim();
+                            if (!chapterEn && !chapterZh) return null;
+                          }
                           const rowLevelValue = row[0] || "";
                           const isF6TopicsSheet = isF6ByTopicsStyleSheet(sheet.name);
                           const f6Col0Info = isF6TopicsSheet
                             ? getF6Col0Label(rowIndex, row, activeSheet.rows, columns)
                             : null;
+                          const rowPad = isF6TopicsSheet ? "px-3 py-0.5" : "px-3 py-2";
                           return (
                             <tr
                               key={`${sheet.name}-row-${rowIndex}`}
-                              className={`border-t border-slate-100 ${getProgressLevelRowClass(rowLevelValue)}`}
+                              className={`border-t border-slate-100 ${getProgressLevelRowClass(rowLevelValue)} ${
+                                isF6TopicsSheet ? "[&_input]:py-0.5 [&_select]:py-0.5" : ""
+                              }`}
                             >
                               {columns.map((col) => {
                                   if (col.kind === "textbookCombined") {
@@ -1413,9 +1422,11 @@ export default function StudentProgressByIdClient({
                                     return (
                                       <td
                                         key={`${sheet.name}-row-${rowIndex}-textbook-${col.colIndexEn}`}
-                                        className={`sticky left-0 z-10 min-w-[270px] whitespace-normal px-3 py-2 shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${textbookCellClass}`}
+                                        className={`sticky left-0 z-10 min-w-[270px] whitespace-normal shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${rowPad} ${textbookCellClass}`}
                                       >
-                                        <span className="block leading-5">{textbookText || " "}</span>
+                                        <span className={`block ${isF6TopicsSheet ? "leading-4" : "leading-5"}`}>
+                                          {textbookText || " "}
+                                        </span>
                                       </td>
                                     );
                                   }
@@ -1433,7 +1444,7 @@ export default function StudentProgressByIdClient({
                                   return (
                                     <td
                                       key={`${sheet.name}-row-${rowIndex}-col-${colIndex}`}
-                                      className={`${isRemarks ? "whitespace-normal" : "whitespace-nowrap"} px-3 py-2 ${col0CellClass} ${
+                                      className={`${isRemarks ? "whitespace-normal" : "whitespace-nowrap"} ${rowPad} ${col0CellClass} ${
                                         frozenCol0
                                           ? `sticky left-0 z-10 ${F6_YEARS_FROZEN_COL0_CLASS} shadow-[inset_-1px_0_0_rgba(241,245,249,1)] ${getProgressLevelStickyBgClass(
                                               rowLevelValue,

@@ -50,6 +50,16 @@ export function isF6ByTopicsStyleSheet(sheetName: string): boolean {
   return sheetName === F6_BY_TOPICS_SHEET;
 }
 
+const F6_LQ_LABEL_ROWS = new Set(["LQ A1", "LQ A2", "LQ B", "LQ A2 B"]);
+
+/** Publisher F6 tab does not show the By Topics LQ group labels. */
+export function stripF6LqLabelRows(sheet: ProgressSheet): ProgressSheet {
+  return {
+    ...sheet,
+    rows: sheet.rows.filter((row) => !F6_LQ_LABEL_ROWS.has(String(row[0] ?? "").trim())),
+  };
+}
+
 export type ExtendedMathsOptions = {
   takesM1?: boolean;
   takesM2?: boolean;
@@ -304,6 +314,9 @@ export function buildProgressPayloadFromSheets(
     }
     if (isF6ByTopicsChapterSheet(sheetName)) {
       sheet = applyF6ByTopicsChapters(sheet);
+    }
+    if (sheetName === F6_SHEET) {
+      sheet = stripF6LqLabelRows(sheet);
     }
     parsed.push(sheet);
   }

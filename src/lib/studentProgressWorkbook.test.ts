@@ -8,6 +8,7 @@ import {
   getHighlightedProgressSheetNames,
   M1_SHEET,
   M2_SHEET,
+  stripF6LqLabelRows,
 } from "@/lib/studentProgressWorkbook";
 
 describe("getCumulativeSheetNames", () => {
@@ -45,6 +46,24 @@ describe("getCurrentGradeSheetNames", () => {
 
   it("highlights F6 primary sheets for level 6", () => {
     expect(getCurrentGradeSheetNames(6)).toEqual([...F6_PRIMARY_SHEET_NAMES]);
+  });
+});
+
+describe("stripF6LqLabelRows", () => {
+  it("drops LQ group rows from the publisher F6 sheet", () => {
+    const sheet = stripF6LqLabelRows({
+      name: "F6",
+      headers: ["", "Textbook: New Century"],
+      rows: [
+        ["F.6", "Arithmetic Sequences"],
+        ["LQ A1"],
+        ["LQ A2"],
+        ["LQ B"],
+        ["LQ A2 B"],
+        ["Remedial"],
+      ],
+    });
+    expect(sheet.rows.map((row) => row[0])).toEqual(["F.6", "Remedial"]);
   });
 });
 
