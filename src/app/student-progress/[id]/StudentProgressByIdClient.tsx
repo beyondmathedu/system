@@ -55,6 +55,13 @@ import {
   patchPuEntryField,
   visiblePuEntryCount,
 } from "@/lib/studentProgressPuNotes";
+import {
+  F6_MOCK_SET_OPTIONS,
+  F6_MOCK_YEAR_OPTIONS,
+  F6_SCHOOL_MOCK_SHEET,
+  normalizeMockSetLabels,
+  normalizeMockYearLabels,
+} from "@/lib/studentProgressMockSets";
 
 type StudentSummary = {
   id: string;
@@ -141,6 +148,10 @@ function parseNumberOrZero(value: string): number {
 
 const GRADE_LABELS = ["-", "2", "3", "4", "5", "5*", "5**"] as const;
 
+/** F6 學校mock卷 Excel LOOKUP thresholds for Grade(Case 1) / Grade(Case 2). */
+const MOCK_GRADE_CASE1_THRESHOLDS = [0, 49, 61, 68, 82, 87, 94] as const;
+const MOCK_GRADE_CASE2_THRESHOLDS = [0, 36, 50, 61, 76, 81, 89] as const;
+
 function findNormalColumn(columns: SheetColumn[], headerNames: string[]): SheetColumn | undefined {
   const wanted = new Set(headerNames.map((name) => normalizeHeaderName(name)));
   return columns.find((c) => c.kind === "normal" && wanted.has(normalizeHeaderName(c.header || "")));
@@ -171,26 +182,44 @@ function computeRowPercent(
             normalizeHeaderName(c.header || "") === "marks",
         )
       : [];
-  const paper1Total =
-    paper1Col && paper1Col.kind === "normal"
-      ? paper1MarksCols.length > 0
-        ? paper1MarksCols.reduce((sum, c) => {
-            if (c.kind !== "normal") return sum;
-            const leftKey = buildSelectionCellKey(sheetName, rowIndex, c.colIndex);
-            const leftRaw = progressSelections[leftKey] ?? row[c.colIndex] ?? "";
-            return sum + parseIntegerOrZero(String(leftRaw));
-          }, 0)
-        : parseIntegerOrZero(
-            String(
-              progressSelections[buildSelectionCellKey(sheetName, rowIndex, paper1Col.colIndex)] ??
-                row[paper1Col.colIndex] ??
-                "",
-            ),
-          )
-      : 0;
+  // 學校mock卷: Paper 1 = A1 + A2 + B (no separate Marks columns).
+  const mockPartTotal =
+    sheetName === F6_SCHOOL_MOCK_SHEET
+      ? (["a1", "a2", "b"] as const).reduce((sum, part) => {
+          const partCol = findNormalColumn(columns, [part]);
+          if (!partCol || partCol.kind !== "normal") return sum;
+          const key = buildSelectionCellKey(sheetName, rowIndex, partCol.colIndex);
+          return sum + parseIntegerOrZero(String(progressSelections[key] ?? row[partCol.colIndex] ?? ""));
+        }, 0)
+      : null;
 
+  const paper1Total =
+    mockPartTotal !== null
+      ? mockPartTotal
+      : paper1Col && paper1Col.kind === "normal"
+        ? paper1MarksCols.length > 0
+          ? paper1MarksCols.reduce((sum, c) => {
+              if (c.kind !== "normal") return sum;
+              const leftKey = buildSelectionCellKey(sheetName, rowIndex, c.colIndex);
+              const leftRaw = progressSelections[leftKey] ?? row[c.colIndex] ?? "";
+              return sum + parseIntegerOrZero(String(leftRaw));
+            }, 0)
+          : parseIntegerOrZero(
+              String(
+                progressSelections[buildSelectionCellKey(sheetName, rowIndex, paper1Col.colIndex)] ??
+                  row[paper1Col.colIndex] ??
+                  "",
+              ),
+            )
+        : 0;
+
+  // Prefer a Marks column after Paper 2 (F6 By Years); else Paper 2 itself is the mark (學校mock卷).
   const paper2MarksColIndex =
-    marksAfterPaper2Col && marksAfterPaper2Col.kind === "normal" ? marksAfterPaper2Col.colIndex : -1;
+    marksAfterPaper2Col && marksAfterPaper2Col.kind === "normal"
+      ? marksAfterPaper2Col.colIndex
+      : paper2Col && paper2Col.kind === "normal"
+        ? paper2Col.colIndex
+        : -1;
   const paper2Key =
     paper2MarksColIndex >= 0 ? buildSelectionCellKey(sheetName, rowIndex, paper2MarksColIndex) : "";
   const paper2Raw =
@@ -198,6 +227,14 @@ function computeRowPercent(
   const paper2Marks = parseNumberOrZero(String(paper2Raw));
 
   return (paper1Total / 105) * 65 + (paper2Marks / 45) * 35;
+}
+
+function lookupGradeFromThresholdList(percent: number, thresholds: readonly number[]): string {
+  let idx = 0;
+  for (let i = 0; i < thresholds.length; i += 1) {
+    if (percent >= thresholds[i]) idx = i;
+  }
+  return GRADE_LABELS[idx] ?? "-";
 }
 
 function lookupGradeByThresholds(
@@ -208,11 +245,7 @@ function lookupGradeByThresholds(
   if (!year) return "-";
   const thresholds = yearGradeThresholds[year];
   if (!thresholds) return "-";
-  let idx = 0;
-  for (let i = 0; i < thresholds.length; i += 1) {
-    if (percent >= thresholds[i]) idx = i;
-  }
-  return GRADE_LABELS[idx] ?? "-";
+  return lookupGradeFromThresholdList(percent, thresholds);
 }
 
 function loadCutOffOverride(): ProgressSheet | null {
@@ -520,6 +553,7 @@ export default function StudentProgressByIdClient({
   const isTutorViewerRole = viewerRole === "tutor";
   const canEditCutOff = !readOnly && viewerRole === "admin";
   const canEditPu = !readOnly && viewerRole === "admin";
+  const canEditMockSets = !readOnly && viewerRole === "admin";
   const backHref = isStudentViewer
     ? studentPortalHomePath(studentId)
     : `/students/${encodeURIComponent(studentId)}/lessons`;
@@ -583,15 +617,14 @@ export default function StudentProgressByIdClient({
   const [cutOffSheet, setCutOffSheet] = useState<ProgressSheet | null>(() => initial?.cutOffSheet ?? null);
   const [activeSheetName, setActiveSheetName] = useState("");
   const [puRowFloor, setPuRowFloor] = useState(PU_MIN_VISIBLE_ROWS);
+  const [mockSetOptions, setMockSetOptions] = useState<string[]>(() => [...F6_MOCK_SET_OPTIONS]);
+  const [mockYearOptions, setMockYearOptions] = useState<string[]>(() => [...F6_MOCK_YEAR_OPTIONS]);
+  const [mockCatalogEditor, setMockCatalogEditor] = useState<"set" | "year" | null>(null);
+  const [mockSetDraft, setMockSetDraft] = useState<string[]>([]);
+  const [mockSetSaveError, setMockSetSaveError] = useState("");
+  const [mockSetSaving, setMockSetSaving] = useState(false);
   const gradeLevel = parseGradeLevel(studentSummary.grade);
   const puVisibleRowCount = Math.max(puRowFloor, visiblePuEntryCount(progressSelections));
-  const extendedMaths = {
-    takesM1: Boolean(studentSummary.takesM1),
-    takesM2: Boolean(studentSummary.takesM2),
-  };
-  const currentGradeSheetNames = new Set(
-    gradeLevel ? getHighlightedProgressSheetNames(gradeLevel, extendedMaths) : [],
-  );
   const activeProgressSheet =
     progressSheets.find((sheet) => sheet.name === activeSheetName) ?? progressSheets[0] ?? null;
   const activeDisplaySheet =
@@ -731,6 +764,27 @@ export default function StudentProgressByIdClient({
   useEffect(() => {
     setPuRowFloor(PU_MIN_VISIBLE_ROWS);
   }, [studentId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/student-progress/mock-sets", { credentials: "same-origin" });
+        if (!res.ok) return;
+        const body = (await res.json()) as { ok?: boolean; labels?: unknown; years?: unknown };
+        if (!body.ok || cancelled) return;
+        const labels = normalizeMockSetLabels(body.labels);
+        const years = normalizeMockYearLabels(body.years);
+        if (labels.length) setMockSetOptions(labels);
+        if (years.length) setMockYearOptions(years);
+      } catch {
+        // keep built-in list
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!studentId) {
@@ -1306,6 +1360,26 @@ export default function StudentProgressByIdClient({
                                   if (headerNameHead === "marks") {
                                     return "Marks";
                                   }
+                                  if (
+                                    canEditMockSets &&
+                                    sheet.name === F6_SCHOOL_MOCK_SHEET &&
+                                    (headerNameHead === "set" || headerNameHead === "year")
+                                  ) {
+                                    const kind = headerNameHead === "year" ? "year" : "set";
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setMockSetDraft(kind === "year" ? [...mockYearOptions] : [...mockSetOptions]);
+                                          setMockSetSaveError("");
+                                          setMockCatalogEditor(kind);
+                                        }}
+                                        className="rounded-md bg-[#1d76c2] px-2 py-0.5 text-xs font-bold text-white hover:opacity-90"
+                                      >
+                                        {kind === "year" ? "Year" : "Set"}
+                                      </button>
+                                    );
+                                  }
                                   return col.header || " ";
                                 })()}
                               </th>
@@ -1403,10 +1477,6 @@ export default function StudentProgressByIdClient({
                                           );
                                         }
                                         if (headerName.startsWith("grade")) {
-                                          const yearCol = findNormalColumn(columns, ["year", "dse"]);
-                                          const yearRaw =
-                                            yearCol && yearCol.kind === "normal" ? String(row[yearCol.colIndex] ?? "") : "";
-                                          const year = parseYear(yearRaw);
                                           const percent = computeRowPercent(
                                             sheet.name,
                                             row,
@@ -1414,7 +1484,20 @@ export default function StudentProgressByIdClient({
                                             columns,
                                             progressSelections,
                                           );
-                                          const grade = lookupGradeByThresholds(year, percent, yearGradeThresholds);
+                                          let grade = "-";
+                                          if (headerName === "grade(case 1)") {
+                                            grade = lookupGradeFromThresholdList(percent, MOCK_GRADE_CASE1_THRESHOLDS);
+                                          } else if (headerName === "grade(case 2)") {
+                                            grade = lookupGradeFromThresholdList(percent, MOCK_GRADE_CASE2_THRESHOLDS);
+                                          } else {
+                                            const yearCol = findNormalColumn(columns, ["year", "dse"]);
+                                            const yearRaw =
+                                              yearCol && yearCol.kind === "normal"
+                                                ? String(row[yearCol.colIndex] ?? "")
+                                                : "";
+                                            const year = parseYear(yearRaw);
+                                            grade = lookupGradeByThresholds(year, percent, yearGradeThresholds);
+                                          }
                                           return (
                                             <input
                                               type="text"
@@ -1425,6 +1508,25 @@ export default function StudentProgressByIdClient({
                                           );
                                         }
                                         if (headerName === "paper 1") {
+                                          if (sheet.name === F6_SCHOOL_MOCK_SHEET) {
+                                            const sumMockPart = (part: "a1" | "a2" | "b") => {
+                                              const partCol = findNormalColumn(columns, [part]);
+                                              if (!partCol || partCol.kind !== "normal") return 0;
+                                              const key = buildSelectionCellKey(sheet.name, rowIndex, partCol.colIndex);
+                                              return parseIntegerOrZero(
+                                                String(progressSelections[key] ?? row[partCol.colIndex] ?? ""),
+                                              );
+                                            };
+                                            const total = sumMockPart("a1") + sumMockPart("a2") + sumMockPart("b");
+                                            return (
+                                              <input
+                                                type="number"
+                                                value={String(total)}
+                                                readOnly
+                                                className="w-[100px] min-w-[80px] rounded-md border border-slate-300 bg-slate-100 px-2 py-1 text-sm font-semibold text-slate-700"
+                                              />
+                                            );
+                                          }
                                           const paper1MarksCols = columns.filter(
                                             (c) =>
                                               c.kind === "normal" &&
@@ -1544,6 +1646,76 @@ export default function StudentProgressByIdClient({
                                             />
                                           );
                                         }
+                                        if (
+                                          sheet.name === F6_SCHOOL_MOCK_SHEET &&
+                                          (headerName === "set" || headerName === "year")
+                                        ) {
+                                          const options = headerName === "year" ? mockYearOptions : mockSetOptions;
+                                          const selected = String(progressSelections[selectionKey] ?? row[colIndex] ?? "").trim();
+                                          const known = options.includes(selected);
+                                          return (
+                                            <select
+                                              value={selected}
+                                              onChange={(e) => {
+                                                const nextValue = e.target.value;
+                                                setProgressSelections((prev) => {
+                                                  if (!nextValue) {
+                                                    const next = { ...prev };
+                                                    delete next[selectionKey];
+                                                    return next;
+                                                  }
+                                                  return { ...prev, [selectionKey]: nextValue };
+                                                });
+                                              }}
+                                              className={
+                                                headerName === "year"
+                                                  ? "min-w-[110px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+                                                  : "max-w-[420px] min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+                                              }
+                                            >
+                                              <option value="">—</option>
+                                              {selected && !known ? (
+                                                <option value={selected}>{selected}</option>
+                                              ) : null}
+                                              {options.map((option) => (
+                                                <option key={option} value={option}>
+                                                  {option}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          );
+                                        }
+                                        // 學校mock卷: A1 / A2 / B / Paper 2 = integer marks (Paper 1 handled above as A1+A2+B).
+                                        if (
+                                          sheet.name === F6_SCHOOL_MOCK_SHEET &&
+                                          (headerName === "a1" || headerName === "a2" || headerName === "b" || headerName === "paper 2")
+                                        ) {
+                                          const stored = progressSelections[selectionKey];
+                                          const rawValue = stored ?? row[colIndex] ?? "";
+                                          const value =
+                                            typeof rawValue === "string" ? rawValue.trim() : String(rawValue ?? "").trim();
+                                          return (
+                                            <input
+                                              type="number"
+                                              inputMode="numeric"
+                                              step={1}
+                                              min={0}
+                                              value={value === "0" && !stored ? "" : value}
+                                              onChange={(e) => {
+                                                const cleaned = e.target.value.replace(/[^\d]/g, "");
+                                                setProgressSelections((prev) => {
+                                                  if (!cleaned) {
+                                                    const next = { ...prev };
+                                                    delete next[selectionKey];
+                                                    return next;
+                                                  }
+                                                  return { ...prev, [selectionKey]: cleaned };
+                                                });
+                                              }}
+                                              className="w-[100px] min-w-[80px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+                                            />
+                                          );
+                                        }
                                         if (!SELECTABLE_HEADERS.has(headerName)) return row[colIndex] || " ";
                                         const selected = progressSelections[selectionKey] ?? "";
                                         return (
@@ -1608,7 +1780,6 @@ export default function StudentProgressByIdClient({
                 <div className="sticky bottom-0 z-40 flex shrink-0 overflow-x-auto rounded-b-xl border-t border-slate-300 bg-[#eef2f6] shadow-[0_-4px_12px_rgba(15,23,42,0.08)]">
                   {progressSheets.map((tabSheet) => {
                     const isActive = tabSheet.name === activeSheetName;
-                    const isCurrentGrade = currentGradeSheetNames.has(tabSheet.name);
                     return (
                       <button
                         key={tabSheet.name}
@@ -1616,10 +1787,8 @@ export default function StudentProgressByIdClient({
                         onClick={() => setActiveSheetName(tabSheet.name)}
                         className={`shrink-0 border-r border-slate-300 px-4 py-2 text-sm font-semibold transition ${
                           isActive
-                            ? "bg-emerald-600 text-white"
-                            : isCurrentGrade
-                              ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                              : "bg-[#eef2f6] text-slate-700 hover:bg-slate-200"
+                            ? "bg-[#1d76c2] text-white"
+                            : "bg-[#eef2f6] text-slate-700 hover:bg-slate-200"
                         }`}
                       >
                         {tabSheet.name}
@@ -1632,6 +1801,112 @@ export default function StudentProgressByIdClient({
           </div>
         </div>
       </div>
+      {mockCatalogEditor ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl bg-white shadow-xl">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h2 className="text-lg font-bold text-slate-900">
+                {mockCatalogEditor === "year" ? "Edit Year" : "Edit Set"}
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {mockCatalogEditor === "year"
+                  ? "Add, edit, or delete. Saved list is sorted by year."
+                  : "Add, edit, or delete. Saved list is sorted A–Z."}
+              </p>
+            </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-auto px-5 py-4">
+              {mockSetDraft.map((label, index) => (
+                <div key={`mock-set-${index}`} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={label}
+                    onChange={(e) => {
+                      const nextValue = e.target.value;
+                      setMockSetDraft((prev) => prev.map((item, i) => (i === index ? nextValue : item)));
+                    }}
+                    className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMockSetDraft((prev) => prev.filter((_, i) => i !== index))}
+                    className="shrink-0 rounded-md border border-red-200 px-2 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setMockSetDraft((prev) => [...prev, ""])}
+                className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90"
+              >
+                {mockCatalogEditor === "year" ? "+ Add Year" : "+ Add Set"}
+              </button>
+              {mockSetSaveError ? <p className="text-sm text-red-700">{mockSetSaveError}</p> : null}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setMockCatalogEditor(null)}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={mockSetSaving}
+                onClick={() => {
+                  const editingYear = mockCatalogEditor === "year";
+                  const labels = editingYear
+                    ? normalizeMockYearLabels(mockSetDraft)
+                    : normalizeMockSetLabels(mockSetDraft);
+                  if (!labels.length) {
+                    setMockSetSaveError(editingYear ? "至少要保留一個 Year。" : "至少要保留一個 Set。");
+                    return;
+                  }
+                  setMockSetSaving(true);
+                  setMockSetSaveError("");
+                  void (async () => {
+                    try {
+                      const res = await fetch("/api/student-progress/mock-sets", {
+                        method: "PUT",
+                        credentials: "same-origin",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(editingYear ? { years: labels } : { labels }),
+                      });
+                      const body = (await res.json()) as {
+                        ok?: boolean;
+                        labels?: unknown;
+                        years?: unknown;
+                        error?: string;
+                      };
+                      if (!res.ok || !body.ok) {
+                        setMockSetSaveError(body.error || "儲存失敗");
+                        return;
+                      }
+                      if (editingYear) {
+                        const saved = normalizeMockYearLabels(body.years);
+                        setMockYearOptions(saved.length ? saved : labels);
+                      } else {
+                        const saved = normalizeMockSetLabels(body.labels);
+                        setMockSetOptions(saved.length ? saved : labels);
+                      }
+                      setMockCatalogEditor(null);
+                    } catch {
+                      setMockSetSaveError("儲存失敗");
+                    } finally {
+                      setMockSetSaving(false);
+                    }
+                  })();
+                }}
+                className="rounded-md bg-[#1d76c2] px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+              >
+                {mockSetSaving ? "儲存中…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
