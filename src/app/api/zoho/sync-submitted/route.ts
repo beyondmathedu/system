@@ -13,6 +13,18 @@ import {
   zohoLineItemDescriptionText,
 } from "@/lib/zohoFeeMonthParse";
 import { buildZohoSyncWindow } from "@/lib/zohoSyncWindow";
+import { getZohoAccessTokenCached } from "@/lib/zohoAccessToken";
+import {
+  getCachedZohoReceiptList,
+  setCachedZohoReceiptList,
+  zohoReceiptListCacheKey,
+  type CachedZohoReceipt,
+} from "@/lib/zohoReceiptListCache";
+import {
+  mergeZohoBatchTotals,
+  monthAmountMapFromKeyMap,
+  type MonthAmountMap,
+} from "@/lib/zohoSyncAccumulate";
 
 type ZohoSalesReceipt = {
   sales_receipt_id?: string;
@@ -34,7 +46,6 @@ type ZohoSalesReceipt = {
   }>;
 };
 
-type ZohoTokenResponse = { access_token?: string; error?: string };
 type ZohoSalesReceiptListResponse = {
   code?: number;
   salesreceipts?: ZohoSalesReceipt[];
@@ -58,7 +69,15 @@ type SyncRequestBody = {
   /** Slice matched receipts for detail fetch (client loops until done). */
   detailOffset?: number;
   detailBatchSize?: number;
+  /**
+   * Zoho totals from earlier batches in this Sync run (studentId → month → value).
+   * Intermediate batches do not write DB; the final batch merges this with its own
+   * deltas and replaces the year in one shot so a mid-sync abort cannot wipe paid.
+   */
+  priorAccumulatedAmounts?: MonthAmountMap;
+  priorAccumulatedLessons?: MonthAmountMap;
 };
+
 type StudentNameRow = {
   id: string;
   name_zh: string | null;
@@ -295,29 +314,7 @@ function lineItemLessonCountWithFallback(li: Record<string, unknown>, receiptNot
 }
 
 async function getZohoAccessToken(): Promise<string> {
-  const clientId = process.env.ZOHO_CLIENT_ID ?? "";
-  const clientSecret = process.env.ZOHO_CLIENT_SECRET ?? "";
-  const refreshToken = process.env.ZOHO_REFRESH_TOKEN ?? "";
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error("Missing ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN");
-  }
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshToken,
-  });
-  const resp = await fetch("https://accounts.zoho.com/oauth/v2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-    cache: "no-store",
-  });
-  const json = (await resp.json()) as ZohoTokenResponse;
-  if (!resp.ok || json.error || !json.access_token) {
-    throw new Error(`Zoho token error: ${JSON.stringify(json)}`);
-  }
-  return String(json.access_token);
+  return getZohoAccessTokenCached();
 }
 
 function monthFromReceiptDate(receipt: Record<string, unknown>, targetYear: number): number | null {
@@ -347,6 +344,12 @@ async function fetchAllReceipts(
   dateStart: string,
   dateEnd: string,
 ): Promise<ZohoSalesReceipt[]> {
+  const cacheKey = zohoReceiptListCacheKey(orgId, dateStart, dateEnd);
+  const cached = getCachedZohoReceiptList(cacheKey);
+  if (cached) {
+    return cached as ZohoSalesReceipt[];
+  }
+
   const out: ZohoSalesReceipt[] = [];
   let page = 1;
   while (page <= 25) {
@@ -362,6 +365,10 @@ async function fetchAllReceipts(
       throw new Error("ZOHO_RATE_LIMIT_EXCEEDED");
     }
     if (!resp.ok || json.code !== 0) {
+      const blob = JSON.stringify(json).toLowerCase();
+      if (blob.includes("too many requests") || blob.includes("access denied")) {
+        throw new Error("ZOHO_BOOKS_RATE_LIMITED");
+      }
       throw new Error(`Zoho salesreceipts error: ${JSON.stringify(json)}`);
     }
     const rows = (json.sales_receipts ?? json.salesreceipts ?? []) as ZohoSalesReceipt[];
@@ -369,7 +376,10 @@ async function fetchAllReceipts(
     const hasMore = Boolean(json.page_context?.has_more_page);
     if (!hasMore || rows.length === 0) break;
     page += 1;
+    // Soft-pace list pagination — full-year Sync used to re-hit this every batch.
+    await new Promise((r) => setTimeout(r, 250));
   }
+  setCachedZohoReceiptList(cacheKey, out as CachedZohoReceipt[]);
   return out;
 }
 
@@ -589,44 +599,8 @@ export async function POST(request: Request) {
     const nextDetailOffset = detailOffset + batchReceipts.length;
     const syncDone = nextDetailOffset >= matchedReceipts.length;
 
-    // First batch of a full-year sync: clear paid months for every matched student so
-    // later batches can ADD Zoho Amounts without stacking on stale mis-attributed cells.
-    if (batching && detailOffset === 0 && widenWindow && matchedReceipts.length > 0) {
-      const clearIds = Array.from(new Set(matchedReceipts.map((m) => m.studentId)));
-      const clearRows: Array<{
-        student_id: string;
-        year: number;
-        month: number;
-        submitted_amount: number;
-        submitted_lesson_count: null;
-        updated_at: string;
-      }> = [];
-      const clearAt = new Date().toISOString();
-      for (const sid of clearIds) {
-        for (let m = 1; m <= 12; m += 1) {
-          clearRows.push({
-            student_id: sid,
-            year,
-            month: m,
-            submitted_amount: 0,
-            submitted_lesson_count: null,
-            updated_at: clearAt,
-          });
-        }
-      }
-      for (let i = 0; i < clearRows.length; i += 500) {
-        const chunk = clearRows.slice(i, i + 500);
-        const { error: clearErr } = await admin
-          .from("student_monthly_fee_records")
-          .upsert(chunk, { onConflict: "student_id,year,month" });
-        if (clearErr) {
-          return NextResponse.json({ ok: false, error: clearErr.message }, { status: 500 });
-        }
-      }
-    }
-
     const maxDetailCalls = Math.max(batchReceipts.length + 10, 50);
-    const withItems = await mapWithConcurrency(batchReceipts, 8, async ({ receipt, studentId }) => {
+    const withItems = await mapWithConcurrency(batchReceipts, 3, async ({ receipt, studentId }) => {
       let activeReceipt: Record<string, unknown> = receipt as Record<string, unknown>;
       let lineItems = pickLineItems(receipt);
       const receiptId = String(receipt.sales_receipt_id ?? receipt.salesreceipt_id ?? "").trim();
@@ -729,7 +703,256 @@ export async function POST(request: Request) {
       }
     }
 
+    const batchDeltaAmounts = monthAmountMapFromKeyMap(amountByStudentMonth);
+    const batchDeltaLessons = monthAmountMapFromKeyMap(lessonsByStudentMonth);
+
+    if (batching && skippedDetailByLimit > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            `今日 Zoho 查詢額度不足，尚有 ${skippedDetailByLimit} 張收據未讀詳情。已繳金額未改動，請稍後再 Sync。`,
+          syncDone: false,
+          deferredWrite: true,
+          detailOffset,
+          nextDetailOffset,
+          matchedReceiptTotal: matchedReceipts.length,
+          batchDeltaByStudentMonth: batchDeltaAmounts,
+          batchDeltaLessonCountByStudentMonth: batchDeltaLessons,
+        },
+        { status: 429 },
+      );
+    }
+
+    // Intermediate batches only return deltas — never touch DB. A mid-sync abort then
+    // leaves existing Tuition Paid intact instead of wiping months that were not yet
+    // re-fetched.
+    if (batching && !syncDone) {
+      return NextResponse.json({
+        ok: true,
+        syncWindow: { dateStart, dateEnd },
+        fetchedReceipts: receipts.length,
+        syncedRows: 0,
+        unmatchedReceipts,
+        detailOffset,
+        nextDetailOffset,
+        matchedReceiptTotal: matchedReceipts.length,
+        syncDone: false,
+        deferredWrite: true,
+        batchDeltaByStudentMonth: batchDeltaAmounts,
+        batchDeltaLessonCountByStudentMonth: batchDeltaLessons,
+        debug: {
+          matchedReceipts: matchedReceipts.length,
+          batchSize: batchReceipts.length,
+          totalLineItems,
+          parsedMonthLineItems,
+          skippedZeroQuantity,
+          skippedNonCourseLineItems,
+          skippedNoMonthLineItems,
+          detailFetchPreDiscount,
+          zohoMatchedKeys: zohoMatchedKeys.size,
+          zohoMissingNetKeys: zohoMissingNetKeys.size,
+          touchedStudents: touchedStudentIds.size,
+          fullYearRebuild: widenWindow,
+          deferredWrite: true,
+          detailCalls,
+          skippedDetailByLimit,
+          detailFetchSuccess,
+          detailFetchEmpty,
+          detailFetchError,
+          detailErrorSamples,
+        },
+        unmatchedExamples: receipts
+          .filter((r) => !matchStudentIdFromReceipt(r, studentIdSet, byName, idOnly, narrowStudents))
+          .slice(0, 5)
+          .map((r) =>
+            String(
+              r.company_name
+                ? `${r.customer_name || r.customer_name_formatted || ""} (${r.company_name})`
+                : r.customer_name_formatted || r.customer_name || r.customer_id || "",
+            ),
+          ),
+        monthSubmittedByStudentId: {},
+        monthSubmittedLessonCountByStudentId: {},
+        submittedByStudentMonth: {},
+      });
+    }
+
     const feeTierBundle = await loadStudentFeeTierSettingsAdmin(admin);
+
+    // Final batched pass: merge prior client totals + this batch, then replace the whole
+    // year for every matched student in one write.
+    if (batching && syncDone) {
+      const finalAmounts = mergeZohoBatchTotals(
+        body?.priorAccumulatedAmounts,
+        amountByStudentMonth,
+      );
+      const finalLessons = mergeZohoBatchTotals(
+        body?.priorAccumulatedLessons,
+        lessonsByStudentMonth,
+      );
+
+      const finalizeStudentIds = Array.from(touchedStudentIds);
+      const { data: existingFinalize } = finalizeStudentIds.length
+        ? await admin
+            .from("student_monthly_fee_records")
+            .select(
+              "student_id, year, month, submitted_amount, submitted_lesson_count, lesson_unit_price, fee_pricing_grade",
+            )
+            .eq("year", year)
+            .in("student_id", finalizeStudentIds)
+            .returns<ExistingFeeRow[]>()
+        : { data: [] as ExistingFeeRow[] };
+      const existingFinalizeMap = new Map<string, ExistingFeeRow>();
+      for (const row of existingFinalize ?? []) {
+        const sid = String(row.student_id ?? "");
+        const mo = Number(row.month ?? 0);
+        if (!sid || !mo) continue;
+        existingFinalizeMap.set(`${sid}:${mo}`, row);
+      }
+
+      const upserts: Array<{
+        student_id: string;
+        year: number;
+        month: number;
+        submitted_amount: number;
+        submitted_lesson_count: number | null;
+        updated_at: string;
+      }> = [];
+      const clearedStaleMonths: string[] = [];
+      const nowIso = new Date().toISOString();
+      for (const student_id of finalizeStudentIds) {
+        for (let month = 1; month <= 12; month += 1) {
+          const key = `${student_id}:${month}`;
+          let submitted = finalAmounts.get(key) ?? 0;
+          let lessonCount = finalLessons.get(key) ?? 0;
+          const existingRow = existingFinalizeMap.get(key);
+          const existingAmt = Number(existingRow?.submitted_amount ?? 0) || 0;
+          if (submitted <= 0 && lessonCount > 0) {
+            const gradeFor = gradeForFeePricing(
+              gradeByStudentId.get(student_id) ?? "",
+              year,
+              month,
+              existingRow?.fee_pricing_grade ?? "",
+            );
+            const tier = resolveFeeTierSettingsForStudent(feeTierBundle, student_id, year, month);
+            submitted =
+              Math.round(
+                sumSlotTuitionHkdByLessonCount({ lessonCount, gradeFor, feeTierSettings: tier }) *
+                  100,
+              ) / 100;
+          }
+          if (existingAmt > 0.005 && submitted <= 0 && lessonCount <= 0) {
+            clearedStaleMonths.push(`${student_id}:${month}:was$${existingAmt}`);
+          }
+          upserts.push({
+            student_id,
+            year,
+            month,
+            submitted_amount: Math.round(submitted * 100) / 100,
+            submitted_lesson_count: lessonCount > 0 ? lessonCount : null,
+            updated_at: nowIso,
+          });
+        }
+      }
+
+      if (upserts.length > 0) {
+        let { error: upErr } = await admin
+          .from("student_monthly_fee_records")
+          .upsert(upserts, { onConflict: "student_id,year,month" });
+        if (
+          upErr &&
+          /submitted_lesson_count/i.test(upErr.message) &&
+          /column|schema cache/i.test(upErr.message)
+        ) {
+          ({ error: upErr } = await admin.from("student_monthly_fee_records").upsert(
+            upserts.map((row) => {
+              const next = { ...row };
+              delete (next as { submitted_lesson_count?: number }).submitted_lesson_count;
+              return next;
+            }),
+            { onConflict: "student_id,year,month" },
+          ));
+        }
+        if (upErr) {
+          return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
+        }
+        revalidateTag(SCHEDULE_CACHE_TAG_FEE_RECORD, "max");
+      }
+
+      const monthSubmittedByStudentId: Record<string, number> = {};
+      const monthSubmittedLessonCountByStudentId: Record<string, number> = {};
+      const submittedByStudentMonth: Record<string, Record<number, number>> = {};
+      for (const row of upserts) {
+        if (!submittedByStudentMonth[row.student_id]) submittedByStudentMonth[row.student_id] = {};
+        submittedByStudentMonth[row.student_id]![row.month] = row.submitted_amount;
+        if (row.month !== targetMonth) continue;
+        monthSubmittedByStudentId[row.student_id] = row.submitted_amount;
+        if (row.submitted_lesson_count != null && row.submitted_lesson_count > 0) {
+          monthSubmittedLessonCountByStudentId[row.student_id] = row.submitted_lesson_count;
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        syncWindow: { dateStart, dateEnd },
+        fetchedReceipts: receipts.length,
+        syncedRows: upserts.length,
+        unmatchedReceipts,
+        detailOffset,
+        nextDetailOffset,
+        matchedReceiptTotal: matchedReceipts.length,
+        syncDone: true,
+        deferredWrite: false,
+        batchDeltaByStudentMonth: batchDeltaAmounts,
+        batchDeltaLessonCountByStudentMonth: batchDeltaLessons,
+        debug: {
+          matchedReceipts: matchedReceipts.length,
+          batchSize: batchReceipts.length,
+          totalLineItems,
+          parsedMonthLineItems,
+          skippedZeroQuantity,
+          skippedNonCourseLineItems,
+          skippedNoMonthLineItems,
+          detailFetchPreDiscount,
+          zohoMatchedKeys: zohoMatchedKeys.size,
+          zohoMissingNetKeys: zohoMissingNetKeys.size,
+          touchedStudents: touchedStudentIds.size,
+          fullYearRebuild: widenWindow,
+          deferredWriteFinalized: true,
+          preservedExistingMonths: 0,
+          preservedExistingSamples: [],
+          clearedStaleMonths: clearedStaleMonths.length,
+          clearedStaleSamples: clearedStaleMonths.slice(0, 8),
+          tierAmountSamples: upserts
+            .filter((row) => row.submitted_amount > 0)
+            .slice(0, 5)
+            .map((row) => {
+              const lessons = row.submitted_lesson_count ?? 0;
+              return `${row.student_id}:${row.month}:${lessons}堂=$${row.submitted_amount}`;
+            }),
+          detailCalls,
+          skippedDetailByLimit,
+          detailFetchSuccess,
+          detailFetchEmpty,
+          detailFetchError,
+          detailErrorSamples,
+        },
+        unmatchedExamples: receipts
+          .filter((r) => !matchStudentIdFromReceipt(r, studentIdSet, byName, idOnly, narrowStudents))
+          .slice(0, 5)
+          .map((r) =>
+            String(
+              r.company_name
+                ? `${r.customer_name || r.customer_name_formatted || ""} (${r.company_name})`
+                : r.customer_name_formatted || r.customer_name || r.customer_id || "",
+            ),
+          ),
+        monthSubmittedByStudentId,
+        monthSubmittedLessonCountByStudentId,
+        submittedByStudentMonth,
+      });
+    }
 
     const studentIds = Array.from(
       new Set([
@@ -774,23 +997,20 @@ export async function POST(request: Request) {
       });
     }
 
-    // Revisit paid months Zoho no longer attributes — only for single-shot sync.
-    // Batched full-year sync already cleared on offset 0 and ADDs Amounts per batch.
-    if (!batching) {
-      if (widenWindow) {
-        for (const [key, row] of existingMap) {
-          const sid = key.split(":")[0] ?? "";
-          if (!touchedStudentIds.has(sid)) continue;
-          if (zohoMatchedKeys.has(key)) continue;
-          if ((row.submitted_amount ?? 0) > 0.005) {
-            lessonsByStudentMonth.set(key, lessonsByStudentMonth.get(key) ?? 0);
-          }
-        }
-      } else {
-        for (const key of staleReceiptDateKeys) {
-          if (zohoMatchedKeys.has(key)) continue;
+    // Single-shot sync: clear paid months Zoho no longer attributes for matched students.
+    if (widenWindow) {
+      for (const [key, row] of existingMap) {
+        const sid = key.split(":")[0] ?? "";
+        if (!touchedStudentIds.has(sid)) continue;
+        if (zohoMatchedKeys.has(key)) continue;
+        if ((row.submitted_amount ?? 0) > 0.005) {
           lessonsByStudentMonth.set(key, lessonsByStudentMonth.get(key) ?? 0);
         }
+      }
+    } else {
+      for (const key of staleReceiptDateKeys) {
+        if (zohoMatchedKeys.has(key)) continue;
+        lessonsByStudentMonth.set(key, lessonsByStudentMonth.get(key) ?? 0);
       }
     }
 
@@ -807,7 +1027,7 @@ export async function POST(request: Request) {
     const allKeys = new Set([
       ...Array.from(lessonsByStudentMonth.keys()),
       ...Array.from(amountByStudentMonth.keys()),
-      ...(batching ? [] : Array.from(staleReceiptDateKeys)),
+      ...Array.from(staleReceiptDateKeys),
     ]);
     const nowIso = new Date().toISOString();
     for (const key of allKeys) {
@@ -817,24 +1037,8 @@ export async function POST(request: Request) {
       let submitted = amountByStudentMonth.get(key) ?? 0;
       const existingRow = existingMap.get(key);
       const existingAmt = Number(existingRow?.submitted_amount ?? 0) || 0;
-      const existingLessons = Number(existingRow?.submitted_lesson_count ?? 0) || 0;
       const touched = touchedStudentIds.has(student_id);
       const zohoTouchedMonth = zohoMatchedKeys.has(key);
-
-      if (batching && widenWindow) {
-        submitted = Math.round((existingAmt + submitted) * 100) / 100;
-        lessonCount = existingLessons + lessonCount;
-        if (submitted <= 0 && lessonCount <= 0) continue;
-        upserts.push({
-          student_id,
-          year,
-          month,
-          submitted_amount: submitted,
-          submitted_lesson_count: lessonCount > 0 ? lessonCount : null,
-          updated_at: nowIso,
-        });
-        continue;
-      }
 
       // Sheet month always refreshes from Zoho. Full-year sync also clears paid months
       // for matched students that Zoho no longer attributes (fixes Jul swallowing Aug).
@@ -983,12 +1187,32 @@ export async function POST(request: Request) {
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
+    if (message.includes("ZOHO_TOKEN_RATE_LIMITED")) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "ZOHO_TOKEN_RATE_LIMITED: Zoho 暫時拒絕換取 token。已繳未改動。請再等數小時；若已等過一日仍失敗，請重新授權換新 refresh_token。",
+        },
+        { status: 429 },
+      );
+    }
+    if (message.includes("ZOHO_BOOKS_RATE_LIMITED") || message.includes("too many requests")) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "ZOHO_BOOKS_RATE_LIMITED: Zoho Books API 暫時限流。已繳未改動；進度已保存。請等 1–2 小時後再 Sync 續跑。",
+        },
+        { status: 429 },
+      );
+    }
     if (message.includes("ZOHO_RATE_LIMIT_EXCEEDED")) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            "Zoho API 今日配額已到上限（1000）。請稍後再試，或等配額重置後重試同步。",
+            "ZOHO_DAILY_QUOTA: Zoho 今日詳情配額已用完（約 1000）。已繳未改動；請明天再 Sync，會由斷點繼續。",
         },
         { status: 429 },
       );
