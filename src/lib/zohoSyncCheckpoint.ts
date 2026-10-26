@@ -9,6 +9,8 @@ export type ZohoSyncCheckpointStatus =
   | "timeout"
   | "complete";
 
+export type ZohoMonthAmountMap = Record<string, Record<number, number>>;
+
 export type ZohoSyncCheckpoint = {
   year: number;
   detailOffset: number;
@@ -21,6 +23,9 @@ export type ZohoSyncCheckpoint = {
   status: ZohoSyncCheckpointStatus;
   updatedAt: string;
   lastError?: string;
+  /** Deferred write: Zoho amounts accumulated before the interrupt. */
+  accumulatedAmounts?: ZohoMonthAmountMap;
+  accumulatedLessons?: ZohoMonthAmountMap;
 };
 
 export type ZohoSyncDayMeta = {

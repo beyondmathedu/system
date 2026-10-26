@@ -81,6 +81,13 @@ import {
   LESSON_SYSTEM_START_YEAR,
 } from "@/lib/lessonSystemStart";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
+import {
+  clearZohoSyncCheckpoint,
+  loadZohoSyncCheckpoint,
+  markZohoFullSyncSuccess,
+  saveZohoSyncCheckpoint,
+  type ZohoMonthAmountMap,
+} from "@/lib/zohoSyncCheckpoint";
 
 type StudentRow = {
   id: string;
@@ -1487,24 +1494,79 @@ export default function StudentsLessonTimeFeeRecordPage({
     async (opts?: { studentIds?: string[]; idOnly?: boolean }) => {
     setSyncingZoho(true);
     setSyncNotice("");
+      const detailBatchSize = 40;
+    let detailOffset = 0;
+    let matchedTotal = 0;
+    let batches = 0;
+    let totalUnmatched = 0;
+    let totalSynced = 0;
+    /** Accumulate Zoho deltas; DB writes only on the final batch. Persist for resume. */
+    const priorAccumulatedAmounts: ZohoMonthAmountMap = {};
+    const priorAccumulatedLessons: ZohoMonthAmountMap = {};
+
+    const addDeltaMap = (
+      target: ZohoMonthAmountMap,
+      delta: ZohoMonthAmountMap | undefined,
+    ) => {
+      if (!delta) return;
+      for (const [sid, months] of Object.entries(delta)) {
+        if (!sid || !months) continue;
+        if (!target[sid]) target[sid] = {};
+        for (const [monthStr, raw] of Object.entries(months)) {
+          const month = Number(monthStr);
+          const value = Number(raw) || 0;
+          if (!month || !Number.isFinite(value) || value === 0) continue;
+          target[sid]![month] = Math.round(((target[sid]![month] ?? 0) + value) * 100) / 100;
+        }
+      }
+    };
+
+    const persistCheckpoint = (
+      status: "in_progress" | "rate_limited" | "error" | "timeout",
+      lastError?: string,
+    ) => {
+      saveZohoSyncCheckpoint({
+        year: sheetYear,
+        detailOffset,
+        matchedTotal,
+        detailCallsUsed: detailOffset,
+        batchesDone: batches,
+        totalSynced,
+        totalFetched: matchedTotal,
+        totalUnmatched,
+        status,
+        updatedAt: new Date().toISOString(),
+        lastError,
+        accumulatedAmounts: priorAccumulatedAmounts,
+        accumulatedLessons: priorAccumulatedLessons,
+      });
+    };
+
     try {
-      let detailOffset = 0;
-      const detailBatchSize = 60;
-      let totalSynced = 0;
-      let totalUnmatched = 0;
-      let matchedTotal = 0;
-      let batches = 0;
+      const resume = loadZohoSyncCheckpoint(sheetYear);
+      if (
+        resume &&
+        resume.status !== "complete" &&
+        Number(resume.detailOffset) > 0 &&
+        Number.isFinite(Number(resume.detailOffset))
+      ) {
+        detailOffset = Math.floor(Number(resume.detailOffset)) || 0;
+        matchedTotal = Math.floor(Number(resume.matchedTotal)) || 0;
+        addDeltaMap(priorAccumulatedAmounts, resume.accumulatedAmounts);
+        addDeltaMap(priorAccumulatedLessons, resume.accumulatedLessons);
+        setSyncNotice(
+          `由斷點繼續 Zoho 同步… 由第 ${detailOffset} 張起（完成後才寫入已繳）`,
+        );
+      }
+
       let lastJson: Record<string, unknown> | null = null;
-      const mergedByStudentMonth: Record<string, Record<number, number>> = {};
-      const mergedMonthMap: Record<string, number> = {};
-      const mergedLessonCountMap: Record<string, number> = {};
 
       while (true) {
         batches += 1;
         setSyncNotice(
           matchedTotal > 0
-            ? `正在同步 Zoho… ${Math.min(detailOffset, matchedTotal)}／${matchedTotal} 張收據`
-            : `正在同步 Zoho…`,
+            ? `正在同步 Zoho… ${Math.min(detailOffset, matchedTotal)}／${matchedTotal} 張收據（完成後才寫入已繳）`
+            : `正在同步 Zoho…（完成後才寫入已繳）`,
         );
         const ctl = new AbortController();
         const timeout = window.setTimeout(() => ctl.abort(), 120000);
@@ -1518,6 +1580,8 @@ export default function StudentsLessonTimeFeeRecordPage({
             idOnly: Boolean(opts?.idOnly),
             detailOffset,
             detailBatchSize,
+            priorAccumulatedAmounts,
+            priorAccumulatedLessons,
           }),
           signal: ctl.signal,
         });
@@ -1525,51 +1589,84 @@ export default function StudentsLessonTimeFeeRecordPage({
         const json = (await resp.json()) as Record<string, unknown>;
         lastJson = json;
         if (!resp.ok || !json?.ok) {
-          throw new Error(String(json?.error ?? "sync_failed"));
+          const errText = String(json?.error ?? "sync_failed");
+          if (errText.includes("ZOHO_DAILY_QUOTA") || errText.includes("今日詳情配額")) {
+            persistCheckpoint("rate_limited", errText);
+            throw new Error(
+              "Zoho 今日詳情配額已用完（約 1000 張）。已繳未改動；進度已保存。請明天再按 Sync 由斷點繼續。",
+            );
+          }
+          if (
+            errText.includes("ZOHO_TOKEN_RATE_LIMITED") ||
+            errText.includes("ZOHO_BOOKS_RATE_LIMITED") ||
+            errText.includes("too many requests") ||
+            errText.includes("Access Denied") ||
+            resp.status === 429
+          ) {
+            persistCheckpoint("rate_limited", errText);
+            throw new Error(
+              "Zoho 暫時限流。已繳未改動；進度已保存。請等數小時後再按一次 Sync 續跑（已等過一日仍失敗可重新授權）。",
+            );
+          }
+          persistCheckpoint("error", errText);
+          throw new Error(errText);
         }
 
-        totalSynced += Number(json.syncedRows ?? 0) || 0;
+        totalSynced = Number(json.syncedRows ?? 0) || totalSynced;
         totalUnmatched = Number(json.unmatchedReceipts ?? 0) || 0;
         matchedTotal = Number(json.matchedReceiptTotal ?? 0) || matchedTotal;
 
-        const monthMap = (json.monthSubmittedByStudentId ?? {}) as Record<string, number>;
-        const lessonCountMap = (json.monthSubmittedLessonCountByStudentId ?? {}) as Record<string, number>;
-        const byStudentMonth = (json.submittedByStudentMonth ?? {}) as Record<
-          string,
-          Record<number, number>
-        >;
-        for (const [sid, months] of Object.entries(byStudentMonth)) {
-          mergedByStudentMonth[sid] = { ...(mergedByStudentMonth[sid] ?? {}), ...months };
-        }
-        for (const [sid, submitted] of Object.entries(monthMap)) {
-          mergedMonthMap[sid] = Number(submitted) || 0;
-        }
-        for (const [sid, lessonCount] of Object.entries(lessonCountMap)) {
-          mergedLessonCountMap[sid] = Number(lessonCount) || 0;
-        }
+        addDeltaMap(
+          priorAccumulatedAmounts,
+          (json.batchDeltaByStudentMonth ?? {}) as ZohoMonthAmountMap,
+        );
+        addDeltaMap(
+          priorAccumulatedLessons,
+          (json.batchDeltaLessonCountByStudentMonth ?? {}) as ZohoMonthAmountMap,
+        );
 
         const nextOffset = Number(json.nextDetailOffset ?? detailOffset + detailBatchSize) || 0;
-        const done = Boolean(json.syncDone) || nextOffset >= matchedTotal || batches > 50;
         detailOffset = nextOffset;
-        if (done) break;
-        // Pace Zoho detail calls — org limit is 1000/day.
-        await new Promise((r) => window.setTimeout(r, 400));
+        persistCheckpoint("in_progress");
+
+        const maxBatches = Math.max(80, Math.ceil((matchedTotal || 1) / detailBatchSize) + 5);
+        const done = Boolean(json.syncDone) || nextOffset >= matchedTotal || batches > maxBatches;
+        if (done) {
+          if (!json.syncDone) {
+            persistCheckpoint("error", "batch_cap");
+            throw new Error(
+              "同步未完成（已達批次上限）。已繳未改動；進度已保存。請稍後再按 Sync 繼續。",
+            );
+          }
+          break;
+        }
+        // Pace Zoho Books detail calls (list is cached server-side across batches).
+        await new Promise((r) => window.setTimeout(r, 2000));
       }
 
-      if (Object.keys(mergedByStudentMonth).length > 0) {
+      const monthMap = (lastJson?.monthSubmittedByStudentId ?? {}) as Record<string, number>;
+      const lessonCountMap = (lastJson?.monthSubmittedLessonCountByStudentId ?? {}) as Record<
+        string,
+        number
+      >;
+      const byStudentMonth = (lastJson?.submittedByStudentMonth ?? {}) as Record<
+        string,
+        Record<number, number>
+      >;
+      if (Object.keys(byStudentMonth).length > 0) {
         setSubmittedByStudentMonth((prev) => {
           const next = { ...prev };
-          for (const [sid, months] of Object.entries(mergedByStudentMonth)) {
+          for (const [sid, months] of Object.entries(byStudentMonth)) {
             next[sid] = { ...(next[sid] ?? {}), ...months };
           }
           return next;
         });
       }
-      if (Object.keys(mergedMonthMap).length > 0) {
+      if (Object.keys(monthMap).length > 0) {
         setRecordsByStudentId((prev) => {
           const next = { ...prev };
-          for (const [sid, submitted] of Object.entries(mergedMonthMap)) {
-            const lessonCount = mergedLessonCountMap[sid];
+          for (const [sid, submitted] of Object.entries(monthMap)) {
+            const lessonCount = lessonCountMap[sid];
             next[sid] = {
               ...(next[sid] ?? defaultRecordState()),
               submitted: Number(submitted) || 0,
@@ -1582,6 +1679,9 @@ export default function StudentsLessonTimeFeeRecordPage({
           return next;
         });
       }
+
+      clearZohoSyncCheckpoint(sheetYear);
+      markZohoFullSyncSuccess(sheetYear);
 
       const debug = (lastJson?.debug ?? {}) as {
         skippedDetailByLimit?: number;
@@ -1603,9 +1703,10 @@ export default function StudentsLessonTimeFeeRecordPage({
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("aborted")) {
-        setSyncNotice("同步逾時。請再按一次 Sync，會由未完成處繼續。");
+        persistCheckpoint("timeout", msg);
+        setSyncNotice("同步逾時，已繳未改動；進度已保存。請再按 Sync 由斷點繼續。");
       } else {
-        setSyncNotice(`同步失敗：${msg}`);
+        setSyncNotice(`同步失敗（已繳未改動）：${msg}`);
       }
     } finally {
       setSyncingZoho(false);
@@ -2142,7 +2243,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                     }
                     disabled={syncingZoho}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    title="按 Zoho Item & Description 認月份、Amount 寫已繳；分批同步全部學生。"
+                    title="按 Zoho Item & Description 認月份、Amount 寫已繳；分批讀取全部學生，全部完成後才一次寫入。"
                   >
                     <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
                       <path
