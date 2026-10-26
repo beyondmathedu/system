@@ -825,7 +825,7 @@ export async function POST(request: Request) {
         for (let month = 1; month <= 12; month += 1) {
           const key = `${student_id}:${month}`;
           let submitted = finalAmounts.get(key) ?? 0;
-          let lessonCount = finalLessons.get(key) ?? 0;
+          const lessonCount = finalLessons.get(key) ?? 0;
           const existingRow = existingFinalizeMap.get(key);
           const existingAmt = Number(existingRow?.submitted_amount ?? 0) || 0;
           if (submitted <= 0 && lessonCount > 0) {
@@ -1033,7 +1033,7 @@ export async function POST(request: Request) {
     for (const key of allKeys) {
       const [student_id, mStr] = key.split(":");
       const month = Number(mStr);
-      let lessonCount = lessonsByStudentMonth.get(key) ?? 0;
+      const lessonCount = lessonsByStudentMonth.get(key) ?? 0;
       let submitted = amountByStudentMonth.get(key) ?? 0;
       const existingRow = existingMap.get(key);
       const existingAmt = Number(existingRow?.submitted_amount ?? 0) || 0;
