@@ -35,7 +35,6 @@ export const F6_PROGRESS_SHEET_NAMES = [
   F6_BY_YEARS_SHEET,
   "F6 學校mock卷",
   "Cut Off",
-  PU_SHEET,
 ] as const;
 
 export const F6_PRIMARY_SHEET_NAMES = [
@@ -110,6 +109,8 @@ export function getCumulativeSheetNames(level: number): string[] {
     base.push("F5");
     base.push(...F6_PROGRESS_SHEET_NAMES);
   }
+  // PU notes are available for every form grade.
+  base.push(PU_SHEET);
   return base;
 }
 
