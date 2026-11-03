@@ -9,6 +9,7 @@ import {
   appendNextCutOffYear,
   M1_SHEET,
   M2_SHEET,
+  PU_SHEET,
   stripF6LqLabelRows,
   syncF6ByYearsWithCutOff,
 } from "@/lib/studentProgressWorkbook";
@@ -22,6 +23,7 @@ describe("getCumulativeSheetNames", () => {
       "F4",
       "F5",
       ...F6_PROGRESS_SHEET_NAMES,
+      PU_SHEET,
     ]);
   });
 
@@ -33,11 +35,13 @@ describe("getCumulativeSheetNames", () => {
       "F4",
       "F5",
       ...F6_PROGRESS_SHEET_NAMES,
+      PU_SHEET,
     ]);
   });
 
-  it("stops before F5 for level 4", () => {
-    expect(getCumulativeSheetNames(4)).toEqual(["F1", "F2", "F3", "F4"]);
+  it("includes PU for every form grade, stopping before F5 for level 4", () => {
+    expect(getCumulativeSheetNames(1)).toEqual(["F1", PU_SHEET]);
+    expect(getCumulativeSheetNames(4)).toEqual(["F1", "F2", "F3", "F4", PU_SHEET]);
   });
 });
 
