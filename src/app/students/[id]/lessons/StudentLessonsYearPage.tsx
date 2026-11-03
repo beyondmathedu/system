@@ -11,6 +11,7 @@ import StudentTextbookSummary, {
   EMPTY_STUDENT_TEXTBOOK_FIELDS,
   textbookFieldsFromStudentRow,
 } from "@/components/StudentTextbookSummary";
+import StudentExamInfoSummary from "@/components/StudentExamInfoSummary";
 import { supabase } from "@/lib/supabase";
 import { subscribeLessonSaveStatus } from "@/lib/lessonSaveStatus";
 import type { StudentLessonsBootstrapPayload } from "@/lib/lessonDataServer";
@@ -20,6 +21,11 @@ import {
   loadTimetableDayRemarksForStudent,
 } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
+import {
+  listVisibleExamPapers,
+  normalizeStudentExamInfo,
+  type StudentExamInfo,
+} from "@/lib/studentExamInfo";
 
 async function queueSaveLessonYearState(
   ...args: Parameters<(typeof import("@/lib/queueSaveLessonYearState"))["queueSaveLessonYearState"]>
@@ -117,12 +123,6 @@ import {
 } from "@/lib/dayTimetableShared";
 import type { RoomDisplayRegistry } from "@/lib/roomDisplayRegistry";
 import { useRoomDisplayLabels } from "@/lib/useRoomDisplayRegistry";
-import {
-  isUpcomingExamDate,
-  visibleExamContent,
-  visibleExamDateIso,
-} from "@/lib/examDateVisibility";
-
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const WEEKDAY_LABEL: Record<string, string> = {
   一: "Mon",
@@ -676,8 +676,8 @@ export function StudentLessonsYearPage({
       ...EMPTY_STUDENT_TEXTBOOK_FIELDS,
     },
   );
-  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>(() =>
-    initialHydrated?.examInfo ?? { examDate: "", examContent: "" },
+  const [examInfo, setExamInfo] = useState<StudentExamInfo>(() =>
+    normalizeStudentExamInfo(initialHydrated?.examInfo),
   );
   const [studentLoaded, setStudentLoaded] = useState(() => initialHydrated?.studentLoaded ?? false);
   const [studentNotFound, setStudentNotFound] = useState(() => initialHydrated?.studentNotFound ?? false);
@@ -1211,7 +1211,7 @@ export function StudentLessonsYearPage({
             m1_textbook_publisher?: string | null;
             m2_textbook_publisher?: string | null;
           } | null;
-          examInfo?: { examDate?: string; examContent?: string };
+          examInfo?: Partial<StudentExamInfo>;
           scheduleRecords?: unknown[];
           yearState?: {
             attendance?: Record<string, boolean>;
@@ -1252,10 +1252,7 @@ export function StudentLessonsYearPage({
         }
         if (!mounted) return;
 
-        setExamInfo({
-          examDate: body.examInfo?.examDate ?? "",
-          examContent: body.examInfo?.examContent ?? "",
-        });
+        setExamInfo(normalizeStudentExamInfo(body.examInfo));
 
         const data = body.student;
         if (!data) {
@@ -1552,14 +1549,12 @@ export function StudentLessonsYearPage({
 
   const hkTodayYmd = useMemo(() => toHkIsoDateFromMs(Date.now()), []);
 
-  const visibleExamInfo = useMemo(
-    () => ({
-      examDate: visibleExamDateIso(examInfo.examDate, hkTodayYmd),
-      examContent: visibleExamContent(examInfo.examDate, examInfo.examContent, hkTodayYmd),
-    }),
-    [examInfo, hkTodayYmd],
-  );
-  const showExamInfo = isUpcomingExamDate(examInfo.examDate, hkTodayYmd);
+  const showExamInfo =
+    listVisibleExamPapers(examInfo, {
+      takesM1: studentSummary.takesM1,
+      takesM2: studentSummary.takesM2,
+      todayIso: hkTodayYmd,
+    }).length > 0;
 
   const scheduleBuildOptions = useMemo((): StudentScheduleBuildOptions | undefined => {
     const from = filterDateFrom.trim();
@@ -3071,18 +3066,12 @@ export function StudentLessonsYearPage({
               <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                 <div className="grid grid-cols-1 gap-3">
                   {showExamInfo ? (
-                    <>
-                      <div>
-                        <p className="text-xs font-semibold tracking-wider text-slate-500">Latest Exam Date</p>
-                        <p className="mt-1 text-sm font-bold text-slate-900">{visibleExamInfo.examDate || "—"}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold tracking-wider text-slate-500">Exam Content</p>
-                        <p className="mt-1 text-sm font-bold text-slate-900 break-words">
-                          {visibleExamInfo.examContent || "—"}
-                        </p>
-                      </div>
-                    </>
+                    <StudentExamInfoSummary
+                      examInfo={examInfo}
+                      takesM1={studentSummary.takesM1}
+                      takesM2={studentSummary.takesM2}
+                      todayIso={hkTodayYmd}
+                    />
                   ) : null}
                   <StudentTextbookSummary
                     textbookPublisher={studentSummary.textbookPublisher}

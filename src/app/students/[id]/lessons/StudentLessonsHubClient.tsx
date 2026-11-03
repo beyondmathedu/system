@@ -29,6 +29,7 @@ import { formatGradeDisplay, normalizeGradeCode } from "@/lib/grade";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
 import { getActiveScheduleVersionDate, normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
 import { revalidateScheduleCachesNow } from "@/lib/scheduleCacheClient";
+import { normalizeStudentExamInfo } from "@/lib/studentExamInfo";
 import {
   academicYearLabelZh,
   ensureCurrentYearHistoryFallback,
@@ -236,7 +237,7 @@ export default function StudentLessonsHubClient({
   );
   const [isTutorReadOnly] = useState(initialReadOnly);
   const isStudentPortal = String(navViewer?.role ?? "").toLowerCase() === "student";
-  const [examDateInitial] = useState(() => initialBootstrap.examInfo?.examDate ?? "");
+  const [examInfoInitial] = useState(() => normalizeStudentExamInfo(initialBootstrap.examInfo));
   const availableYears = useMemo(() => availableLessonYears(), []);
   const currentSettings = useMemo(() => currentSettingsFromRecords(scheduleRecords), [scheduleRecords]);
   const metricsSavedRef = useRef(false);
@@ -546,7 +547,7 @@ export default function StudentLessonsHubClient({
 
               {!isTutorReadOnly ? (
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[auto_1fr] md:items-start">
-                <div>
+                <div className="min-w-0 max-w-[22rem]">
                   <p className="text-xs font-semibold tracking-wider text-slate-500">Student Mode (Global Visibility)</p>
                   <ClientOnlyAfterMount
                     fallback={
@@ -557,7 +558,7 @@ export default function StudentLessonsHubClient({
                       </div>
                     }
                   >
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <div className="mt-1 flex flex-wrap items-end gap-2">
                       <select
                         value={visibilityMode}
                         onChange={(e) => {
@@ -566,7 +567,7 @@ export default function StudentLessonsHubClient({
                           if (next === "active") setVisibilityReactivateDate("");
                           if (next === "active") setVisibilityNote("");
                         }}
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
+                        className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800"
                       >
                         <option value="active">Active</option>
                         <option value="inactive">Inactive</option>
@@ -577,7 +578,7 @@ export default function StudentLessonsHubClient({
                           type="date"
                           value={visibilityEffectiveDate}
                           onChange={(e) => setVisibilityEffectiveDate(e.target.value)}
-                          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                          className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800"
                         />
                       </label>
                       {visibilityMode === "inactive" ? (
@@ -587,7 +588,7 @@ export default function StudentLessonsHubClient({
                             type="date"
                             value={visibilityReactivateDate}
                             onChange={(e) => setVisibilityReactivateDate(e.target.value)}
-                            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                            className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800"
                           />
                         </label>
                       ) : null}
@@ -599,7 +600,7 @@ export default function StudentLessonsHubClient({
                             value={visibilityNote}
                             onChange={(e) => setVisibilityNote(e.target.value)}
                             placeholder="e.g. holiday / exam / family travel"
-                            className="w-64 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                            className="h-10 w-64 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800"
                           />
                         </label>
                       ) : null}
@@ -625,7 +626,7 @@ export default function StudentLessonsHubClient({
                             }
                           })();
                         }}
-                        className="inline-flex items-center gap-1.5 self-end rounded-md bg-[#1d76c2] px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex h-10 items-center gap-1.5 rounded-md bg-[#1d76c2] px-3 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
                           <path d="M3 4.5A1.5 1.5 0 014.5 3h8.44c.4 0 .78.16 1.06.44l2.06 2.06c.28.28.44.66.44 1.06V15.5A1.5 1.5 0 0115 17H4.5A1.5 1.5 0 013 15.5v-11zM5 5v3h7V5H5zm0 6.5A.5.5 0 015.5 11h9a.5.5 0 01.5.5v4a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-4z" />
@@ -634,9 +635,16 @@ export default function StudentLessonsHubClient({
                       </button>
                     </div>
                   </ClientOnlyAfterMount>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Inactive from 該日起，學生會從 Room、Daily Timetable、學費表、及該年課表（Inactive 期間的課）隱藏。Expected return 請填<strong>復課首日</strong>（例：7–8 月停 → 填 2026-09-01，唔好填 8/31）；到時請改回 Active。
-                  </p>
+                  <div className="mt-1 space-y-1 text-xs leading-5 text-slate-500">
+                    <p>
+                      Inactive from 該日起，學生會從 Room、Daily Timetable、學費表、及該年課表（Inactive
+                      期間的課）隱藏。
+                    </p>
+                    <p>
+                      Expected return 請填<strong>復課首日</strong>
+                      （例：7–8 月停 → 填 2026-09-01，唔好填 8/31）；到時請改回 Active。
+                    </p>
+                  </div>
                   {inactivePeriods.length > 0 ? (
                     <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
                       <button
@@ -764,7 +772,12 @@ export default function StudentLessonsHubClient({
 
                 <div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <ExamDateField studentId={studentId} initialValue={examDateInitial} />
+                    <ExamDateField
+                      studentId={studentId}
+                      initialValue={examInfoInitial}
+                      takesM1={studentSummary.takesM1}
+                      takesM2={studentSummary.takesM2}
+                    />
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex whitespace-nowrap rounded-md bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800">
                         Makeup Count {upcomingUntickedCount}
@@ -785,7 +798,12 @@ export default function StudentLessonsHubClient({
               ) : isStudentPortal ? (
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <ExamDateField studentId={studentId} initialValue={examDateInitial} />
+                    <ExamDateField
+                      studentId={studentId}
+                      initialValue={examInfoInitial}
+                      takesM1={studentSummary.takesM1}
+                      takesM2={studentSummary.takesM2}
+                    />
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex whitespace-nowrap rounded-md bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800">
                         Makeup Count {upcomingUntickedCount}

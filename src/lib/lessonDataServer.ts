@@ -38,11 +38,15 @@ import {
   type StudentInactivePeriod,
 } from "@/lib/studentVisibility";
 import { loadRoomSlotTutorRulesCached } from "@/lib/roomSlotTutorRules";
+import {
+  STUDENT_EXAM_SELECT,
+  studentExamInfoFromDbRow,
+  type StudentExamDbRow,
+  type StudentExamInfo,
+} from "@/lib/studentExamInfo";
 
-export type StudentExamInfo = {
-  examDate: string;
-  examContent: string;
-};
+export type { StudentExamInfo } from "@/lib/studentExamInfo";
+export { EMPTY_STUDENT_EXAM_INFO } from "@/lib/studentExamInfo";
 
 export type FeeRecordBootstrapRow = ReturnType<typeof normalizeFeeRecordRow>;
 
@@ -64,26 +68,26 @@ export async function loadExamInfoServer(
 ): Promise<StudentExamInfo> {
   const { data, error } = await supabase
     .from("student_exam_dates")
-    .select("exam_date, exam_content")
+    .select(STUDENT_EXAM_SELECT)
     .eq("student_id", studentId)
     .maybeSingle();
 
   if (error) {
+    const { data: mid } = await supabase
+      .from("student_exam_dates")
+      .select("exam_date, exam_content")
+      .eq("student_id", studentId)
+      .maybeSingle();
+    if (mid) return studentExamInfoFromDbRow(mid as StudentExamDbRow);
     const { data: fallback } = await supabase
       .from("student_exam_dates")
       .select("exam_date")
       .eq("student_id", studentId)
       .maybeSingle();
-    return {
-      examDate: (fallback?.exam_date as string | null) ?? "",
-      examContent: "",
-    };
+    return studentExamInfoFromDbRow(fallback as StudentExamDbRow | null);
   }
 
-  return {
-    examDate: (data?.exam_date as string | null) ?? "",
-    examContent: data?.exam_content ? String(data.exam_content) : "",
-  };
+  return studentExamInfoFromDbRow(data as StudentExamDbRow | null);
 }
 
 export type StudentVisibilityModeServer = {
