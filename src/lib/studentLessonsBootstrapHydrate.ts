@@ -2,6 +2,7 @@ import type { StudentLessonsBootstrapPayload } from "@/lib/lessonDataServer";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { normalizeRescheduleEntriesForSchedule } from "@/lib/rescheduleEntryNormalize";
 import type { RoomSlotTutorRule } from "@/lib/roomSlotTutorRules";
+import { normalizeStudentExamInfo, type StudentExamInfo } from "@/lib/studentExamInfo";
 
 type ScheduleRecord = {
   id: string;
@@ -67,7 +68,7 @@ export type HydratedLessonYearBootstrap = {
     m1TextbookPublisher: string;
     m2TextbookPublisher: string;
   };
-  examInfo: { examDate: string; examContent: string };
+  examInfo: StudentExamInfo;
   visibilityMode: "active" | "inactive";
   visibilityEffectiveDate: string;
   visibilityReactivateDate: string | null;
@@ -127,10 +128,7 @@ export function hydrateLessonYearFromBootstrap(
         m1TextbookPublisher: "",
         m2TextbookPublisher: "",
       },
-      examInfo: {
-        examDate: bootstrap.examInfo?.examDate ?? "",
-        examContent: bootstrap.examInfo?.examContent ?? "",
-      },
+      examInfo: normalizeStudentExamInfo(bootstrap.examInfo),
       visibilityMode: "active",
       visibilityEffectiveDate: "",
       visibilityReactivateDate: null,
@@ -179,10 +177,7 @@ export function hydrateLessonYearFromBootstrap(
       m1TextbookPublisher: data.m1_textbook_publisher ?? "",
       m2TextbookPublisher: data.m2_textbook_publisher ?? "",
     },
-    examInfo: {
-      examDate: bootstrap.examInfo?.examDate ?? "",
-      examContent: bootstrap.examInfo?.examContent ?? "",
-    },
+    examInfo: normalizeStudentExamInfo(bootstrap.examInfo),
     visibilityMode: rawVisMode === "inactive" ? "inactive" : "active",
     visibilityEffectiveDate: String(vis?.effective_date ?? ""),
     visibilityReactivateDate:

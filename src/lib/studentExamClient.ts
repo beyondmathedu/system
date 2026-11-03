@@ -2,46 +2,48 @@
 
 import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
 import { supabase } from "@/lib/supabase";
+import {
+  EMPTY_STUDENT_EXAM_INFO,
+  STUDENT_EXAM_SELECT,
+  STUDENT_EXAM_SELECT_WITH_ID,
+  normalizeStudentExamInfo,
+  studentExamInfoFromDbRow,
+  studentExamInfoToDbPayload,
+  type StudentExamDbRow,
+  type StudentExamInfo,
+} from "@/lib/studentExamInfo";
 
-type ExamDateDbRow = {
+export type { StudentExamInfo } from "@/lib/studentExamInfo";
+export { EMPTY_STUDENT_EXAM_INFO } from "@/lib/studentExamInfo";
+
+type ExamDateDbRow = StudentExamDbRow & {
   student_id?: string | null;
-  exam_date?: string | null;
-  exam_content?: string | null;
 };
-
-export type StudentExamInfo = {
-  examDate: string;
-  examContent: string;
-};
-
-function readExamDateRow(row: ExamDateDbRow | null | undefined): StudentExamInfo {
-  return {
-    examDate: String(row?.exam_date ?? ""),
-    examContent: row?.exam_content ? String(row.exam_content) : "",
-  };
-}
 
 export async function loadExamInfo(studentId: string): Promise<StudentExamInfo> {
   const { data, error } = await supabase
     .from("student_exam_dates")
-    .select("exam_date, exam_content")
+    .select(STUDENT_EXAM_SELECT)
     .eq("student_id", studentId)
     .maybeSingle();
 
-  // Backward compatibility: older DB may not have exam_content yet.
+  // Backward compatibility: older DB may not have newer exam columns yet.
   if (error) {
     const { data: fallback } = await supabase
+      .from("student_exam_dates")
+      .select("exam_date, exam_content")
+      .eq("student_id", studentId)
+      .maybeSingle();
+    if (fallback) return studentExamInfoFromDbRow(fallback as StudentExamDbRow);
+    const { data: legacy } = await supabase
       .from("student_exam_dates")
       .select("exam_date")
       .eq("student_id", studentId)
       .maybeSingle();
-    return {
-      examDate: (fallback?.exam_date as string | null) ?? "",
-      examContent: "",
-    };
+    return studentExamInfoFromDbRow(legacy as StudentExamDbRow | null);
   }
 
-  return readExamDateRow(data as ExamDateDbRow | null);
+  return studentExamInfoFromDbRow(data as StudentExamDbRow | null);
 }
 
 export async function loadExamDate(studentId: string) {
@@ -68,11 +70,24 @@ export async function loadExamInfoBatch(studentIds: string[]) {
   const out: Record<string, StudentExamInfo> = {};
   const { data, error } = await supabase
     .from("student_exam_dates")
-    .select("student_id, exam_date, exam_content")
+    .select(STUDENT_EXAM_SELECT_WITH_ID)
     .in("student_id", studentIds);
 
-  // Backward compatibility: older DB may not have exam_content yet.
+  // Backward compatibility: older DB may not have newer exam columns yet.
   if (error) {
+    const { data: mid } = await supabase
+      .from("student_exam_dates")
+      .select("student_id, exam_date, exam_content")
+      .in("student_id", studentIds);
+    if (mid) {
+      for (const row of mid) {
+        const typed = row as ExamDateDbRow;
+        const sid = String(typed.student_id ?? "");
+        if (!sid) continue;
+        out[sid] = studentExamInfoFromDbRow(typed);
+      }
+      return out;
+    }
     const { data: fallback } = await supabase
       .from("student_exam_dates")
       .select("student_id, exam_date")
@@ -81,10 +96,7 @@ export async function loadExamInfoBatch(studentIds: string[]) {
       const typed = row as ExamDateDbRow;
       const sid = String(typed.student_id ?? "");
       if (!sid) continue;
-      out[sid] = {
-        examDate: String(typed.exam_date ?? ""),
-        examContent: "",
-      };
+      out[sid] = studentExamInfoFromDbRow(typed);
     }
     return out;
   }
@@ -93,34 +105,48 @@ export async function loadExamInfoBatch(studentIds: string[]) {
     const typed = row as ExamDateDbRow;
     const sid = String(typed.student_id ?? "");
     if (!sid) continue;
-    out[sid] = readExamDateRow(typed);
+    out[sid] = studentExamInfoFromDbRow(typed);
   }
   return out;
 }
 
 export async function saveExamInfo(studentId: string, examInfo: StudentExamInfo) {
-  const { examDate, examContent } = examInfo;
+  const payload = studentExamInfoToDbPayload(examInfo);
   const { error } = await supabase.from("student_exam_dates").upsert(
     {
       student_id: studentId,
-      exam_date: examDate,
-      exam_content: examContent,
+      ...payload,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "student_id" },
   );
 
-  // Backward compatibility: older DB may not have exam_content yet.
+  // Backward compatibility: older DB may not have M1/M2 or exam_content yet.
   if (error) {
-    await supabase.from("student_exam_dates").upsert(
-      { student_id: studentId, exam_date: examDate, updated_at: new Date().toISOString() },
+    const { error: midError } = await supabase.from("student_exam_dates").upsert(
+      {
+        student_id: studentId,
+        exam_date: payload.exam_date,
+        exam_content: payload.exam_content,
+        updated_at: new Date().toISOString(),
+      },
       { onConflict: "student_id" },
     );
+    if (midError) {
+      await supabase.from("student_exam_dates").upsert(
+        {
+          student_id: studentId,
+          exam_date: payload.exam_date,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "student_id" },
+      );
+    }
   }
   notifyScheduleCachesStale();
 }
 
 export async function saveExamDate(studentId: string, examDate: string) {
   const current = await loadExamInfo(studentId);
-  await saveExamInfo(studentId, { examDate, examContent: current.examContent });
+  await saveExamInfo(studentId, normalizeStudentExamInfo({ ...current, examDate }));
 }

@@ -48,11 +48,21 @@ create table if not exists public.student_exam_dates (
   student_id text primary key references public.students(id) on delete cascade,
   exam_date text not null default '',
   exam_content text not null default '',
+  m1_exam_date text not null default '',
+  m1_exam_content text not null default '',
+  m2_exam_date text not null default '',
+  m2_exam_content text not null default '',
   updated_at timestamptz not null default now()
 );
 
 alter table public.student_exam_dates
   add column if not exists exam_content text not null default '';
+
+alter table public.student_exam_dates
+  add column if not exists m1_exam_date text not null default '',
+  add column if not exists m1_exam_content text not null default '',
+  add column if not exists m2_exam_date text not null default '',
+  add column if not exists m2_exam_content text not null default '';
 
 -- Daily / Regular timetable 當日 Remarks（學生 + 日期）
 create table if not exists public.student_timetable_day_remarks (

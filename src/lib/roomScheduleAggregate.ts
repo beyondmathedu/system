@@ -33,7 +33,13 @@ import { hasRoomScheduleCandidate } from "@/lib/roomScheduleCandidate";
 import { materializeTutorMonthPayRows } from "@/lib/tutorMonthlyPayroll";
 import { getStudentGradeForDate } from "@/lib/studentGradeHistory";
 import { loadStudentsGradeContext } from "@/lib/studentsGradeContext.server";
-import { visibleExamContent, visibleExamDateIso } from "@/lib/examDateVisibility";
+import {
+  STUDENT_EXAM_SELECT_WITH_ID,
+  formatVisibleExamContentsSummary,
+  nearestUpcomingExamDate,
+  studentExamInfoFromDbRow,
+  type StudentExamDbRow,
+} from "@/lib/studentExamInfo";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import {
   loadScheduleStudentsForYear,
@@ -66,29 +72,40 @@ async function loadVisibleExamMapsForStudents(
     query: (chunk) =>
       supabase
         .from("student_exam_dates")
-        .select("student_id, exam_date, exam_content")
+        .select(STUDENT_EXAM_SELECT_WITH_ID)
         .in("student_id", chunk),
   });
 
   let rows: Array<Record<string, unknown>> = (primary.data ?? []) as Array<Record<string, unknown>>;
   if (primary.error) {
-    const fallback = await fetchRowsInChunks({
+    const mid = await fetchRowsInChunks({
       ids: studentIds,
       concurrency: 8,
       query: (chunk) =>
-        supabase.from("student_exam_dates").select("student_id, exam_date").in("student_id", chunk),
+        supabase
+          .from("student_exam_dates")
+          .select("student_id, exam_date, exam_content")
+          .in("student_id", chunk),
     });
-    rows = (fallback.data ?? []) as Array<Record<string, unknown>>;
+    if (!mid.error) {
+      rows = (mid.data ?? []) as Array<Record<string, unknown>>;
+    } else {
+      const fallback = await fetchRowsInChunks({
+        ids: studentIds,
+        concurrency: 8,
+        query: (chunk) =>
+          supabase.from("student_exam_dates").select("student_id, exam_date").in("student_id", chunk),
+      });
+      rows = (fallback.data ?? []) as Array<Record<string, unknown>>;
+    }
   }
 
   for (const row of rows) {
     const sid = String(row.student_id ?? "").trim();
     if (!sid) continue;
-    const examDate = String(row.exam_date ?? "");
-    const examContent = String(row.exam_content ?? "");
-    const visibleDate = visibleExamDateIso(examDate);
-    examDatesByStudentId[sid] = visibleDate;
-    examContentsByStudentId[sid] = visibleDate ? visibleExamContent(examDate, examContent) : "";
+    const info = studentExamInfoFromDbRow(row as StudentExamDbRow);
+    examDatesByStudentId[sid] = nearestUpcomingExamDate(info);
+    examContentsByStudentId[sid] = formatVisibleExamContentsSummary(info);
   }
 
   // Mark missing students so the client does not refetch.

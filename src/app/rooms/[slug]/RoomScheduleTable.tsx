@@ -7,12 +7,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import type { YearLessonState } from "@/lib/yearScheduleCore";
 import { normalizeStudentId } from "@/lib/studentId";
-import {
-  formatVisibleExamDateSlashed,
-  visibleExamContent,
-  visibleExamDateIso,
-} from "@/lib/examDateVisibility";
+import { formatVisibleExamDateSlashed, visibleExamDateIso, hkTodayIso } from "@/lib/examDateVisibility";
 import { loadExamInfoBatch } from "@/lib/studentExamClient";
+import {
+  EMPTY_STUDENT_EXAM_INFO,
+  formatVisibleExamContentsSummary,
+  nearestUpcomingExamDate,
+} from "@/lib/studentExamInfo";
 import { DEFAULT_LESSON_YEAR_STATE, type StudentLesson2026State } from "@/lib/lessonYearStateShared";
 import {
   flushSaveLessonYearStateQueue,
@@ -25,7 +26,6 @@ import { loadTutorVisibility, shouldBlankInactiveTutorForDate } from "@/lib/tuto
 import { isSharedIpadTutorDisplayName } from "@/lib/tutorConstants";
 import { attendanceAfterRegularToggle } from "@/lib/lessonScheduleVersions";
 import { formatGradeDisplay } from "@/lib/grade";
-import { hkTodayIso } from "@/lib/examDateVisibility";
 import { useRoomLessonStateRealtime } from "@/lib/useRoomLessonStateRealtime";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
@@ -569,15 +569,13 @@ export default function RoomScheduleTable({
       const batch = await loadExamInfoBatch(missing);
       if (!mounted) return;
       const nextContentMap: Record<string, string> = {};
-      for (const id of missing) {
-        const info = batch[id] ?? { examDate: "", examContent: "" };
-        examDateCache.current.set(id, info.examDate);
-        const visibleDate = visibleExamDateIso(info.examDate);
-        nextContentMap[id] = visibleDate ? visibleExamContent(info.examDate, info.examContent) : "";
-      }
       const dateBatch: Record<string, string> = {};
-      for (const [id, info] of Object.entries(batch)) {
-        dateBatch[id] = visibleExamDateIso(info.examDate ?? "");
+      for (const id of missing) {
+        const info = batch[id] ?? EMPTY_STUDENT_EXAM_INFO;
+        const nearest = nearestUpcomingExamDate(info);
+        examDateCache.current.set(id, nearest);
+        dateBatch[id] = nearest;
+        nextContentMap[id] = formatVisibleExamContentsSummary(info);
       }
       setExamDatesByStudentId((prev) => ({ ...prev, ...dateBatch }));
       setExamContentsByStudentId((prev) => ({ ...prev, ...nextContentMap }));

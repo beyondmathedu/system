@@ -39,6 +39,12 @@ import { TUTOR_STATUS_INACTIVE } from "@/lib/tutorConstants";
 import type { DayTimetableFeePaymentTone } from "@/lib/dayTimetableStyleSettings";
 import { loadDayTimetableStyleSettings } from "@/lib/dayTimetableStyleSettings.server";
 import {
+  STUDENT_EXAM_SELECT_WITH_ID,
+  nearestUpcomingExamDate,
+  studentExamInfoFromDbRow,
+  type StudentExamDbRow,
+} from "@/lib/studentExamInfo";
+import {
   ROOM_GROUPS,
   hkTodayYmd,
   parseDayParams,
@@ -487,7 +493,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
     const supabase = getSupabaseAdmin();
     const [
       { data: students },
-      { data: examRows },
+      examPrimary,
       { data: periodRows },
       { data: tutorRows },
       { data: classroomRows },
@@ -495,7 +501,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
       feeTierBundle,
     ] = await Promise.all([
       supabase.from("students").select("id, name_zh, name_en, nickname_en, grade, timetable_permanent_remark").order("id"),
-      supabase.from("student_exam_dates").select("student_id, exam_date"),
+      supabase.from("student_exam_dates").select(STUDENT_EXAM_SELECT_WITH_ID),
       supabase.from("student_visibility_periods").select("student_id, start_date, end_date, note"),
       supabase.from("tutors").select("name, name_zh, name_en, color_hex, status"),
       supabase.from("classrooms").select("name, slug, regular_period_max"),
@@ -503,12 +509,27 @@ const loadDayTimetableStaticBundle = unstable_cache(
       loadStudentFeeTierSettingsAdmin(supabase),
     ]);
 
+    type ExamRow = StudentExamDbRow & { student_id?: string | null };
+    let examRows: ExamRow[] | null = (examPrimary.data ?? null) as ExamRow[] | null;
+    if (examPrimary.error) {
+      const mid = await supabase
+        .from("student_exam_dates")
+        .select("student_id, exam_date, exam_content");
+      if (!mid.error) {
+        examRows = (mid.data ?? null) as ExamRow[] | null;
+      } else {
+        const fallback = await supabase.from("student_exam_dates").select("student_id, exam_date");
+        examRows = (fallback.data ?? null) as ExamRow[] | null;
+      }
+    }
+
     const inactivePeriodsById = buildStudentInactivePeriodsById(periodRows ?? []);
 
     const examById: Record<string, string> = {};
     for (const row of examRows ?? []) {
-      const sid = String((row as { student_id?: string }).student_id ?? "");
-      if (sid) examById[sid] = String((row as { exam_date?: string | null }).exam_date ?? "");
+      const sid = String(row.student_id ?? "");
+      if (!sid) continue;
+      examById[sid] = nearestUpcomingExamDate(studentExamInfoFromDbRow(row));
     }
 
     const roomRegistry = buildRoomDisplayRegistry(classroomRows);
@@ -542,7 +563,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
       feeTierBundle,
     };
   },
-  ["day-timetable-static-v10"],
+  ["day-timetable-static-v11"],
   { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 

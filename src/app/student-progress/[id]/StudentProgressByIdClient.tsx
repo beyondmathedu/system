@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import StudentTextbookSummary from "@/components/StudentTextbookSummary";
+import StudentExamInfoSummary from "@/components/StudentExamInfoSummary";
 import AppTopNav from "@/components/AppTopNav";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import { supabase } from "@/lib/supabase";
@@ -14,12 +15,13 @@ import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay } from "@/lib/grade";
 import { getCurrentStudentGrade, loadGradeHistoryByStudentIds } from "@/lib/studentGradeHistory";
 import { loadHeldBackYearsByStudentIds } from "@/lib/studentHeldBackYears";
-import {
-  isUpcomingExamDate,
-  visibleExamContent,
-  visibleExamDateIso,
-} from "@/lib/examDateVisibility";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
+import {
+  EMPTY_STUDENT_EXAM_INFO,
+  listVisibleExamPapers,
+  normalizeStudentExamInfo,
+  type StudentExamInfo,
+} from "@/lib/studentExamInfo";
 import {
   buildProgressSheetColumns,
   textbookOptionsForProgressSheet,
@@ -82,7 +84,7 @@ type StudentSummary = {
 export type StudentProgressInitialPayload = {
   studentSummary: StudentSummary;
   studentNotFound: boolean;
-  examInfo: { examDate: string; examContent: string };
+  examInfo: StudentExamInfo;
   sheets: ProgressSheet[];
   cutOffSheet: ProgressSheet | null;
   yearGradeThresholds?: Record<number, number[]>;
@@ -576,17 +578,14 @@ export default function StudentProgressByIdClient({
         m2TextbookPublisher: "",
       },
   );
-  const [examInfo, setExamInfo] = useState<{ examDate: string; examContent: string }>(
-    () => initial?.examInfo ?? { examDate: "", examContent: "" },
+  const [examInfo, setExamInfo] = useState<StudentExamInfo>(() =>
+    normalizeStudentExamInfo(initial?.examInfo ?? EMPTY_STUDENT_EXAM_INFO),
   );
-  const visibleExamInfo = useMemo(
-    () => ({
-      examDate: visibleExamDateIso(examInfo.examDate),
-      examContent: visibleExamContent(examInfo.examDate, examInfo.examContent),
-    }),
-    [examInfo],
-  );
-  const showExamInfo = isUpcomingExamDate(examInfo.examDate);
+  const showExamInfo =
+    listVisibleExamPapers(examInfo, {
+      takesM1: studentSummary.takesM1,
+      takesM2: studentSummary.takesM2,
+    }).length > 0;
   const [studentLoaded, setStudentLoaded] = useState(() => Boolean(initial));
   const [studentNotFound, setStudentNotFound] = useState(() => Boolean(initial?.studentNotFound));
   const [progressSheets, setProgressSheets] = useState<ProgressSheet[]>(() => initial?.sheets ?? []);
@@ -1118,18 +1117,11 @@ export default function StudentProgressByIdClient({
               <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                 <div className="grid grid-cols-1 gap-3">
                   {showExamInfo ? (
-                    <>
-                      <div>
-                        <p className="text-xs font-semibold tracking-wider text-slate-500">Latest Exam Date</p>
-                        <p className="mt-1 text-sm font-bold text-slate-900">{visibleExamInfo.examDate || "—"}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold tracking-wider text-slate-500">Exam Content</p>
-                        <p className="mt-1 break-words text-sm font-bold text-slate-900">
-                          {visibleExamInfo.examContent || "—"}
-                        </p>
-                      </div>
-                    </>
+                    <StudentExamInfoSummary
+                      examInfo={examInfo}
+                      takesM1={studentSummary.takesM1}
+                      takesM2={studentSummary.takesM2}
+                    />
                   ) : null}
                   <StudentTextbookSummary
                     textbookPublisher={studentSummary.textbookPublisher}
