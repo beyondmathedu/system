@@ -3,7 +3,6 @@
 import { notifyScheduleCachesStale } from "@/lib/scheduleCacheClient";
 import { supabase } from "@/lib/supabase";
 import {
-  EMPTY_STUDENT_EXAM_INFO,
   STUDENT_EXAM_SELECT,
   STUDENT_EXAM_SELECT_WITH_ID,
   normalizeStudentExamInfo,
