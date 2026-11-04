@@ -338,7 +338,29 @@ describe("yearScheduleCore", () => {
     expect(may30?.tutorDisplay).toBe("Samuel");
   });
 
-  it("per-date override still wins over room slot tutor rule", () => {
+  it("per-slot tutor override wins over room slot tutor rule", () => {
+    const records = [
+      mondayRule({ weekday: "六", time: "01:00 PM", room: "B", id: "rule-sat" }),
+    ];
+    const state = emptyState();
+    state.overrides["slot:rule-sat:2026-05-30"] = { tutor: "Pammi" };
+    const rows = buildYearScheduleRowsForMonth(records, state, YEAR, 5, {
+      roomSlotTutorRules: [
+        {
+          id: "slot-1",
+          room: "B",
+          weekday: "六",
+          time: "01:00 PM",
+          tutor_name: "Samuel",
+          effective_date: "2026-05-01",
+        },
+      ],
+    });
+    const may30 = rows.find((r) => r.date === "2026-05-30");
+    expect(may30?.tutorDisplay).toBe("Pammi");
+  });
+
+  it("date-wide tutor override does not smear onto a slotted lesson", () => {
     const records = [
       mondayRule({ weekday: "六", time: "01:00 PM", room: "B", id: "rule-sat" }),
     ];
@@ -357,6 +379,69 @@ describe("yearScheduleCore", () => {
       ],
     });
     const may30 = rows.find((r) => r.date === "2026-05-30");
-    expect(may30?.tutorDisplay).toBe("Pammi");
+    expect(may30?.tutorDisplay).toBe("Samuel");
+  });
+
+  it("same-day Band makeup + Hope regular keep independent tutors (Li vs Pammi)", () => {
+    const records = [
+      mondayRule({
+        id: "hope-pm",
+        weekday: "六",
+        time: "02:30 PM",
+        room: "Hope",
+        tutor: "Li",
+        effectiveDate: "2026-09-01",
+      }),
+    ];
+    const state = emptyState();
+    state.rescheduleEntries.push({
+      id: "dora-band",
+      fromDate: "2026-09-26",
+      toDate: "2026-10-10",
+      time: "01:00 PM",
+      room: "Band",
+    });
+    // After scrub: Band makeup keeps Li + note; Hope has no smeared tutor.
+    state.overrides["slot:rs:dora-band:2026-10-10"] = {
+      room: "Band",
+      tutor: "Li",
+      lessonSummary: "CIA quadratic",
+    };
+    state.overrides["slot:hope-pm:2026-10-10"] = { room: "Hope" };
+
+    const rows = buildYearScheduleRowsForMonth(records, state, YEAR, 10, {
+      roomSlotTutorRules: [
+        {
+          id: "band-1pm",
+          room: "Band",
+          weekday: "六",
+          time: "01:00 PM",
+          tutor_name: "Li",
+          effective_date: "2026-01-01",
+        },
+        {
+          id: "hope-230",
+          room: "Hope",
+          weekday: "六",
+          time: "02:30 PM",
+          tutor_name: "Pammi",
+          effective_date: "2026-01-01",
+        },
+      ],
+    });
+
+    const band = rows.find((r) => r.date === "2026-10-10" && r.time === "01:00 PM");
+    const hope = rows.find((r) => r.date === "2026-10-10" && r.time === "02:30 PM");
+    expect(band).toMatchObject({
+      room: "Band",
+      tutorDisplay: "Li",
+      noteDisplay: "CIA quadratic",
+      lessonType: "補堂",
+    });
+    expect(hope).toMatchObject({
+      room: "Hope",
+      tutorDisplay: "Pammi",
+      lessonType: "恆常",
+    });
   });
 });

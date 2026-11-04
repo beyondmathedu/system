@@ -1,5 +1,6 @@
 import type { RoomScheduleRow } from "@/lib/roomScheduleAggregate";
 import { isScheduleAttendanceMarked, parseRegularAttendanceRuleId } from "@/lib/lessonScheduleVersions";
+import { resolveLessonOverride } from "@/lib/lessonDayOverrides";
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import type { StudentLesson2026State } from "@/lib/studentLessonStorage";
 import { parseLessonYearStateDbRow } from "@/lib/studentLessonStorage";
@@ -10,14 +11,6 @@ type LessonTypeForAttendance =
   | "加堂"
   | "取消"
   | typeof PENDING_MAKEUP_TYPE_LABEL;
-
-function overrideEntryForDate(
-  state: StudentLesson2026State,
-  dateIso: string,
-): Record<string, unknown> {
-  const raw = state.overrides[dateIso];
-  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-}
 
 function lessonTypeForAttendance(lessonType: string): LessonTypeForAttendance {
   if (
@@ -55,16 +48,28 @@ export function patchRoomRowsFromLessonState(
       return r.attended === attended ? r : { ...r, attended };
     }
 
-    const ov = overrideEntryForDate(state, r.dateIso);
+    const hasSlotId = Boolean(String(r.scheduleRuleId ?? "").trim());
+    const ovSummary = resolveLessonOverride(state.overrides, {
+      dateIso: r.dateIso,
+      scheduleRuleId: r.scheduleRuleId,
+      allowDateFallback: true,
+    });
+    const ovTutor = resolveLessonOverride(state.overrides, {
+      dateIso: r.dateIso,
+      scheduleRuleId: r.scheduleRuleId,
+      // Do not re-apply a date-wide tutor onto slotted lessons during live sync.
+      allowDateFallback: !hasSlotId,
+    });
     let note = r.note;
     let tutor = r.tutor;
 
-    if (ov.lessonSummary !== undefined) {
-      note = String(ov.lessonSummary ?? "").trim();
+    if (ovSummary && ovSummary.lessonSummary !== undefined) {
+      note = String(ovSummary.lessonSummary ?? "").trim();
     }
-    if (ov.tutor !== undefined) {
-      const t = String(ov.tutor ?? "").trim();
-      tutor = t || "TBD";
+    if (ovTutor && ovTutor.tutor !== undefined) {
+      const t = String(ovTutor.tutor ?? "").trim();
+      if (t) tutor = t;
+      // Empty string = clear override and keep the row's room-slot / built tutor.
     }
 
     if (r.attended === attended && r.note === note && r.tutor === tutor) return r;

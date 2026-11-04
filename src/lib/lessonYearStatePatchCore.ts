@@ -1,5 +1,9 @@
 import { canonicalScheduleRoomLabel } from "@/lib/dayTimetableShared";
 import {
+  scrubSmearedTutorFromRoomBearingSlotOverrides,
+  type LessonDayOverride,
+} from "@/lib/lessonDayOverrides";
+import {
   DEFAULT_LESSON_YEAR_STATE,
   type LessonYearStateField,
   type StudentLesson2026State,
@@ -18,6 +22,9 @@ export function normalizeYearStateRoomsForStorage(state: StudentLesson2026State)
         ? { ...row, room: canonicalScheduleRoomLabel(row.room) }
         : value;
   }
+  const scrubbed = scrubSmearedTutorFromRoomBearingSlotOverrides(
+    overrides as Record<string, LessonDayOverride>,
+  );
 
   const normalizeRoomArray = (entries: unknown[]) =>
     entries.map((item) => {
@@ -30,7 +37,7 @@ export function normalizeYearStateRoomsForStorage(state: StudentLesson2026State)
 
   return {
     ...state,
-    overrides,
+    overrides: scrubbed as Record<string, unknown>,
     rescheduleEntries: normalizeRoomArray(state.rescheduleEntries ?? []),
     extraEntries: normalizeRoomArray(state.extraEntries ?? []),
   };

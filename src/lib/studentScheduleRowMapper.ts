@@ -174,8 +174,18 @@ function mapCoreRowToStudentRow(
     extraEntryId = core.rowId.slice("extra-".length);
   }
 
-  const overrideTutor = readLessonDayOverrideField(state.overrides, core.date, "tutor");
-  const overrideSummary = readLessonDayOverrideField(state.overrides, core.date, "lessonSummary");
+  const overrideTutor = readLessonDayOverrideField(
+    state.overrides,
+    core.date,
+    "tutor",
+    core.scheduleRuleId,
+  );
+  const overrideSummary = readLessonDayOverrideField(
+    state.overrides,
+    core.date,
+    "lessonSummary",
+    core.scheduleRuleId,
+  );
   const tutor = overrideTutor || core.tutorDisplay;
   const lessonSummary = overrideSummary || core.noteDisplay;
 

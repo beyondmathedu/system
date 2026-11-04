@@ -123,6 +123,14 @@ import {
 } from "@/lib/dayTimetableShared";
 import type { RoomDisplayRegistry } from "@/lib/roomDisplayRegistry";
 import { useRoomDisplayLabels } from "@/lib/useRoomDisplayRegistry";
+import {
+  clearLessonSlotOrDateOverride,
+  lessonOverrideIdForRow,
+  lessonOverrideSlotKey,
+  resolveLessonOverride,
+  upsertLessonSlotOrDateOverride,
+  type LessonDayOverride,
+} from "@/lib/lessonDayOverrides";
 const PRIMARY_GRADIENT = "linear-gradient(to right, #1d76c2 0%, #1d76c2 100%)";
 const WEEKDAY_LABEL: Record<string, string> = {
   一: "Mon",
@@ -199,11 +207,7 @@ type ScheduleRecord = {
   createdAt: number;
 };
 
-type DayOverride = {
-  time?: string;
-  room?: string;
-  tutor?: string;
-  lessonSummary?: string;
+type DayOverride = LessonDayOverride & {
   lessonType?: string;
 };
 
@@ -855,10 +859,11 @@ export function StudentLessonsYearPage({
   const extraEntriesRef = useRef<ExtraEntry[]>([]);
 
   // 用於輸入時避免每次 setOverrides 都造成 textarea 光標抖動
-  const [lessonSummaryDraftByDateIso, setLessonSummaryDraftByDateIso] = useState<
-    Record<string, string>
-  >({});
-  const lessonSummaryDraftByDateIsoRef = useRef<Record<string, string>>({});
+  /** Drafts keyed by override instance key (`slot:…` or legacy date). */
+  const [lessonSummaryDraftByKey, setLessonSummaryDraftByKey] = useState<Record<string, string>>(
+    {},
+  );
+  const lessonSummaryDraftByKeyRef = useRef<Record<string, string>>({});
   const lessonSummarySaveTimersRef = useRef<Map<string, number>>(new Map());
   const timetableRemarksByDateIsoRef = useRef<Record<string, string>>({});
   const [rescheduleEntries, setRescheduleEntries] = useState<RescheduleEntry[]>(
@@ -995,8 +1000,8 @@ export function StudentLessonsYearPage({
     hiddenDatesRef.current = hiddenDates;
     rescheduleEntriesRef.current = rescheduleEntries;
     extraEntriesRef.current = extraEntries;
-    lessonSummaryDraftByDateIsoRef.current = lessonSummaryDraftByDateIso;
-  }, [attendance, hiddenDates, overrides, rescheduleEntries, extraEntries, lessonSummaryDraftByDateIso]);
+    lessonSummaryDraftByKeyRef.current = lessonSummaryDraftByKey;
+  }, [attendance, hiddenDates, overrides, rescheduleEntries, extraEntries, lessonSummaryDraftByKey]);
 
   const applyYearStateToUi = useCallback(
     (state: {
@@ -1627,6 +1632,33 @@ export function StudentLessonsYearPage({
 
   function regularSlotCountOnDate(date: string) {
     return validationBaseRowsByDate.get(date)?.length ?? 1;
+  }
+
+  function scheduleRuleIdsOnDate(date: string): string[] {
+    const ids: string[] = [];
+    for (const row of scheduleRows) {
+      if (row.date !== date) continue;
+      if (row.rowKind === "cancelled_original") continue;
+      const id = lessonOverrideIdForRow({
+        scheduleRuleId: row.scheduleRuleId,
+        rescheduleEntryId: row.rescheduleEntryId,
+        extraEntryId: row.extraEntryId,
+      });
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  }
+
+  function lessonSummaryOverrideKeyForRow(row: Pick<
+    ScheduleRow,
+    "date" | "scheduleRuleId" | "rescheduleEntryId" | "extraEntryId"
+  >): string {
+    const id = lessonOverrideIdForRow({
+      scheduleRuleId: row.scheduleRuleId,
+      rescheduleEntryId: row.rescheduleEntryId,
+      extraEntryId: row.extraEntryId,
+    });
+    return id ? lessonOverrideSlotKey(id, row.date) : row.date;
   }
 
   function hasRescheduleSlotConflict(
@@ -2286,6 +2318,7 @@ export function StudentLessonsYearPage({
 
     if (payload.kind === "regular") {
       const originalDate = payload.originalFromDate ?? "";
+      const ruleIdsOnDate = scheduleRuleIdsOnDate(originalDate);
       const timeOrDateChanged =
         payload.newDate !== originalDate ||
         payload.finalTime !== (payload.baseTime || payload.before.time);
@@ -2310,25 +2343,31 @@ export function StudentLessonsYearPage({
         rescheduleEntriesRef.current = nextList;
         window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(nextList));
         persistYearState({ rescheduleEntries: nextList });
-        const nextOverrides = { ...overridesRef.current };
-        delete nextOverrides[originalDate];
+        const nextOverrides = clearLessonSlotOrDateOverride(overridesRef.current, {
+          dateIso: originalDate,
+          scheduleRuleId: payload.scheduleRuleId,
+          otherScheduleRuleIdsOnDate: ruleIdsOnDate,
+        });
         persistOverrides(nextOverrides);
+      } else if (
+        scheduleRoomsMatch(payload.finalRoom, payload.baseRoom || payload.before.room)
+      ) {
+        persistOverrides(
+          clearLessonSlotOrDateOverride(overridesRef.current, {
+            dateIso: originalDate,
+            scheduleRuleId: payload.scheduleRuleId,
+            otherScheduleRuleIdsOnDate: ruleIdsOnDate,
+          }),
+        );
       } else {
-        const nextOverrides = { ...overridesRef.current };
-        if (
-          scheduleRoomsMatch(
-            payload.finalRoom,
-            payload.baseRoom || payload.before.room,
-          )
-        ) {
-          delete nextOverrides[originalDate];
-        } else {
-          nextOverrides[originalDate] = {
-            ...(nextOverrides[originalDate] ?? {}),
-            room: payload.finalRoom,
-          };
-        }
-        persistOverrides(nextOverrides);
+        persistOverrides(
+          upsertLessonSlotOrDateOverride(overridesRef.current, {
+            dateIso: originalDate,
+            scheduleRuleId: payload.scheduleRuleId,
+            patch: { room: payload.finalRoom },
+            otherScheduleRuleIdsOnDate: ruleIdsOnDate,
+          }),
+        );
       }
     } else if (payload.kind === "extra") {
       const entryId = String(payload.entryId ?? "");
@@ -2427,7 +2466,7 @@ export function StudentLessonsYearPage({
 
     if (bulkEditMode === "each") {
       let nextReschedule = [...rescheduleEntries];
-      const nextOverrides = { ...overridesRef.current };
+      let nextOverrides = { ...overridesRef.current };
 
       for (let i = 0; i < bulkEditLessonDrafts.length; i++) {
         const draft = bulkEditLessonDrafts[i];
@@ -2497,15 +2536,25 @@ export function StudentLessonsYearPage({
             },
             regularSlotCountOnDate(originalDate),
           );
-          delete nextOverrides[originalDate];
+          nextOverrides = clearLessonSlotOrDateOverride(nextOverrides, {
+            dateIso: originalDate,
+            scheduleRuleId: scheduleRow.scheduleRuleId,
+            otherScheduleRuleIdsOnDate: scheduleRuleIdsOnDate(originalDate),
+          });
         } else if (scheduleRoomsMatch(finalRoom, scheduleRow.baseRoom)) {
-          delete nextOverrides[originalDate];
+          nextOverrides = clearLessonSlotOrDateOverride(nextOverrides, {
+            dateIso: originalDate,
+            scheduleRuleId: scheduleRow.scheduleRuleId,
+            otherScheduleRuleIdsOnDate: scheduleRuleIdsOnDate(originalDate),
+          });
         } else {
-          // Same day + same time, room-only tweak stays as regular override.
-          nextOverrides[originalDate] = {
-            ...(nextOverrides[originalDate] ?? {}),
-            room: finalRoom,
-          };
+          // Same day + same time, room-only tweak — per schedule rule slot.
+          nextOverrides = upsertLessonSlotOrDateOverride(nextOverrides, {
+            dateIso: originalDate,
+            scheduleRuleId: scheduleRow.scheduleRuleId,
+            patch: { room: finalRoom },
+            otherScheduleRuleIdsOnDate: scheduleRuleIdsOnDate(originalDate),
+          });
         }
       }
 
@@ -2596,21 +2645,30 @@ export function StudentLessonsYearPage({
         window.localStorage.setItem(RESCHEDULE_STORAGE_KEY, JSON.stringify(nextList));
         persistYearState({ rescheduleEntries: nextList });
 
-        const nextOverrides = { ...overridesRef.current };
-        delete nextOverrides[originalDate];
-        persistOverrides(nextOverrides);
+        persistOverrides(
+          clearLessonSlotOrDateOverride(overridesRef.current, {
+            dateIso: originalDate,
+            scheduleRuleId: scheduleRow.scheduleRuleId,
+            otherScheduleRuleIdsOnDate: scheduleRuleIdsOnDate(originalDate),
+          }),
+        );
+      } else if (scheduleRoomsMatch(finalRoom, scheduleRow.baseRoom)) {
+        persistOverrides(
+          clearLessonSlotOrDateOverride(overridesRef.current, {
+            dateIso: originalDate,
+            scheduleRuleId: scheduleRow.scheduleRuleId,
+            otherScheduleRuleIdsOnDate: scheduleRuleIdsOnDate(originalDate),
+          }),
+        );
       } else {
-        const nextOverrides = { ...overridesRef.current };
-        if (scheduleRoomsMatch(finalRoom, scheduleRow.baseRoom)) {
-          delete nextOverrides[originalDate];
-        } else {
-          // Same day + same time, room-only tweak stays as regular override.
-          nextOverrides[originalDate] = {
-            ...(nextOverrides[originalDate] ?? {}),
-            room: finalRoom,
-          };
-        }
-        persistOverrides(nextOverrides);
+        persistOverrides(
+          upsertLessonSlotOrDateOverride(overridesRef.current, {
+            dateIso: originalDate,
+            scheduleRuleId: scheduleRow.scheduleRuleId,
+            patch: { room: finalRoom },
+            otherScheduleRuleIdsOnDate: scheduleRuleIdsOnDate(originalDate),
+          }),
+        );
       }
 
       setBulkEditSaveStatus("Saved.");
@@ -2861,7 +2919,12 @@ export function StudentLessonsYearPage({
     if (!row) {
       return { kind: "noRow" as const, date: fromLessonDate };
     }
-    const hasOverride = Boolean(overrides[fromLessonDate]);
+    const hasOverride = Boolean(
+      resolveLessonOverride(overrides, {
+        dateIso: fromLessonDate,
+        scheduleRuleId: row.scheduleRuleId,
+      }),
+    );
     return {
       kind: "row" as const,
       date: row.date,
@@ -2878,13 +2941,13 @@ export function StudentLessonsYearPage({
 
   const LESSON_SUMMARY_SAVE_DEBOUNCE_MS = 600;
 
-  function queueLessonSummarySave(dateIso: string) {
+  function queueLessonSummarySave(overrideKey: string) {
     if (isReadOnlyViewer) return;
-    const existing = lessonSummarySaveTimersRef.current.get(dateIso);
+    const existing = lessonSummarySaveTimersRef.current.get(overrideKey);
     if (existing) window.clearTimeout(existing);
 
     const timer = window.setTimeout(() => {
-      lessonSummarySaveTimersRef.current.delete(dateIso);
+      lessonSummarySaveTimersRef.current.delete(overrideKey);
       if (!studentId) return;
       queueSaveLessonYearState(
         studentId,
@@ -2897,36 +2960,41 @@ export function StudentLessonsYearPage({
           extraEntries: extraEntriesRef.current,
         },
         ["overrides"],
+        undefined,
+        [overrideKey],
       );
     }, LESSON_SUMMARY_SAVE_DEBOUNCE_MS);
 
-    lessonSummarySaveTimersRef.current.set(dateIso, timer);
+    lessonSummarySaveTimersRef.current.set(overrideKey, timer);
   }
 
-  function handleLessonSummaryDraftChange(dateIso: string, nextText: string) {
+  function handleLessonSummaryDraftChange(row: ScheduleRow, nextText: string) {
     if (isReadOnlyViewer) return;
-    lessonSummaryDraftByDateIsoRef.current[dateIso] = nextText;
-    setLessonSummaryDraftByDateIso((prev) => ({ ...prev, [dateIso]: nextText }));
+    const overrideId = lessonOverrideIdForRow({
+      scheduleRuleId: row.scheduleRuleId,
+      rescheduleEntryId: row.rescheduleEntryId,
+      extraEntryId: row.extraEntryId,
+    });
+    const draftKey = lessonSummaryOverrideKeyForRow(row);
+    lessonSummaryDraftByKeyRef.current[draftKey] = nextText;
+    setLessonSummaryDraftByKey((prev) => ({ ...prev, [draftKey]: nextText }));
 
-    const baseOverrides = overridesRef.current;
-    const nextOverrides: Record<string, DayOverride> = {
-      ...baseOverrides,
-      [dateIso]: {
-        ...(baseOverrides[dateIso] ?? {}),
-        lessonSummary: nextText,
-      },
-    };
+    const nextOverrides = upsertLessonSlotOrDateOverride(overridesRef.current, {
+      dateIso: row.date,
+      scheduleRuleId: overrideId || null,
+      patch: { lessonSummary: nextText },
+      otherScheduleRuleIdsOnDate: scheduleRuleIdsOnDate(row.date),
+    });
     overridesRef.current = nextOverrides;
     setOverrides(nextOverrides);
 
-    // 讓使用者不必等待雲端回應，也能在刷新後保留輸入
     try {
       window.localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(nextOverrides));
     } catch {
       // ignore
     }
 
-    queueLessonSummarySave(dateIso);
+    queueLessonSummarySave(draftKey);
   }
 
   if (!accessReady) {
@@ -4775,12 +4843,12 @@ export function StudentLessonsYearPage({
                               readOnly={readOnly}
                               disabled={readOnly}
                               value={
-                                lessonSummaryDraftByDateIso[r.date] ?? r.lessonSummary ?? ""
+                                lessonSummaryDraftByKey[lessonSummaryOverrideKeyForRow(r)] ??
+                                r.lessonSummary ??
+                                ""
                               }
-                              onChange={(e) =>
-                                handleLessonSummaryDraftChange(r.date, e.target.value)
-                              }
-                              aria-label={`${r.date} Lesson Summary`}
+                              onChange={(e) => handleLessonSummaryDraftChange(r, e.target.value)}
+                              aria-label={`${r.date} ${r.time} Lesson Summary`}
                               className="w-full resize-y rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 outline-none transition focus:border-[#1d76c2] focus:shadow-[0_0_0_3px_rgba(29,118,194,0.15)] disabled:cursor-not-allowed disabled:bg-slate-50"
                             />
                           </td>

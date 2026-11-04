@@ -14,6 +14,11 @@ import {
   formatVisibleExamContentsSummary,
   nearestUpcomingExamDate,
 } from "@/lib/studentExamInfo";
+import {
+  lessonOverrideSlotKey,
+  upsertLessonSlotOrDateOverride,
+  type LessonDayOverride,
+} from "@/lib/lessonDayOverrides";
 import { DEFAULT_LESSON_YEAR_STATE, type StudentLesson2026State } from "@/lib/lessonYearStateShared";
 import {
   flushSaveLessonYearStateQueue,
@@ -683,26 +688,23 @@ export default function RoomScheduleTable({
       const current = stateCache.current.get(r.studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
       const overrides =
         current.overrides && typeof current.overrides === "object"
-          ? (current.overrides as Record<string, unknown>)
+          ? (current.overrides as Record<string, LessonDayOverride>)
           : {};
-      const existing = overrides[r.dateIso];
-      const existingEntry =
-        existing && typeof existing === "object" && !Array.isArray(existing)
-          ? (existing as Record<string, unknown>)
-          : {};
+      const nextOverrides = upsertLessonSlotOrDateOverride(overrides, {
+        dateIso: r.dateIso,
+        scheduleRuleId: r.scheduleRuleId,
+        patch: { tutor: nextTutor === "TBD" ? "" : nextTutor },
+      });
+      const dirtyKey = r.scheduleRuleId
+        ? lessonOverrideSlotKey(r.scheduleRuleId, r.dateIso)
+        : r.dateIso;
 
       const nextState: StudentLesson2026State = {
         ...current,
-        overrides: {
-          ...overrides,
-          [r.dateIso]: {
-            ...existingEntry,
-            tutor: nextTutor === "TBD" ? "" : nextTutor,
-          },
-        },
+        overrides: nextOverrides,
       };
       stateCache.current.set(r.studentId, nextState);
-      queueSaveLessonYearState(r.studentId, year, nextState, ["overrides"], undefined, [r.dateIso]);
+      queueSaveLessonYearState(r.studentId, year, nextState, ["overrides"], undefined, [dirtyKey]);
     }
 
     try {
@@ -722,24 +724,16 @@ export default function RoomScheduleTable({
     const current = stateCache.current.get(row.studentId) ?? { ...DEFAULT_LESSON_YEAR_STATE };
     const overrides =
       current.overrides && typeof current.overrides === "object"
-        ? (current.overrides as Record<string, unknown>)
-        : {};
-
-    const existing = overrides[row.dateIso];
-    const existingEntry =
-      existing && typeof existing === "object" && !Array.isArray(existing)
-        ? (existing as Record<string, unknown>)
+        ? (current.overrides as Record<string, LessonDayOverride>)
         : {};
 
     const nextState: StudentLesson2026State = {
       ...current,
-      overrides: {
-        ...overrides,
-        [row.dateIso]: {
-          ...existingEntry,
-          lessonSummary: nextNote,
-        },
-      },
+      overrides: upsertLessonSlotOrDateOverride(overrides, {
+        dateIso: row.dateIso,
+        scheduleRuleId: row.scheduleRuleId,
+        patch: { lessonSummary: nextNote },
+      }),
     };
 
     stateCache.current.set(row.studentId, nextState);

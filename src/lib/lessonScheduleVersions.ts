@@ -1,5 +1,10 @@
 import { PENDING_MAKEUP_TYPE_LABEL } from "@/lib/pendingMakeup";
 import { canonicalScheduleRoomLabel } from "@/lib/dayTimetableShared";
+import {
+  LESSON_OVERRIDE_EXTRA_ID_PREFIX,
+  LESSON_OVERRIDE_RESCHEDULE_ID_PREFIX,
+  readLessonOverrideField,
+} from "@/lib/lessonDayOverrides";
 
 /** 平日規則：同一 effectiveDate 為一版課表；較新生效日取代舊版（非按星期几疊加）。 */
 
@@ -308,32 +313,65 @@ export function buildActiveRulesByWeekdayForDate<T extends LessonScheduleSlotRul
   return map;
 }
 
-/** 讀取某日 overrides（房間頁／調堂日用 dateIso = toDate）。 */
+/** 讀取 overrides（房間頁／調堂日用 dateIso = toDate；可帶 scheduleRuleId 做 per-slot）。 */
 export function readLessonDayOverrideField(
   overrides: Record<string, unknown> | undefined,
   dateIso: string,
   field: "tutor" | "lessonSummary",
+  scheduleRuleId?: string | null,
 ): string {
-  const ov = overrides?.[dateIso];
-  if (!ov || typeof ov !== "object" || Array.isArray(ov)) return "";
-  return String((ov as Record<string, unknown>)[field] ?? "").trim();
+  const hasSlotId = Boolean(String(scheduleRuleId ?? "").trim());
+  // Tutor must stay per-slot (no date-wide smear). Lesson summary may still fall back to a
+  // legacy date note until each lesson has its own summary.
+  const allowDateFallback = field === "tutor" ? !hasSlotId : true;
+  return readLessonOverrideField(
+    overrides,
+    { dateIso, scheduleRuleId, allowDateFallback },
+    field,
+  );
 }
 
-/** 導師顯示：override 優先，其次 Room 時段預設，再排課規則；調堂列用補堂日 overrides。 */
+function isMakeupOrExtraOverrideId(scheduleRuleId?: string | null): boolean {
+  const id = String(scheduleRuleId ?? "").trim();
+  return (
+    id.startsWith(LESSON_OVERRIDE_RESCHEDULE_ID_PREFIX) ||
+    id.startsWith(LESSON_OVERRIDE_EXTRA_ID_PREFIX)
+  );
+}
+
+/** 導師顯示：slot override → Room 時段預設 → 排課規則；Reschedule/Extra 最後先用舊嘅成日 override。 */
 export function tutorDisplayForLessonRow(opts: {
   overrides?: Record<string, unknown>;
   dateIso: string;
+  scheduleRuleId?: string | null;
   roomSlotTutor?: string;
   scheduleRuleTutor?: string;
   pendingLabel?: string;
 }): string {
-  const { overrides, dateIso, roomSlotTutor, scheduleRuleTutor, pendingLabel = "待定" } = opts;
-  const fromOverride = readLessonDayOverrideField(overrides, dateIso, "tutor");
+  const {
+    overrides,
+    dateIso,
+    scheduleRuleId,
+    roomSlotTutor,
+    scheduleRuleTutor,
+    pendingLabel = "待定",
+  } = opts;
+  const fromOverride = readLessonDayOverrideField(overrides, dateIso, "tutor", scheduleRuleId);
   if (fromOverride) return fromOverride;
   const fromSlot = String(roomSlotTutor ?? "").trim();
   if (fromSlot) return fromSlot;
   const fromRule = String(scheduleRuleTutor ?? "").trim();
   if (fromRule) return fromRule;
+  // Reschedule/Extra have no schedule-rule tutor; allow legacy date-wide tutor so Band
+  // does not fall through to 待定 when Room Slot Tutor is unset but date override has Li.
+  if (isMakeupOrExtraOverrideId(scheduleRuleId)) {
+    const legacyDateTutor = readLessonOverrideField(
+      overrides,
+      { dateIso, allowDateFallback: true },
+      "tutor",
+    );
+    if (legacyDateTutor) return legacyDateTutor;
+  }
   return pendingLabel;
 }
 
