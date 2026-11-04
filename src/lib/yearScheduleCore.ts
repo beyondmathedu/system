@@ -23,6 +23,11 @@ import {
   tutorDisplayForLessonRow,
 } from "@/lib/lessonScheduleVersions";
 import {
+  lessonOverrideExtraId,
+  lessonOverrideRescheduleId,
+  resolveLessonOverride,
+} from "@/lib/lessonDayOverrides";
+import {
   isPendingRescheduleEntry,
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
@@ -255,6 +260,8 @@ function buildScheduleRows(
     rowKind: "normal" | "cancelled_original" | "reschedule";
     attendanceKey: string;
     rowId: string;
+    /** Regular schedule rule id, or synthetic `rs:` / `ex:` override id. */
+    scheduleRuleId?: string;
     baseRule: (typeof normalized)[0] | null;
     fromExtra: boolean;
   };
@@ -302,7 +309,10 @@ function buildScheduleRows(
           continue;
         }
 
-        const ov = state.overrides[curIso];
+        const ov = resolveLessonOverride(state.overrides, {
+          dateIso: curIso,
+          scheduleRuleId: rule.id,
+        });
         baseRows.push({
           date: curIso,
           time: (ov?.time ?? rule.time).toString(),
@@ -310,6 +320,7 @@ function buildScheduleRows(
           rowKind: "normal",
           rowId: `${curIso}-regular-${rule.id ?? `${rule.time}-${rule.room}`}`,
           attendanceKey: regularLessonAttendanceKey(rule, curIso),
+          scheduleRuleId: rule.id,
           baseRule: rule,
           fromExtra: false,
         });
@@ -334,7 +345,10 @@ function buildScheduleRows(
         continue;
       }
 
-      const ov = state.overrides[dateIso];
+      const ov = resolveLessonOverride(state.overrides, {
+        dateIso,
+        scheduleRuleId: rule.id,
+      });
       baseRows.push({
         date: dateIso,
         time: (ov?.time ?? rule.time).toString(),
@@ -342,6 +356,7 @@ function buildScheduleRows(
         rowKind: "normal",
         rowId: `${dateIso}-regular-${rule.id ?? `${rule.time}-${rule.room}`}`,
         attendanceKey: regularLessonAttendanceKey(rule, dateIso),
+        scheduleRuleId: rule.id,
         baseRule: rule,
         fromExtra: false,
       });
@@ -382,10 +397,20 @@ function buildScheduleRows(
     rows.push({
       ...orig,
       time: orig.baseRule
-        ? (state.overrides[e.fromDate]?.time ?? orig.baseRule.time).toString()
+        ? (
+            resolveLessonOverride(state.overrides, {
+              dateIso: e.fromDate,
+              scheduleRuleId: e.fromScheduleRuleId ?? orig.baseRule.id,
+            })?.time ?? orig.baseRule.time
+          ).toString()
         : orig.time,
       room: orig.baseRule
-        ? (state.overrides[e.fromDate]?.room ?? orig.baseRule.room).toString()
+        ? (
+            resolveLessonOverride(state.overrides, {
+              dateIso: e.fromDate,
+              scheduleRuleId: e.fromScheduleRuleId ?? orig.baseRule.id,
+            })?.room ?? orig.baseRule.room
+          ).toString()
         : orig.room,
       rowKind: "cancelled_original",
       rowId: buildCancelledOriginalRowId(e.id, e.fromDate, slotKey),
@@ -402,6 +427,7 @@ function buildScheduleRows(
         rowKind: "reschedule",
         rowId: `reschedule-${e.id}`,
         attendanceKey: `reschedule:${e.id}`,
+        scheduleRuleId: lessonOverrideRescheduleId(e.id),
         baseRule: null,
         fromExtra: false,
       });
@@ -425,12 +451,14 @@ function buildScheduleRows(
       rowKind: "reschedule",
       rowId: `reschedule-${e.id}`,
       attendanceKey: `reschedule:${e.id}`,
+      scheduleRuleId: lessonOverrideRescheduleId(e.id),
       baseRule: null,
       fromExtra: false,
     });
   }
 
   for (const ex of state.extraEntries) {
+    const extraOverrideId = lessonOverrideExtraId(ex.id);
     const pushIfVisible = (row: {
       date: string;
       time: string;
@@ -439,6 +467,7 @@ function buildScheduleRows(
       rowId: string;
       attendanceKey: string;
       fromExtra: boolean;
+      scheduleRuleId?: string;
     }) => {
       if (hasRange && rangeStart && rangeEnd && !isIsoInInclusiveRange(row.date, rangeStart, rangeEnd)) {
         return;
@@ -457,6 +486,7 @@ function buildScheduleRows(
         rowKind: "cancelled_original",
         rowId: `extra-cancelled-${ex.id}`,
         attendanceKey: `extra:${ex.id}`,
+        scheduleRuleId: extraOverrideId,
         fromExtra: true,
       });
       continue;
@@ -472,6 +502,7 @@ function buildScheduleRows(
         rowKind: "cancelled_original",
         rowId: `extra-cancelled-${ex.id}`,
         attendanceKey: `extra:${ex.id}`,
+        scheduleRuleId: extraOverrideId,
         fromExtra: true,
       });
       pushIfVisible({
@@ -481,6 +512,7 @@ function buildScheduleRows(
         rowKind: "reschedule",
         rowId: `extra-${ex.id}`,
         attendanceKey: `extra:${ex.id}`,
+        scheduleRuleId: extraOverrideId,
         fromExtra: true,
       });
       continue;
@@ -496,6 +528,7 @@ function buildScheduleRows(
       rowKind: "normal",
       rowId: `extra-${ex.id}`,
       attendanceKey: `extra:${ex.id}`,
+      scheduleRuleId: extraOverrideId,
       baseRule: null,
       fromExtra: true,
     });
@@ -548,15 +581,26 @@ function buildScheduleRows(
         })
       : undefined;
 
+    const overrideId = r.scheduleRuleId ?? r.baseRule?.id;
     const tutorDisplay = tutorDisplayForLessonRow({
       overrides: state.overrides,
       dateIso: r.date,
+      scheduleRuleId: overrideId,
       roomSlotTutor,
       scheduleRuleTutor: r.baseRule?.tutor,
       pendingLabel: "待定",
     });
-    const noteDisplay = readLessonDayOverrideField(state.overrides, r.date, "lessonSummary")
-      || String(r.baseRule?.lessonSummary ?? "").trim();
+    let noteDisplay =
+      readLessonDayOverrideField(state.overrides, r.date, "lessonSummary", overrideId) ||
+      String(r.baseRule?.lessonSummary ?? "").trim();
+    // Reschedule/Extra: legacy date-wide summary only when this slot has none (avoid 空白 on Band).
+    if (
+      !noteDisplay &&
+      overrideId &&
+      (String(overrideId).startsWith("rs:") || String(overrideId).startsWith("ex:"))
+    ) {
+      noteDisplay = readLessonDayOverrideField(state.overrides, r.date, "lessonSummary", null);
+    }
 
     const sortTime =
       r.time && r.time !== "待定" ? sortTimeFromDisplay(r.time) : "99:99";
@@ -568,7 +612,8 @@ function buildScheduleRows(
       rowKind: r.rowKind,
       attendanceKey: r.attendanceKey,
       rowId: r.rowId,
-      scheduleRuleId: r.baseRule?.id,
+      // Keep real schedule rule id for Regular; synthetic rs:/ex: ids for makeup/extra overrides.
+      scheduleRuleId: overrideId,
       lessonType,
       tutorDisplay,
       noteDisplay,

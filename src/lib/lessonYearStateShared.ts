@@ -1,3 +1,8 @@
+import {
+  scrubSmearedTutorFromRoomBearingSlotOverrides,
+  type LessonDayOverride,
+} from "@/lib/lessonDayOverrides";
+
 export type StudentLesson2026State = {
   attendance: Record<string, boolean>;
   hiddenDates: Record<string, boolean>;
@@ -81,6 +86,10 @@ function coerceExtraEntriesFromDb(raw: unknown): unknown[] {
 
 /** 由 `student_lessons_year_state` 列轉成前端 state（Realtime / REST 共用） */
 export function parseLessonYearStateDbRow(row: Record<string, unknown>): StudentLesson2026State {
+  const rawOverrides =
+    row.overrides && typeof row.overrides === "object"
+      ? (row.overrides as Record<string, LessonDayOverride>)
+      : {};
   return {
     attendance:
       row.attendance && typeof row.attendance === "object"
@@ -90,10 +99,10 @@ export function parseLessonYearStateDbRow(row: Record<string, unknown>): Student
       row.hidden_dates && typeof row.hidden_dates === "object"
         ? (row.hidden_dates as Record<string, boolean>)
         : {},
-    overrides:
-      row.overrides && typeof row.overrides === "object"
-        ? (row.overrides as Record<string, unknown>)
-        : {},
+    overrides: scrubSmearedTutorFromRoomBearingSlotOverrides(rawOverrides) as Record<
+      string,
+      unknown
+    >,
     // JSONB ids may arrive as numbers — always normalize to string for rowId / edit matching.
     rescheduleEntries: coerceRescheduleEntriesFromDb(row.reschedule_entries),
     extraEntries: coerceExtraEntriesFromDb(row.extra_entries),
