@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "@/lib/supabase";
 import AppTopNav from "@/components/AppTopNav";
 import type { AppTopNavViewer } from "@/lib/appTopNavViewer";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
 import TextbookPublisherPicker from "@/components/TextbookPublisherPicker";
+import { VirtualTableSpacerRow } from "@/components/VirtualTableSpacerRow";
 import { normalizeStudentId } from "@/lib/studentId";
 import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 import {
@@ -252,6 +254,19 @@ export default function StudentsPageClient({
   const allVisibleSelected =
     sortedStudents.length > 0 &&
     sortedStudents.every((student) => selectedIdSet.has(student.id));
+
+  const studentsRowVirtualizer = useVirtualizer({
+    count: sortedStudents.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 72,
+    overscan: 10,
+  });
+  const studentsVirtualRows = studentsRowVirtualizer.getVirtualItems();
+  const studentsPadTop = studentsVirtualRows[0]?.start ?? 0;
+  const studentsPadBottom =
+    studentsRowVirtualizer.getTotalSize() -
+    (studentsVirtualRows[studentsVirtualRows.length - 1]?.end ?? 0);
+  const studentsTableColCount = isAdmin ? 14 : 13;
 
   const totalPages = Math.max(1, Math.ceil(listTotal / STUDENTS_PAGE_SIZE));
 
@@ -1297,7 +1312,10 @@ export default function StudentsPageClient({
               id={tableScrollId}
               className="max-h-[70vh] flex-1 overflow-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
-              <ClientOnlyAfterMount fallback={<StudentsTableSkeleton />}>
+              <ClientOnlyAfterMount
+                fallback={<StudentsTableSkeleton />}
+                disabled={Boolean(initialList)}
+              >
               <table className={`divide-y divide-slate-200 ${isAdmin ? "min-w-[1780px]" : "min-w-[1500px]"}`}>
                 <thead className="bg-slate-50">
                   <tr className="divide-x divide-slate-200">
@@ -1362,7 +1380,10 @@ export default function StudentsPageClient({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {sortedStudents.map((student) => {
+                  <VirtualTableSpacerRow height={studentsPadTop} colSpan={studentsTableColCount} />
+                  {studentsVirtualRows.map((virtualRow) => {
+                    const student = sortedStudents[virtualRow.index];
+                    if (!student) return null;
                     const studentIdDisplay = normalizeStudentId(student.id);
                     const portalStatus = portalStatusById[studentIdDisplay];
                     const portalBusy = portalBusyId === studentIdDisplay;
@@ -1374,6 +1395,8 @@ export default function StudentsPageClient({
                     return (
                       <tr
                         key={student.id}
+                        data-index={virtualRow.index}
+                        ref={studentsRowVirtualizer.measureElement}
                         className="group divide-x divide-slate-100 bg-white hover:bg-slate-50"
                       >
                         <td className="sticky left-0 z-30 w-[64px] whitespace-nowrap bg-white px-4 py-4 align-middle text-sm text-slate-700 group-hover:bg-slate-50">
@@ -1523,6 +1546,7 @@ export default function StudentsPageClient({
                       </tr>
                     );
                   })}
+                  <VirtualTableSpacerRow height={studentsPadBottom} colSpan={studentsTableColCount} />
                 </tbody>
               </table>
               </ClientOnlyAfterMount>

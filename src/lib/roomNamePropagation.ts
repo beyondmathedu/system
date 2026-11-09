@@ -185,7 +185,7 @@ export async function propagateClassroomNameChange(
     offset += PAGE;
   }
 
-  notifyScheduleCachesStale();
+  notifyScheduleCachesStale("classrooms");
   return { ok: true, stats };
 }
 
