@@ -14,6 +14,9 @@ const geistMono = Geist_Mono({
   preload: false,
 });
 
+/** Keep server rendering next to Supabase (ap-southeast-1 / Singapore). */
+export const preferredRegion = "sin1";
+
 export const metadata: Metadata = {
   title: {
     default: "Beyond Math 管理系統",
