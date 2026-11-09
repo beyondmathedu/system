@@ -265,7 +265,7 @@ export default function RoomsAdminClient({
       if (fresh) resetFormAfterSave(fresh);
       else resetForm();
       dispatchClassroomsUpdated();
-      notifyScheduleCachesStale();
+      notifyScheduleCachesStale("classrooms");
       return;
     }
 
@@ -291,7 +291,7 @@ export default function RoomsAdminClient({
     if (fresh) resetFormAfterSave(fresh);
     else resetForm();
     dispatchClassroomsUpdated();
-    notifyScheduleCachesStale();
+    notifyScheduleCachesStale("classrooms");
   }
 
   function onRoomNameBlur() {

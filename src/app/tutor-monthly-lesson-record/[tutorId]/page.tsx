@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import AppTopNav from "@/components/AppTopNav";
-import DownloadTutorMonthlyPdfButton from "@/components/DownloadTutorMonthlyPdfButton";
+import DownloadTutorMonthlyPdfButtonLazy from "@/components/DownloadTutorMonthlyPdfButtonLazy";
 import TutorManualGuaranteeActions from "@/components/TutorManualGuaranteeActions";
 import TutorMonthlyYearMonthPicker from "@/components/TutorMonthlyYearMonthPicker";
 import { PRIMARY_GRADIENT } from "@/lib/appTheme";
@@ -626,7 +626,7 @@ export default async function TutorMonthlyLessonRecordDetailPage({ params, searc
         </div>
       ) : null}
       {groupedRows.length > 0 ? (
-        <DownloadTutorMonthlyPdfButton fileName={pdfFilename} head={pdfHead} body={pdfBody} />
+        <DownloadTutorMonthlyPdfButtonLazy fileName={pdfFilename} head={pdfHead} body={pdfBody} />
       ) : null}
     </div>
   );

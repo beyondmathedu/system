@@ -1486,7 +1486,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     }
     setFeeTierBundle({ ...feeTierDraft });
     setFeeTierSaveMsg(res.cloudSynced ? "Saved + cloud" : "Saved locally");
-    notifyScheduleCachesStale();
+    notifyScheduleCachesStale("fee");
     window.setTimeout(() => setFeeTierSaveMsg(""), 2800);
   }, [feeTierDraft]);
 
@@ -1698,7 +1698,7 @@ export default function StudentsLessonTimeFeeRecordPage({
         `Zoho 同步完成（${sheetYear}）。已配對 ${matchedTotal} 張收據，更新 ${totalSynced} 筆學費` +
           (extras.length ? `；注意：${extras.join("；")}` : "。"),
       );
-      await revalidateScheduleCachesNow();
+      await revalidateScheduleCachesNow("fee");
       window.location.reload();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
