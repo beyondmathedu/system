@@ -462,16 +462,6 @@ function isMissingOpeningBalanceTableError(message: string): boolean {
   );
 }
 
-function isMissingBalanceAdjustmentTableError(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes("does not exist") ||
-    m.includes("schema cache") ||
-    (m.includes("student_fee_balance_adjustments") &&
-      (m.includes("could not find") || m.includes("not found")))
-  );
-}
-
 function isMissingHeldBackYearsTableError(message: string): boolean {
   const m = message.toLowerCase();
   return (
@@ -525,46 +515,6 @@ export async function loadStudentFeeOpeningBalancesServer(
     balances[sid] = Number((row as { opening_balance?: number | null }).opening_balance ?? 0) || 0;
   }
   return { balances };
-}
-
-export async function loadStudentFeeBalanceAdjustmentsServer(
-  supabase: SupabaseClient,
-  studentIds: string[],
-): Promise<{
-  adjustments: Record<string, { amount: number; reason: string }>;
-  error?: string;
-  tableMissing?: boolean;
-}> {
-  if (!studentIds.length) return { adjustments: {} };
-
-  const { data, error } = await fetchRowsInChunks({
-    ids: studentIds,
-    concurrency: 8,
-    query: (chunk) =>
-      supabase
-        .from("student_fee_balance_adjustments")
-        .select("student_id, amount, reason")
-        .in("student_id", chunk),
-  });
-
-  if (error) {
-    return {
-      adjustments: {},
-      error,
-      tableMissing: isMissingBalanceAdjustmentTableError(error),
-    };
-  }
-
-  const adjustments: Record<string, { amount: number; reason: string }> = {};
-  for (const row of data ?? []) {
-    const sid = String((row as { student_id?: string }).student_id ?? "");
-    if (!sid) continue;
-    adjustments[sid] = {
-      amount: Number((row as { amount?: number | null }).amount ?? 0) || 0,
-      reason: String((row as { reason?: string | null }).reason ?? ""),
-    };
-  }
-  return { adjustments };
 }
 
 export async function loadStudentHeldBackYearsServer(
@@ -744,7 +694,7 @@ export async function loadFeeRecordBootstrap(
       ? loadStudentFeeOpeningBalancesServer(supabase, ids)
       : Promise.resolve({ balances: {} as Record<string, number> });
 
-  const [metricsResult, feeRows, recordsMap, yearStatesMap, openingResult, adjustmentResult, heldBackYearsResult, gradeHistoryResult, feeTierBundle] =
+  const [metricsResult, feeRows, recordsMap, yearStatesMap, openingResult, heldBackYearsResult, gradeHistoryResult, feeTierBundle] =
     await Promise.all([
       ids.length
         ? loadLessonMetricsBatchServer(supabase, ids, sheetYear)
@@ -760,9 +710,6 @@ export async function loadFeeRecordBootstrap(
       ids.length ? loadLessonScheduleRecordsBatchServer(supabase, ids) : Promise.resolve({}),
       ids.length ? loadLessonYearStatesBatchServer(supabase, ids, sheetYear) : Promise.resolve({}),
       openingPromise,
-      ids.length
-        ? loadStudentFeeBalanceAdjustmentsServer(supabase, ids)
-        : Promise.resolve({ adjustments: {} as Record<string, { amount: number; reason: string }> }),
       ids.length
         ? loadStudentHeldBackYearsServer(supabase, ids)
         : Promise.resolve({ byStudentId: {} as Record<string, number[]> }),
@@ -790,7 +737,6 @@ export async function loadFeeRecordBootstrap(
     recordsMap,
     yearStatesMap,
     openingResult,
-    adjustmentResult,
     heldBackYearsResult,
     gradeHistoryResult,
     feeStartMonth,
@@ -932,7 +878,7 @@ function loadFeeMonthPartCached(sheetYear: number, sheetMonth: number): Promise<
   )();
 }
 
-/** Cached fee-sheet bootstrap (year core + month fee rows; opening/adjustments/grade stay fresh). */
+/** Cached fee-sheet bootstrap (year core + month fee rows; opening/grade stay fresh). */
 export async function loadFeeRecordBootstrapCached(
   sheetYear: number,
   sheetMonth: number,
@@ -947,20 +893,15 @@ export async function loadFeeRecordBootstrapCached(
 
   const ids = yearCore.students.map((s) => s.id);
   const supabase = getSupabaseAdmin();
-  const [openingResult, adjustmentResult] = await Promise.all([
+  const openingResult =
     y === FEE_OPENING_BALANCE_AS_OF_YEAR
-      ? loadStudentFeeOpeningBalancesServer(supabase, ids)
-      : Promise.resolve({ balances: {} as Record<string, number> }),
-    ids.length
-      ? loadStudentFeeBalanceAdjustmentsServer(supabase, ids)
-      : Promise.resolve({ adjustments: {} as Record<string, { amount: number; reason: string }> }),
-  ]);
+      ? await loadStudentFeeOpeningBalancesServer(supabase, ids)
+      : { balances: {} as Record<string, number> };
 
   return {
     ...yearCore,
     ...monthPart,
     openingResult,
-    adjustmentResult,
     heldBackYearsResult: { byStudentId: gradeContext.heldBackYearsByStudentId },
     gradeHistoryResult: {
       byStudentId: gradeContext.gradeHistoryByStudentId as Record<
@@ -977,13 +918,12 @@ export type FeeRecordMonthDeltaPayload = Pick<
   | "feeStartMonth"
   | "endMonthForPricing"
   | "openingResult"
-  | "adjustmentResult"
   | "heldBackYearsResult"
   | "gradeHistoryResult"
 >;
 
 /**
- * Month/year-switch delta: fee rows + opening/adjustments/grade freshness only.
+ * Month/year-switch delta: fee rows + opening/grade freshness only.
  * Caller keeps year-core (students, schedules, metrics) on the client.
  */
 export async function loadFeeRecordMonthDeltaCached(
@@ -999,18 +939,13 @@ export async function loadFeeRecordMonthDeltaCached(
   ]);
   const ids = yearCore.students.map((s) => s.id);
   const supabase = getSupabaseAdmin();
-  const [openingResult, adjustmentResult] = await Promise.all([
+  const openingResult =
     y === FEE_OPENING_BALANCE_AS_OF_YEAR
-      ? loadStudentFeeOpeningBalancesServer(supabase, ids)
-      : Promise.resolve({ balances: {} as Record<string, number> }),
-    ids.length
-      ? loadStudentFeeBalanceAdjustmentsServer(supabase, ids)
-      : Promise.resolve({ adjustments: {} as Record<string, { amount: number; reason: string }> }),
-  ]);
+      ? await loadStudentFeeOpeningBalancesServer(supabase, ids)
+      : { balances: {} as Record<string, number> };
   return {
     ...monthPart,
     openingResult,
-    adjustmentResult,
     heldBackYearsResult: { byStudentId: gradeContext.heldBackYearsByStudentId },
     gradeHistoryResult: {
       byStudentId: gradeContext.gradeHistoryByStudentId as Record<
@@ -1038,31 +973,6 @@ export async function upsertStudentFeeOpeningBalanceAdmin(
   );
   if (error) {
     return { ok: false, error: error.message, tableMissing: isMissingOpeningBalanceTableError(error.message) };
-  }
-  return { ok: true };
-}
-
-export async function upsertStudentFeeBalanceAdjustmentAdmin(
-  studentId: string,
-  adjustment: { amount: number; reason: string },
-): Promise<{ ok: boolean; error?: string; tableMissing?: boolean }> {
-  const amount = Number(adjustment.amount) || 0;
-  const reason = String(adjustment.reason ?? "");
-  const { error } = await getSupabaseAdmin().from("student_fee_balance_adjustments").upsert(
-    {
-      student_id: studentId,
-      amount,
-      reason,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "student_id" },
-  );
-  if (error) {
-    return {
-      ok: false,
-      error: error.message,
-      tableMissing: isMissingBalanceAdjustmentTableError(error.message),
-    };
   }
   return { ok: true };
 }
