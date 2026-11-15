@@ -13,6 +13,8 @@ export type ZohoMonthAmountMap = Record<string, Record<number, number>>;
 
 export type ZohoSyncCheckpoint = {
   year: number;
+  /** Sheet month used when this checkpoint was written; resume only if it still matches. */
+  targetMonth?: number;
   detailOffset: number;
   matchedTotal: number;
   detailCallsUsed: number;

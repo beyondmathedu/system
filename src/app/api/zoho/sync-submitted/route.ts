@@ -283,8 +283,7 @@ function lineItemGrossHkd(li: Record<string, unknown>): number {
 
 /**
  * Line net for Tuition Paid: always prefer Zoho Amount column.
- * Receipt-level discounts (e.g. 二人同行) are tracked separately as balance
- * adjustments — do not scale Amount down here or paid will diverge from the receipt.
+ * Do not scale Amount by receipt Total — paid must match the line Amount.
  */
 function lineItemNetHkd(li: Record<string, unknown>): number {
   const fromAmount = lineItemAmountHkd(li);
@@ -565,6 +564,8 @@ export async function POST(request: Request) {
     const staleReceiptDateKeys = new Set<string>();
 
     const matchedReceipts: Array<{ receipt: ZohoSalesReceipt; studentId: string }> = [];
+    /** List API can repeat the same receipt; never sum a sales_receipt_id twice. */
+    const seenMatchedReceiptIds = new Set<string>();
     for (const r of receipts) {
       const studentId = matchStudentIdFromReceipt(
         r,
@@ -577,17 +578,27 @@ export async function POST(request: Request) {
         unmatchedReceipts += 1;
         continue;
       }
+      const rid = String(r.sales_receipt_id ?? r.salesreceipt_id ?? "").trim();
+      if (rid) {
+        if (seenMatchedReceiptIds.has(rid)) continue;
+        seenMatchedReceiptIds.add(rid);
+      }
       touchedStudentIds.add(studentId);
       matchedReceipts.push({ receipt: r, studentId });
     }
 
     // List API returns no line items; detail fetches are batched so the browser can
     // loop without timing out (~1500 receipts × detail). Prefer receipts near the sheet month.
+    // Tie-break by date then id so detailOffset resume stays stable for the same targetMonth.
     matchedReceipts.sort((a, b) => {
       const da = receiptMonthDistance(a.receipt, year, targetMonth);
       const db = receiptMonthDistance(b.receipt, year, targetMonth);
       if (da !== db) return da - db;
-      return String(b.receipt.date ?? "").localeCompare(String(a.receipt.date ?? ""));
+      const dateCmp = String(b.receipt.date ?? "").localeCompare(String(a.receipt.date ?? ""));
+      if (dateCmp !== 0) return dateCmp;
+      const idA = String(a.receipt.sales_receipt_id ?? a.receipt.salesreceipt_id ?? "");
+      const idB = String(b.receipt.sales_receipt_id ?? b.receipt.salesreceipt_id ?? "");
+      return idA.localeCompare(idB);
     });
 
     const batching = body?.detailOffset != null || body?.detailBatchSize != null;
@@ -689,8 +700,7 @@ export async function POST(request: Request) {
         }
       }
 
-      // Tuition Paid = each line's Amount. Do not scale by receipt Total: header
-      // discounts like 二人同行 are stored as balance adjustments separately.
+      // Tuition Paid = each line's Amount. Do not scale by receipt Total.
       for (const row of parsed) {
         const paid = row.net;
         const key = `${studentId}:${row.month}`;

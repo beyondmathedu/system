@@ -262,7 +262,6 @@ function buildFeePaymentToneByStudentId(
     fee_pricing_grade?: string | null;
   }>,
   openingBalanceByStudentId: Record<string, number>,
-  balanceAdjustmentByStudentId: Record<string, number>,
   heldBackYearsByStudentId: Record<string, number[]>,
   gradeHistoryByStudentId: GradeHistoryByStudentId,
   refYear: number,
@@ -388,9 +387,8 @@ function buildFeePaymentToneByStudentId(
       feeTierSettings: currentTier,
     });
     const opening = refYear === FEE_OPENING_BALANCE_AS_OF_YEAR ? Number(openingBalanceByStudentId[key] ?? 0) || 0 : 0;
-    const adjustment = Number(balanceAdjustmentByStudentId[key] ?? 0) || 0;
     const balanceBefore = opening + priorExpected - submittedBefore;
-    const totalDue = balanceBefore + currentExpected + adjustment;
+    const totalDue = balanceBefore + currentExpected;
     const balanceDue = totalDue - currentSubmitted;
     if (balanceDue <= 0.005) {
       out[key] = "ok";
@@ -820,7 +818,7 @@ async function fetchDayTimetablePayloadUncached(
   let feePaymentToneByStudentId: Record<string, DayTimetableFeePaymentTone> = {};
   if (!regularOnly && timetableStudentIds.length > 0) {
     const feeStartMonth = feeSystemStartMonth1to12(year);
-    const [{ data: feeRowsAll }, { data: openingRows }, { data: adjustmentRows }] = await Promise.all([
+    const [{ data: feeRowsAll }, { data: openingRows }] = await Promise.all([
       supabase
         .from("student_monthly_fee_records")
         .select("student_id, year, month, submitted_amount, lesson_unit_price, fee_pricing_grade")
@@ -836,10 +834,6 @@ async function fetchDayTimetablePayloadUncached(
             .eq("as_of_month", FEE_OPENING_BALANCE_AS_OF_MONTH)
             .in("student_id", timetableStudentIds)
         : Promise.resolve({ data: [] }),
-      supabase
-        .from("student_fee_balance_adjustments")
-        .select("student_id, amount")
-        .in("student_id", timetableStudentIds),
     ]);
 
     const openingBalanceByStudentId: Record<string, number> = {};
@@ -847,12 +841,6 @@ async function fetchDayTimetablePayloadUncached(
       const sid = normalizeStudentId(String(row.student_id ?? ""));
       if (!sid) continue;
       openingBalanceByStudentId[sid] = Number(row.opening_balance ?? 0) || 0;
-    }
-    const balanceAdjustmentByStudentId: Record<string, number> = {};
-    for (const row of (adjustmentRows ?? []) as Array<{ student_id?: string; amount?: number | null }>) {
-      const sid = normalizeStudentId(String(row.student_id ?? ""));
-      if (!sid) continue;
-      balanceAdjustmentByStudentId[sid] = Number(row.amount ?? 0) || 0;
     }
     const studentsById = new Map(studentList.map((s) => [normalizeStudentId(s.id), s]));
     feePaymentToneByStudentId = buildFeePaymentToneByStudentId(
@@ -869,7 +857,6 @@ async function fetchDayTimetablePayloadUncached(
         fee_pricing_grade?: string | null;
       }>) ?? [],
       openingBalanceByStudentId,
-      balanceAdjustmentByStudentId,
       heldBackYearsByStudentId,
       gradeHistoryByStudentId,
       year,
