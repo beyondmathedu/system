@@ -1256,7 +1256,7 @@ export default function StudentsPageClient({
                     ))}
                   </div>
                   <p className="text-xs text-slate-500">
-                    Temporary = has Expected return (incl. auto F.6 hide 1 Jul–1 Sep). Graduated / permanent = no
+                    Temporary = has Expected return (incl. auto F.6 hide 1 May–1 Sep). Graduated / permanent = no
                     Return date. Add Return on Lessons → Inactive history if they come back.
                   </p>
                 </div>

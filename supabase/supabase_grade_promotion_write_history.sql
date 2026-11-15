@@ -20,7 +20,7 @@ declare
   target_year integer := coalesce(p_year, extract(year from (now() at time zone 'Asia/Hong_Kong'))::integer);
   promotion_date date := make_date(target_year, 9, 1);
   today_hk date := (now() at time zone 'Asia/Hong_Kong')::date;
-  f6_inactive_start date := make_date(target_year, 7, 1);
+  f6_inactive_start date := make_date(target_year, 5, 1);
   new_ay text := target_year::text || '-' || right((target_year + 1)::text, 2);
   prev_ay text := (target_year - 1)::text || '-' || right(target_year::text, 2);
   affected integer := 0;
