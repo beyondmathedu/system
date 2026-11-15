@@ -142,7 +142,7 @@ export async function previewStudentGradePromotion(input?: {
     } else if (fromGrade === "F6") {
       action = "graduate_f6";
       toGrade = "F6";
-      reason = "F.6：自動加入畢業／隱藏期（7/1 起）";
+      reason = "F.6：自動加入畢業／隱藏期（5/1 起）";
     } else if (PROMOTE_NEXT[fromGrade]) {
       action = "promote";
       toGrade = PROMOTE_NEXT[fromGrade];

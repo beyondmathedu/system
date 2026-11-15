@@ -1,7 +1,7 @@
 -- Before F1–F5 promote on 1 Sept, mark everyone who is already F.6 as
--- permanently inactive from 1 Jul (no return date). New F.6 (ex-F.5) stay
--- visible until 30 Jun of the following year, then the app auto-hides them
--- 1 Jul–1 Sep; the next promotion run graduates that cohort.
+-- permanently inactive from 1 May (no return date). New F.6 (ex-F.5) stay
+-- visible until 30 Apr of the following year, then the app auto-hides them
+-- 1 May–1 Sep; the next promotion run graduates that cohort.
 
 create or replace function public.run_student_grade_promotion(
   p_year integer default null,
@@ -20,7 +20,7 @@ declare
   target_year integer := coalesce(p_year, extract(year from (now() at time zone 'Asia/Hong_Kong'))::integer);
   promotion_date date := make_date(coalesce(p_year, extract(year from (now() at time zone 'Asia/Hong_Kong'))::integer), 9, 1);
   today_hk date := (now() at time zone 'Asia/Hong_Kong')::date;
-  f6_inactive_start date := make_date(coalesce(p_year, extract(year from (now() at time zone 'Asia/Hong_Kong'))::integer), 7, 1);
+  f6_inactive_start date := make_date(coalesce(p_year, extract(year from (now() at time zone 'Asia/Hong_Kong'))::integer), 5, 1);
   affected integer := 0;
 begin
   if exists (select 1 from public.student_grade_promotion_runs r where r.run_year = target_year) then

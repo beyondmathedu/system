@@ -88,6 +88,7 @@ import {
   saveZohoSyncCheckpoint,
   type ZohoMonthAmountMap,
 } from "@/lib/zohoSyncCheckpoint";
+import { downloadFeeRecordSheetExcel } from "@/lib/feeRecordSheetExcelExport";
 
 type StudentRow = {
   id: string;
@@ -888,6 +889,7 @@ export default function StudentsLessonTimeFeeRecordPage({
   const [makeupFilter, setMakeupFilter] = useState<"all" | "yes" | "no">("all");
   const [searchText, setSearchText] = useState("");
   const [syncingZoho, setSyncingZoho] = useState(false);
+  const [downloadingExcel, setDownloadingExcel] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1386,7 +1388,10 @@ export default function StudentsLessonTimeFeeRecordPage({
   /** Cheap filters first so heavy tuition/makeup math runs on a smaller set (default grade F.1). */
   const midFilteredStudents = useMemo(() => {
     const normalizedSearch = searchText.trim().toLowerCase();
+    const currentMonth = Number(sheetMonth);
     return sortedStudents.filter((st) => {
+      // Whole-month inactive (graduated F.6 / pause) → hide from this sheet month.
+      if (isMonthInactiveForFeeByStudentId[st.id]?.(currentMonth)) return false;
       const r = recordsByStudentId[st.id] ?? defaultRecordState();
       const expectedSessions = r.expected ?? 0;
       const attended = attendedLessonsInMonthByStudentId[st.id] ?? 0;
@@ -1426,6 +1431,8 @@ export default function StudentsLessonTimeFeeRecordPage({
     searchText,
     sheetGradeByStudentId,
     weekdayTokensByStudentId,
+    sheetMonth,
+    isMonthInactiveForFeeByStudentId,
   ]);
 
   const updateStudentRecord = (studentId: string, patch: Partial<RecordState>) => {
@@ -2084,6 +2091,85 @@ export default function StudentsLessonTimeFeeRecordPage({
     };
   }, [filteredSortedStudents, sortedStudents, recordsByStudentId, totalDueByStudentId]);
 
+  const downloadRecordSheetExcel = useCallback(async () => {
+    if (downloadingExcel || bootstrapLoading || filteredSortedStudents.length === 0) return;
+    setDownloadingExcel(true);
+    try {
+      const includeOpeningBalance = sheetYear === OPENING_BALANCE_AS_OF_YEAR;
+      await downloadFeeRecordSheetExcel({
+        sheetYear,
+        sheetMonth,
+        monthShort: MONTH_SHORT[sheetMonth - 1],
+        lColumnCount,
+        includeOpeningBalance,
+        rows: filteredSortedStudents.map((st) => {
+          const r = recordsByStudentId[st.id] ?? defaultRecordState();
+          const totalDue = totalDueByStudentId[st.id] ?? 0;
+          const weekday =
+            (r.weekday
+              ? r.weekday
+                  .split("/")
+                  .map((wd) => HK_WEEKDAY_CN_TO_EN[wd] ?? wd)
+                  .join("/")
+              : "") || "";
+          const name = formatStudentDisplayNameOrEmpty(
+            {
+              id: st.id,
+              name_zh: st.name_zh,
+              name_en: st.name_en,
+              nickname_en: st.nickname_en,
+            },
+            "full",
+          );
+          return {
+            id: normalizeStudentId(st.id),
+            name,
+            grade: formatGradeDisplay(sheetGradeByStudentId[st.id] || st.grade) || "",
+            phone: (st.student_phone ?? "").trim(),
+            weekday,
+            tuitionPaid: Number(r.submitted) || 0,
+            balanceDue: totalDue - (Number(r.submitted) || 0),
+            lessonDates: lessonDatesByStudentId[st.id] ?? [],
+            makeup: resolveMakeupDisplayCount(
+              makeupLiveCountByStudentId[st.id] ?? 0,
+              remedialCountByStudentId[st.id] ?? 0,
+              makeupHasLessonPayloadByStudentId[st.id] ?? false,
+            ),
+            totalDue,
+            prevDue: balanceBeforeByStudentId[st.id] ?? 0,
+            thisMonthExpected: currentMonthExpectedTuitionByStudentId[st.id] ?? 0,
+            openingBalance: includeOpeningBalance
+              ? openingBalanceByStudentId[st.id] ?? 0
+              : undefined,
+            remarks: r.remarks ?? "",
+          };
+        }),
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Download failed";
+      setSyncNotice(`Excel download failed: ${message}`);
+    } finally {
+      setDownloadingExcel(false);
+    }
+  }, [
+    downloadingExcel,
+    bootstrapLoading,
+    filteredSortedStudents,
+    sheetYear,
+    sheetMonth,
+    lColumnCount,
+    recordsByStudentId,
+    totalDueByStudentId,
+    sheetGradeByStudentId,
+    lessonDatesByStudentId,
+    makeupLiveCountByStudentId,
+    remedialCountByStudentId,
+    makeupHasLessonPayloadByStudentId,
+    balanceBeforeByStudentId,
+    currentMonthExpectedTuitionByStudentId,
+    openingBalanceByStudentId,
+  ]);
+
   useEffect(() => {
     if (students.length === 0) return;
     if (Object.keys(lessonRecordsByStudentId).length === 0) return;
@@ -2232,31 +2318,48 @@ export default function StudentsLessonTimeFeeRecordPage({
                       ) : null}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void syncZohoSubmitted({
-                        // Sync all students — not only the filtered table rows — otherwise
-                        // Sep/Aug Zoho paid stays $0 for anyone hidden by grade/search.
-                        idOnly: false,
-                      })
-                    }
-                    disabled={syncingZoho}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    title="按 Zoho Item & Description 認月份、Amount 寫已繳；分批讀取全部學生，全部完成後才一次寫入。"
-                  >
-                    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
-                      <path
-                        transform="translate(0,-1.2)"
-                        d="M4.08 11.86a5.5 5.5 0 019.27-3.59l-.94.94a.75.75 0 001.06 1.06l2.5-2.5a.75.75 0 000-1.06l-2.5-2.5a.75.75 0 00-1.06 1.06l.99.99a7 7 0 00-11.3 5.59.75.75 0 001.5 0z"
-                      />
-                      <path
-                        transform="translate(0,1.2)"
-                        d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
-                      />
-                    </svg>
-                    {syncingZoho ? "Syncing..." : "Sync Zoho Receipts"}
-                  </button>
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void downloadRecordSheetExcel()}
+                      disabled={
+                        downloadingExcel || bootstrapLoading || filteredSortedStudents.length === 0
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#1d76c2] px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#1663a3] disabled:cursor-not-allowed disabled:opacity-60"
+                      title="下載目前篩選／排序後的 Record Sheet（.xlsx）"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                        <path d="M10 2.5a.75.75 0 01.75.75v8.19l2.22-2.22a.75.75 0 111.06 1.06l-3.5 3.5a.75.75 0 01-1.06 0l-3.5-3.5a.75.75 0 111.06-1.06l2.22 2.22V3.25A.75.75 0 0110 2.5z" />
+                        <path d="M3.5 13.25a.75.75 0 01.75.75v1.5c0 .69.56 1.25 1.25 1.25h9c.69 0 1.25-.56 1.25-1.25v-1.5a.75.75 0 011.5 0v1.5A2.75 2.75 0 0114.5 18.5h-9A2.75 2.75 0 012.75 15.5v-1.5a.75.75 0 01.75-.75z" />
+                      </svg>
+                      {downloadingExcel ? "Downloading..." : "Download Excel"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void syncZohoSubmitted({
+                          // Sync all students — not only the filtered table rows — otherwise
+                          // Sep/Aug Zoho paid stays $0 for anyone hidden by grade/search.
+                          idOnly: false,
+                        })
+                      }
+                      disabled={syncingZoho}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      title="按 Zoho Item & Description 認月份、Amount 寫已繳；分批讀取全部學生，全部完成後才一次寫入。"
+                    >
+                      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                        <path
+                          transform="translate(0,-1.2)"
+                          d="M4.08 11.86a5.5 5.5 0 019.27-3.59l-.94.94a.75.75 0 001.06 1.06l2.5-2.5a.75.75 0 000-1.06l-2.5-2.5a.75.75 0 00-1.06 1.06l.99.99a7 7 0 00-11.3 5.59.75.75 0 001.5 0z"
+                        />
+                        <path
+                          transform="translate(0,1.2)"
+                          d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
+                        />
+                      </svg>
+                      {syncingZoho ? "Syncing..." : "Sync Zoho Receipts"}
+                    </button>
+                  </div>
                 </div>
                 <div
                   className="mb-0 flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-slate-50 p-2"
