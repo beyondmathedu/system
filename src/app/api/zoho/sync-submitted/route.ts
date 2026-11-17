@@ -76,6 +76,14 @@ type SyncRequestBody = {
    */
   priorAccumulatedAmounts?: MonthAmountMap;
   priorAccumulatedLessons?: MonthAmountMap;
+  /**
+   * Inclusive lock period. Sync must not upsert months from…to.
+   * Prefer these over legacy lockThroughMonth (1…N).
+   */
+  lockFromMonth?: number;
+  lockToMonth?: number;
+  /** @deprecated Prefer lockFromMonth + lockToMonth. Means lock 1…N. */
+  lockThroughMonth?: number;
 };
 
 type StudentNameRow = {
@@ -473,6 +481,33 @@ export async function POST(request: Request) {
     if (!Number.isFinite(targetMonth) || targetMonth < 1 || targetMonth > 12) {
       return NextResponse.json({ ok: false, error: "invalid_month" }, { status: 400 });
     }
+    const clampLockMonth = (raw: unknown) => {
+      const n = Math.floor(Number(raw));
+      return Number.isFinite(n) && n >= 1 && n <= 12 ? n : 0;
+    };
+    let lockFromMonth = clampLockMonth(body?.lockFromMonth);
+    let lockToMonth = clampLockMonth(body?.lockToMonth);
+    if ((!lockFromMonth || !lockToMonth) && body?.lockThroughMonth != null) {
+      const through = clampLockMonth(body.lockThroughMonth);
+      if (through) {
+        lockFromMonth = 1;
+        lockToMonth = through;
+      }
+    }
+    if (lockFromMonth && lockToMonth && lockFromMonth > lockToMonth) {
+      const swap = lockFromMonth;
+      lockFromMonth = lockToMonth;
+      lockToMonth = swap;
+    }
+    const isMonthLocked = (month: number) => {
+      const m = Number(month);
+      return (
+        lockFromMonth > 0 &&
+        lockToMonth > 0 &&
+        m >= lockFromMonth &&
+        m <= lockToMonth
+      );
+    };
     const idOnly = Boolean(body?.idOnly);
     const requestedStudentIds = Array.isArray(body?.studentIds)
       ? Array.from(
@@ -830,9 +865,14 @@ export async function POST(request: Request) {
         updated_at: string;
       }> = [];
       const clearedStaleMonths: string[] = [];
+      let lockedMonthsSkipped = 0;
       const nowIso = new Date().toISOString();
       for (const student_id of finalizeStudentIds) {
         for (let month = 1; month <= 12; month += 1) {
+          if (isMonthLocked(month)) {
+            lockedMonthsSkipped += 1;
+            continue;
+          }
           const key = `${student_id}:${month}`;
           let submitted = finalAmounts.get(key) ?? 0;
           const lessonCount = finalLessons.get(key) ?? 0;
@@ -930,6 +970,9 @@ export async function POST(request: Request) {
           touchedStudents: touchedStudentIds.size,
           fullYearRebuild: widenWindow,
           deferredWriteFinalized: true,
+          lockFromMonth,
+          lockToMonth,
+          lockedMonthsSkipped,
           preservedExistingMonths: 0,
           preservedExistingSamples: [],
           clearedStaleMonths: clearedStaleMonths.length,
@@ -1034,6 +1077,7 @@ export async function POST(request: Request) {
     }> = [];
     const skippedPreserveExisting: string[] = [];
     const clearedStaleMonths: string[] = [];
+    let lockedMonthsSkipped = 0;
     const allKeys = new Set([
       ...Array.from(lessonsByStudentMonth.keys()),
       ...Array.from(amountByStudentMonth.keys()),
@@ -1043,6 +1087,10 @@ export async function POST(request: Request) {
     for (const key of allKeys) {
       const [student_id, mStr] = key.split(":");
       const month = Number(mStr);
+      if (isMonthLocked(month)) {
+        lockedMonthsSkipped += 1;
+        continue;
+      }
       const lessonCount = lessonsByStudentMonth.get(key) ?? 0;
       let submitted = amountByStudentMonth.get(key) ?? 0;
       const existingRow = existingMap.get(key);
@@ -1166,6 +1214,9 @@ export async function POST(request: Request) {
         zohoMissingNetKeys: zohoMissingNetKeys.size,
         touchedStudents: touchedStudentIds.size,
         fullYearRebuild: widenWindow,
+        lockFromMonth,
+        lockToMonth,
+        lockedMonthsSkipped,
         preservedExistingMonths: skippedPreserveExisting.length,
         preservedExistingSamples: skippedPreserveExisting.slice(0, 8),
         clearedStaleMonths: clearedStaleMonths.length,
