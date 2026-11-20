@@ -3,7 +3,6 @@
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
-import { isPhoneUserAgent } from "@/lib/isPhoneUserAgent";
 import { defaultDailyTimetablePath } from "@/lib/tutorRoomAccess";
 import { studentPostLoginPath } from "@/lib/studentPortalAccess";
 import { normalizeStudentId } from "@/lib/studentId";
@@ -113,8 +112,6 @@ function LoginForm() {
           studentPortalReactivateDate?: string | null;
         };
         const role = String(me.role ?? "").toLowerCase();
-        // Phone UA → lightweight /m pages; shared iPad & desktop keep full UI.
-        const isPhone = typeof navigator !== "undefined" && isPhoneUserAgent(navigator.userAgent);
         if (role === "student") {
           const sid = normalizeStudentId(String(me.studentId ?? ""));
           if (sid) {
@@ -124,11 +121,10 @@ function LoginForm() {
               setError(inactiveStudentLoginMessage(me.studentPortalReactivateDate ?? null));
               return;
             }
-            target = isPhone ? "/m/my-schedule" : studentPostLoginPath(sid);
+            target = studentPostLoginPath(sid);
           }
         } else if (role === "tutor") {
-          target =
-            isPhone && !me.isSharedIpadTutor ? "/m/attendance" : defaultDailyTimetablePath();
+          target = defaultDailyTimetablePath();
         }
       }
     } catch {
