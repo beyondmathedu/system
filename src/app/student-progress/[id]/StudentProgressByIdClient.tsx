@@ -1205,11 +1205,6 @@ export default function StudentProgressByIdClient({
                         col.kind === "normal" &&
                         PROGRESS_LEVEL_HEADERS.has(normalizeHeaderName(col.header || "")),
                     );
-                    const dateCols = columns.filter(
-                      (col) =>
-                        col.kind === "normal" &&
-                        normalizeHeaderName(col.header || "") === "date",
-                    );
                     const usePhoneCards =
                       !isCutOffSheet &&
                       !isPuSheet &&
@@ -1233,41 +1228,6 @@ export default function StudentProgressByIdClient({
                               >
                                 <p className="text-sm font-bold leading-snug text-slate-900">{title}</p>
                                 <div className="mt-3 space-y-3">
-                                  {dateCols.map((col) => {
-                                    if (col.kind !== "normal") return null;
-                                    const selectionKey = buildSelectionCellKey(
-                                      sheet.name,
-                                      rowIndex,
-                                      col.colIndex,
-                                    );
-                                    const dateValue = normalizeDateForInput(
-                                      progressSelections[selectionKey] ?? row[col.colIndex] ?? "",
-                                    );
-                                    return (
-                                      <div key={`${sheet.name}-phone-${rowIndex}-date-${col.colIndex}`}>
-                                        <p className="mb-1.5 text-xs font-semibold text-slate-600">
-                                          Date
-                                        </p>
-                                        <input
-                                          type="date"
-                                          value={dateValue}
-                                          disabled={readOnly}
-                                          onChange={(e) => {
-                                            const nextValue = e.target.value;
-                                            setProgressSelections((prev) => {
-                                              if (!nextValue) {
-                                                const next = { ...prev };
-                                                delete next[selectionKey];
-                                                return next;
-                                              }
-                                              return { ...prev, [selectionKey]: nextValue };
-                                            });
-                                          }}
-                                          className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-800"
-                                        />
-                                      </div>
-                                    );
-                                  })}
                                   {levelCols.map((col) => {
                                     if (col.kind !== "normal") return null;
                                     const headerName = normalizeHeaderName(col.header || "");
