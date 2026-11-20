@@ -108,6 +108,26 @@ const SELECTABLE_HEADERS = new Set([
   "paper 2",
 ]);
 
+/** Headers that use Remedial / Good / Mastered (phone card buttons). */
+const PROGRESS_LEVEL_HEADERS = new Set([
+  "basic concept",
+  "chapter diagnosis",
+  "exam type questions(mc)",
+  "exam type questions(lq)",
+  "road to dse(mc)",
+  "road to dse(lq)",
+]);
+
+function shortProgressHeaderLabel(headerName: string, fallback: string): string {
+  if (headerName === "basic concept") return "Basic";
+  if (headerName === "chapter diagnosis") return "Diagnosis";
+  if (headerName === "exam type questions(mc)") return "Exam MC";
+  if (headerName === "exam type questions(lq)") return "Exam LQ";
+  if (headerName === "road to dse(mc)") return "DSE MC";
+  if (headerName === "road to dse(lq)") return "DSE LQ";
+  return fallback || headerName;
+}
+
 type SheetColumn = ProgressSheetColumn;
 
 function normalizeHeaderName(input: string): string {
@@ -1013,24 +1033,29 @@ export default function StudentProgressByIdClient({
   }, [gradeLevel, initial, studentId, studentSummary.takesM1, studentSummary.takesM2]);
 
   return (
-    <div className="min-h-screen bg-slate-100 py-10">
+    <div className="min-h-screen bg-slate-100 py-4 md:py-10">
       <div className="mx-auto w-full max-w-[1500px] px-3 sm:px-5 lg:px-6">
-        <AppTopNav highlight={isTutorViewerRole ? "daily-timetable" : "students"} viewer={navViewer} />
+        <div className="hidden md:block">
+          <AppTopNav highlight={isTutorViewerRole ? "daily-timetable" : "students"} viewer={navViewer} />
+        </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div
-            className="sticky top-[52px] z-50 rounded-t-2xl px-6 py-5 text-white shadow-[0_4px_12px_rgba(15,23,42,0.12)] sm:top-[56px]"
+            className="sticky top-0 z-50 rounded-t-2xl px-4 py-4 text-white shadow-[0_4px_12px_rgba(15,23,42,0.12)] md:top-[56px] md:px-6 md:py-5"
             style={{ backgroundImage: PRIMARY_GRADIENT }}
           >
             <div className="flex items-center gap-3">
               <Link
                 href={backHref}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/20 text-xl font-bold leading-none hover:bg-white/30 md:h-9 md:w-9"
                 aria-label={backAriaLabel}
               >
                 ←
               </Link>
-              <h1 className="text-2xl font-bold tracking-tight">Student Lesson Record</h1>
+              <h1 className="text-xl font-bold tracking-tight md:text-2xl">
+                <span className="md:hidden">My Progress</span>
+                <span className="hidden md:inline">Student Lesson Record</span>
+              </h1>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-blue-100">
               <span>
@@ -1083,7 +1108,7 @@ export default function StudentProgressByIdClient({
             </div>
           )}
 
-          <div className="border-b border-slate-200 bg-slate-50 p-6">
+          <div className="hidden border-b border-slate-200 bg-slate-50 p-6 md:block">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,32%)_minmax(0,1fr)]">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
@@ -1135,8 +1160,11 @@ export default function StudentProgressByIdClient({
             </div>
           </div>
 
-          <div className="p-6">
-            <h2 className="text-lg font-bold text-slate-900">Student Progress Content</h2>
+          <div className="p-3 md:p-6">
+            <h2 className="text-base font-bold text-slate-900 md:text-lg">
+              <span className="md:hidden">Progress</span>
+              <span className="hidden md:inline">Student Progress Content</span>
+            </h2>
 
             {progressLoading ? (
               <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
@@ -1162,14 +1190,7 @@ export default function StudentProgressByIdClient({
                   disabled={readOnly}
                   className="min-w-0 border-0 p-0 m-0 disabled:opacity-100 disabled:[&_input]:cursor-default disabled:[&_input:not([readonly])]:bg-slate-100 disabled:[&_select]:cursor-default disabled:[&_select]:bg-slate-100 disabled:[&_textarea]:cursor-default disabled:[&_textarea]:bg-slate-100"
                 >
-                <div
-                  className={`max-h-[70vh] min-h-0 rounded-t-xl ${
-                    activeProgressSheet.name === CUT_OFF_SHEET
-                      ? "flex flex-col overflow-hidden"
-                      : "overflow-auto [scrollbar-gutter:stable_both-edges] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
-                  }`}
-                >
-                  {(() => {
+                {(() => {
                     const sheet = activeProgressSheet;
                     const isCutOffSheet = sheet.name === CUT_OFF_SHEET;
                     const isPuSheet = sheet.name === PU_SHEET;
@@ -1178,6 +1199,99 @@ export default function StudentProgressByIdClient({
                       activeSheet.headers,
                       textbookOptionsForProgressSheet(sheet.name, studentSummary),
                     );
+                    const textbookCol = columns.find((col) => col.kind === "textbookCombined");
+                    const levelCols = columns.filter(
+                      (col) =>
+                        col.kind === "normal" &&
+                        PROGRESS_LEVEL_HEADERS.has(normalizeHeaderName(col.header || "")),
+                    );
+                    const usePhoneCards =
+                      !isCutOffSheet &&
+                      !isPuSheet &&
+                      Boolean(textbookCol && textbookCol.kind === "textbookCombined") &&
+                      levelCols.length > 0;
+
+                    const phoneCards =
+                      usePhoneCards && textbookCol && textbookCol.kind === "textbookCombined" ? (
+                        <div className="space-y-3 px-3 py-3 md:hidden">
+                          {activeSheet.rows.map((row, rowIndex) => {
+                            if (isLegendDataRow(row)) return null;
+                            const chapterEn = String(row[textbookCol.colIndexEn] ?? "").trim();
+                            const chapterZh = String(row[textbookCol.colIndexZh] ?? "").trim();
+                            if (!chapterEn && !chapterZh) return null;
+                            const useChinese = studentSummary.mathLanguage === "Chinese";
+                            const title = (useChinese ? chapterZh : chapterEn) || chapterEn || chapterZh;
+                            return (
+                              <article
+                                key={`${sheet.name}-phone-${rowIndex}`}
+                                className="rounded-xl border border-slate-200 bg-slate-50 p-3 shadow-sm"
+                              >
+                                <p className="text-sm font-bold leading-snug text-slate-900">{title}</p>
+                                <div className="mt-3 space-y-3">
+                                  {levelCols.map((col) => {
+                                    if (col.kind !== "normal") return null;
+                                    const headerName = normalizeHeaderName(col.header || "");
+                                    const selectionKey = buildSelectionCellKey(
+                                      sheet.name,
+                                      rowIndex,
+                                      col.colIndex,
+                                    );
+                                    const selected = progressSelections[selectionKey] ?? "";
+                                    return (
+                                      <div key={`${sheet.name}-phone-${rowIndex}-${col.colIndex}`}>
+                                        <p className="mb-1.5 text-xs font-semibold text-slate-600">
+                                          {shortProgressHeaderLabel(headerName, col.header)}
+                                        </p>
+                                        <div className="grid grid-cols-3 gap-1.5">
+                                          {PROGRESS_LEVEL_OPTIONS.map((option) => {
+                                            const on = selected === option;
+                                            return (
+                                              <button
+                                                key={option}
+                                                type="button"
+                                                disabled={readOnly}
+                                                onClick={() => {
+                                                  setProgressSelections((prev) => {
+                                                    if (on) {
+                                                      const next = { ...prev };
+                                                      delete next[selectionKey];
+                                                      return next;
+                                                    }
+                                                    return { ...prev, [selectionKey]: option };
+                                                  });
+                                                }}
+                                                className={`min-h-11 rounded-lg px-1 text-xs font-bold ${
+                                                  on
+                                                    ? getProgressLevelSelectClass(option)
+                                                    : "border border-slate-300 bg-white text-slate-700"
+                                                }`}
+                                              >
+                                                {option}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      ) : null;
+
+                    return (
+                      <>
+                        {phoneCards}
+                        <div
+                          className={`${usePhoneCards ? "hidden md:block" : ""} max-h-[70vh] min-h-0 rounded-t-xl ${
+                            activeProgressSheet.name === CUT_OFF_SHEET
+                              ? "flex flex-col overflow-hidden"
+                              : "overflow-auto [scrollbar-gutter:stable_both-edges] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
+                          }`}
+                        >
+                  {(() => {
                     const cutOffDisplay = isCutOffSheet ? buildCutOffDisplayModel(activeSheet) : null;
                     if (isPuSheet) {
                       const puInputClass = canEditPu
@@ -1764,7 +1878,10 @@ export default function StudentProgressByIdClient({
                     </>
                     );
                   })()}
-                </div>
+                        </div>
+                      </>
+                    );
+                  })()}
 
                 {canEditCutOff && activeProgressSheet?.name === F6_BY_YEARS_SHEET ? (
                   <div className="flex shrink-0 flex-wrap gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
@@ -1806,7 +1923,7 @@ export default function StudentProgressByIdClient({
                         key={tabSheet.name}
                         type="button"
                         onClick={() => setActiveSheetName(tabSheet.name)}
-                        className={`shrink-0 border-r border-slate-300 px-4 py-2 text-sm font-semibold transition ${
+                        className={`shrink-0 border-r border-slate-300 px-3 py-3 text-sm font-semibold transition md:px-4 md:py-2 ${
                           isActive
                             ? "bg-[#1d76c2] text-white"
                             : "bg-[#eef2f6] text-slate-700 hover:bg-slate-200"
