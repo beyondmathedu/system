@@ -72,6 +72,8 @@ describe("lessonDayOverrides", () => {
     });
 
     // Simulate older smear: Band kept only room; Hope stuck with date-wide Li + note.
+    // Scrub may copy Li onto Band for recovery, but must NOT wipe Hope's tutor-only
+    // key — Classroom `/rooms` saves look the same (`{ tutor }` without room).
     const smeared = {
       [lessonOverrideSlotKey(rsId, "2026-10-10")]: { room: "Band" },
       [lessonOverrideSlotKey("hope-pm", "2026-10-10")]: {
@@ -85,8 +87,21 @@ describe("lessonDayOverrides", () => {
       tutor: "Li",
       lessonSummary: "CIA quadratic\nQuadratic II QT",
     });
-    expect(scrubbed[lessonOverrideSlotKey("hope-pm", "2026-10-10")]?.tutor).toBeUndefined();
-    expect(scrubbed[lessonOverrideSlotKey("hope-pm", "2026-10-10")]?.lessonSummary).toBeUndefined();
+    expect(scrubbed[lessonOverrideSlotKey("hope-pm", "2026-10-10")]).toEqual({
+      tutor: "Li",
+      lessonSummary: "CIA quadratic\nQuadratic II QT",
+    });
+  });
+
+  it("keeps Classroom tutor-only overrides when the same date has a room makeup", () => {
+    const rsId = lessonOverrideRescheduleId("entry-band");
+    const overrides = {
+      [lessonOverrideSlotKey("hope-pm", "2026-11-19")]: { tutor: "Frank" },
+      [lessonOverrideSlotKey(rsId, "2026-11-19")]: { room: "Band" },
+    };
+    const scrubbed = scrubSmearedTutorFromRoomBearingSlotOverrides(overrides);
+    expect(scrubbed[lessonOverrideSlotKey("hope-pm", "2026-11-19")]).toEqual({ tutor: "Frank" });
+    expect(scrubbed[lessonOverrideSlotKey(rsId, "2026-11-19")]?.tutor).toBe("Frank");
   });
 
   it("clears only the focused slot after materializing legacy date override", () => {
