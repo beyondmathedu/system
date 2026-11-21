@@ -121,15 +121,15 @@ export function readLessonOverrideField(
  *   can apply — those fields were smeared when splitting a date-wide override.
  * - Reschedule/Extra (`rs:` / `ex:`) room-bearing slots: keep tutor/summary. A Band
  *   room-only edit must still retain the date-wide Li + note on that makeup row.
- * - Any date that has a room-bearing slot: strip tutor from sibling slots with no
- *   room (Hope stuck on Li after Band was moved).
+ * - Do NOT strip tutor-only overrides (no `room`) on the same date. Classroom
+ *   `/rooms` saves `{ tutor }` without room; wiping those when any room override
+ *   exists made tutors flip to TBD after the next save/load.
  */
 export function scrubSmearedTutorFromRoomBearingSlotOverrides(
   overrides: Record<string, LessonDayOverride>,
 ): Record<string, LessonDayOverride> {
   let changed = false;
   const next: Record<string, LessonDayOverride> = { ...overrides };
-  const datesWithRoomSlot = new Set<string>();
   const recoveredByDate = new Map<string, { tutors: string[]; summaries: string[] }>();
 
   const rememberSmear = (dateIso: string, tutor: string, summary: string) => {
@@ -146,7 +146,6 @@ export function scrubSmearedTutorFromRoomBearingSlotOverrides(
     const parsed = parseLessonOverrideSlotKey(key);
     if (!parsed) continue;
     const hasRoom = Boolean(String(ov.room ?? "").trim());
-    if (hasRoom) datesWithRoomSlot.add(parsed.dateIso);
 
     const isMakeupOrExtra =
       parsed.scheduleRuleId.startsWith(LESSON_OVERRIDE_RESCHEDULE_ID_PREFIX) ||
@@ -165,21 +164,17 @@ export function scrubSmearedTutorFromRoomBearingSlotOverrides(
     changed = true;
   }
 
-  // Clear sibling slots with no room (Hope stuck on Li after Band was moved).
+  // Harvest tutor/summary from tutor-only siblings for makeup recovery — do not delete.
+  // Classroom room-page assignments live in those `{ tutor }` keys.
   for (const [key, raw] of Object.entries(next)) {
     const parsed = parseLessonOverrideSlotKey(key);
-    if (!parsed || !datesWithRoomSlot.has(parsed.dateIso)) continue;
+    if (!parsed) continue;
     const ov = asOverrideEntry(raw);
     if (!ov || String(ov.room ?? "").trim()) continue;
     const tutor = String(ov.tutor ?? "").trim();
     const summary = ov.lessonSummary !== undefined ? String(ov.lessonSummary) : "";
     if (!tutor && !summary) continue;
     rememberSmear(parsed.dateIso, tutor, summary);
-    const cleaned: LessonDayOverride = { ...ov };
-    delete cleaned.tutor;
-    delete cleaned.lessonSummary;
-    next[key] = cleaned;
-    changed = true;
   }
 
   // Band makeup often kept only `{ room }` after an older scrub wiped tutor/summary.

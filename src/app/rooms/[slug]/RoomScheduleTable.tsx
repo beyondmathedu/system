@@ -31,6 +31,7 @@ import { loadTutorVisibility, shouldBlankInactiveTutorForDate } from "@/lib/tuto
 import { isSharedIpadTutorDisplayName } from "@/lib/tutorConstants";
 import { attendanceAfterRegularToggle } from "@/lib/lessonScheduleVersions";
 import { formatGradeDisplay } from "@/lib/grade";
+import { weekdayCnFromIsoDate } from "@/lib/roomSlotTutorRules";
 import { useRoomLessonStateRealtime } from "@/lib/useRoomLessonStateRealtime";
 import { useCustomScrollbars } from "@/lib/useCustomScrollbars";
 import ClientOnlyAfterMount from "@/components/ClientOnlyAfterMount";
@@ -709,10 +710,33 @@ export default function RoomScheduleTable({
 
     try {
       await flushSaveLessonYearStateQueue();
-      await revalidateScheduleCachesNow();
+      // Also write the recurring room-slot default for this room/weekday/time.
+      // Per-date overrides alone can disappear after scrub / rule-id changes; without a
+      // slot default the UI falls through to empty schedule tutors → TBD the next day.
+      if (nextTutor !== "TBD") {
+        const weekday = weekdayCnFromIsoDate(row.dateIso);
+        const slotRes = await fetch("/api/room-slot-tutor-rules", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            room: row.room,
+            weekday,
+            time: row.time,
+            tutorName: nextTutor,
+            effectiveDate: row.dateIso,
+          }),
+        });
+        if (!slotRes.ok) {
+          const json = (await slotRes.json().catch(() => ({}))) as { error?: string };
+          throw new Error(json.error || "Failed to save room-slot tutor default");
+        }
+      }
+      await revalidateScheduleCachesNow("schedule");
       router.refresh();
-    } catch {
-      // saveError is set via subscribeLessonSaveStatus
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg) setSaveError(msg);
+      // year-state failures also surface via subscribeLessonSaveStatus
     }
   }
 
