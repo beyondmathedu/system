@@ -6,6 +6,8 @@ import {
   readLessonOverrideField,
 } from "@/lib/lessonDayOverrides";
 
+const BARE_ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 /** 平日規則：同一 effectiveDate 為一版課表；較新生效日取代舊版（非按星期几疊加）。 */
 
 /** Map Mon/Monday/星期一 → 一 for schedule row expansion. */
@@ -601,6 +603,19 @@ export function isRegularLessonAttended(
   return false;
 }
 
+function isSyntheticExtraOrRescheduleId(id: string | undefined): boolean {
+  const s = String(id ?? "");
+  return (
+    s.startsWith(LESSON_OVERRIDE_EXTRA_ID_PREFIX) ||
+    s.startsWith(LESSON_OVERRIDE_RESCHEDULE_ID_PREFIX)
+  );
+}
+
+function isExtraOrRescheduleAttendanceKey(key: string | undefined): boolean {
+  const s = String(key ?? "");
+  return s.startsWith("extra:") || s.startsWith("reschedule:");
+}
+
 /** 房間／導師月度與學生課表一致的出席判斷（恆常兼容 regular:id 與 dateIso）。 */
 export function isScheduleAttendanceMarked(
   attendance: Record<string, boolean>,
@@ -616,10 +631,151 @@ export function isScheduleAttendanceMarked(
   if (lessonType === "補堂" || lessonType === "加堂") {
     return Boolean(attendance[attendanceKey]);
   }
+  // Defense: Extra/Reschedule rows sometimes arrive with rowKind "normal" + ex:/rs: ids.
+  // Never resolve those via regular:{id}:{date} — Room saves under extra:/reschedule:.
+  if (
+    isSyntheticExtraOrRescheduleId(scheduleRuleId) ||
+    isExtraOrRescheduleAttendanceKey(attendanceKey)
+  ) {
+    return Boolean(attendance[attendanceKey]);
+  }
   if (scheduleRuleId) {
     return isRegularLessonAttended(attendance, { id: scheduleRuleId }, dateIso);
   }
   return Boolean(attendance[attendanceKey]) || Boolean(attendance[dateIso]);
+}
+
+export type SanitizeLessonAttendanceOptions = {
+  /** Known schedule rule ids (from student_lesson_records). */
+  knownRuleIds?: Iterable<string>;
+  /** Attendance keys that still map to a visible/built schedule row (plus legacy helpers). */
+  liveKeys?: Iterable<string>;
+  /** Regular lessons used to migrate bare `YYYY-MM-DD` ticks → `regular:id:date`. */
+  regularSlots?: Array<{ ruleId: string; dateIso: string }>;
+  /** Existing extra / reschedule entry ids (orphan keys for missing ids are dropped). */
+  extraEntryIds?: Iterable<string>;
+  rescheduleEntryIds?: Iterable<string>;
+};
+
+/**
+ * Clean attendance maps: drop cancelled:/orphan keys, migrate bare dates to per-slot keys,
+ * remove bogus `regular:ex:` / `regular:rs:` ticks.
+ */
+export function sanitizeLessonAttendance(
+  attendance: Record<string, boolean>,
+  opts: SanitizeLessonAttendanceOptions = {},
+): { attendance: Record<string, boolean>; changes: string[] } {
+  const next: Record<string, boolean> = { ...attendance };
+  const changes: string[] = [];
+  const filterKnownRules = opts.knownRuleIds !== undefined;
+  const filterLiveKeys = opts.liveKeys !== undefined;
+  const filterExtra = opts.extraEntryIds !== undefined;
+  const filterReschedule = opts.rescheduleEntryIds !== undefined;
+  const knownRuleIds = new Set(
+    [...(opts.knownRuleIds ?? [])].map((id) => String(id).trim()).filter(Boolean),
+  );
+  const liveKeys = new Set([...(opts.liveKeys ?? [])].map(String));
+  const extraIds = new Set(
+    [...(opts.extraEntryIds ?? [])].map((id) => String(id).trim()).filter(Boolean),
+  );
+  const rescheduleIds = new Set(
+    [...(opts.rescheduleEntryIds ?? [])].map((id) => String(id).trim()).filter(Boolean),
+  );
+  const regularSlots = opts.regularSlots ?? [];
+
+  // Migrate bare date ticks → per-slot regular keys (preserves “attended that day”).
+  for (const [key, marked] of Object.entries(next)) {
+    if (!marked || !BARE_ISO_DATE_RE.test(key)) continue;
+    const slots = regularSlots.filter((s) => s.dateIso === key && s.ruleId);
+    if (slots.length === 0) {
+      delete next[key];
+      changes.push(`drop_orphan_bare_date:${key}`);
+      continue;
+    }
+    for (const slot of slots) {
+      const dated = regularLessonAttendanceKey({ id: slot.ruleId }, key);
+      if (!next[dated]) {
+        next[dated] = true;
+        changes.push(`migrate_bare_date:${key}->${dated}`);
+      }
+    }
+    delete next[key];
+    changes.push(`drop_bare_date_after_migrate:${key}`);
+  }
+
+  for (const [key, marked] of Object.entries(next)) {
+    if (!marked) {
+      // Drop explicit false noise for cancelled / synthetic-regular junk.
+      if (
+        key.startsWith("cancelled:") ||
+        key.startsWith("regular:ex:") ||
+        key.startsWith("regular:rs:")
+      ) {
+        delete next[key];
+        changes.push(`drop_false_junk:${key}`);
+      }
+      continue;
+    }
+
+    if (key.startsWith("cancelled:")) {
+      delete next[key];
+      changes.push(`drop_cancelled_key:${key}`);
+      continue;
+    }
+    if (key.startsWith("regular:ex:") || key.startsWith("regular:rs:")) {
+      delete next[key];
+      changes.push(`drop_bogus_regular_synthetic:${key}`);
+      continue;
+    }
+
+    if (key.startsWith("extra:")) {
+      const id = key.slice("extra:".length);
+      if (filterExtra && !extraIds.has(id)) {
+        delete next[key];
+        changes.push(`drop_orphan_extra:${key}`);
+      }
+      continue;
+    }
+    if (key.startsWith("reschedule:")) {
+      const id = key.slice("reschedule:".length);
+      if (filterReschedule && !rescheduleIds.has(id)) {
+        delete next[key];
+        changes.push(`drop_orphan_reschedule:${key}`);
+      }
+      continue;
+    }
+
+    const dated = REGULAR_ATTENDANCE_KEY_RE.exec(key);
+    if (dated) {
+      const ruleId = dated[1];
+      const dateIso = dated[2];
+      if (filterKnownRules && !knownRuleIds.has(ruleId)) {
+        delete next[key];
+        changes.push(`drop_orphan_regular_unknown_rule:${key}`);
+        continue;
+      }
+      const inRegularSlots = regularSlots.some(
+        (s) => s.ruleId === ruleId && s.dateIso === dateIso,
+      );
+      // Exact dated key or known slot only — do not keep all dates just because legacy
+      // `regular:{id}` exists in liveKeys (that would preserve every stale dated tick).
+      if (filterLiveKeys && !liveKeys.has(key) && !inRegularSlots) {
+        delete next[key];
+        changes.push(`drop_stale_regular_dated:${key}`);
+      }
+      continue;
+    }
+
+    if (/^regular:[^:]+$/.test(key)) {
+      const ruleId = key.slice("regular:".length);
+      if (filterKnownRules && !knownRuleIds.has(ruleId)) {
+        delete next[key];
+        changes.push(`drop_orphan_legacy_regular:${key}`);
+      }
+    }
+  }
+
+  return { attendance: next, changes };
 }
 
 /**
@@ -639,6 +795,12 @@ export function isTutorMonthAttendanceMarked(
   const { attendanceKey, dateIso, lessonType, scheduleRuleId } = opts;
   if (lessonType === "取消" || lessonType === PENDING_MAKEUP_TYPE_LABEL) return false;
   if (lessonType === "補堂" || lessonType === "加堂") {
+    return Boolean(attendance[attendanceKey]);
+  }
+  if (
+    isSyntheticExtraOrRescheduleId(scheduleRuleId) ||
+    isExtraOrRescheduleAttendanceKey(attendanceKey)
+  ) {
     return Boolean(attendance[attendanceKey]);
   }
   const key = String(attendanceKey ?? "").trim();

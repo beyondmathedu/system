@@ -96,7 +96,7 @@ import {
   deleteRescheduleEntryAndAttendance,
   deleteExtraEntryAndAttendance,
   getActiveScheduleVersionDate,
-  isRegularLessonAttended,
+  isScheduleAttendanceMarked,
 } from "@/lib/lessonScheduleVersions";
 import {
   isPendingMakeupEditable,
@@ -158,6 +158,33 @@ function keepScheduleRowVisibleDuringInactive(row: ScheduleRow): boolean {
     row.rowKind === "reschedule" ||
     row.rowKind === "cancelled_original"
   );
+}
+
+/** Student UI attendance: same rules as Room (hardened against Extra `ex:` mis-read). */
+function isStudentScheduleRowAttended(
+  attendance: Record<string, boolean>,
+  row: Pick<
+    ScheduleRow,
+    "rowKind" | "scheduleRuleId" | "attendanceKey" | "date" | "lessonType"
+  >,
+): boolean {
+  if (row.rowKind === "cancelled_original") return false;
+  const lessonType =
+    row.lessonType === TYPE_EXTRA
+      ? "加堂"
+      : row.lessonType === TYPE_RESCHEDULE
+        ? "補堂"
+        : row.lessonType === TYPE_CANCELLED
+          ? "取消"
+          : row.lessonType === TYPE_PENDING
+            ? TYPE_PENDING
+            : "恆常";
+  return isScheduleAttendanceMarked(attendance, {
+    attendanceKey: row.attendanceKey,
+    dateIso: row.date,
+    lessonType,
+    scheduleRuleId: row.scheduleRuleId,
+  });
 }
 const MONTH_LABEL: Record<number, string> = {
   1: "Jan",
@@ -1745,14 +1772,8 @@ export function StudentLessonsYearPage({
           break;
         }
         case "attendance": {
-          const attendedA =
-            a.rowKind === "normal" && a.scheduleRuleId
-              ? isRegularLessonAttended(attendance, { id: a.scheduleRuleId }, a.date)
-              : Boolean(attendance[a.attendanceKey]);
-          const attendedB =
-            b.rowKind === "normal" && b.scheduleRuleId
-              ? isRegularLessonAttended(attendance, { id: b.scheduleRuleId }, b.date)
-              : Boolean(attendance[b.attendanceKey]);
+          const attendedA = isStudentScheduleRowAttended(attendance, a);
+          const attendedB = isStudentScheduleRowAttended(attendance, b);
           result = (attendedA ? 1 : 0) - (attendedB ? 1 : 0);
           break;
         }
@@ -4771,13 +4792,7 @@ export function StudentLessonsYearPage({
                                 className="inline-block min-w-4 text-center font-semibold text-slate-700"
                                 aria-label={`${r.date} attendance`}
                               >
-                                {r.rowKind === "normal" && r.scheduleRuleId
-                                  ? isRegularLessonAttended(attendance, { id: r.scheduleRuleId }, r.date)
-                                    ? "✓"
-                                    : ""
-                                  : attendance[r.attendanceKey]
-                                    ? "✓"
-                                    : ""}
+                                {isStudentScheduleRowAttended(attendance, r) ? "✓" : ""}
                               </span>
                             )}
                           </td>
