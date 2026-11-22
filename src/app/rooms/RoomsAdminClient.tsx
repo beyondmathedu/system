@@ -41,6 +41,8 @@ export default function RoomsAdminClient({
   const [rows, setRows] = useState<Classroom[]>(() => initialRows ?? []);
   const [loadError, setLoadError] = useState("");
   const [isLoading, setIsLoading] = useState(() => !initialRows);
+  /** SSR already provided classrooms — skip the immediate soft-refresh duplicate query. */
+  const skipInitialClassroomRefreshRef = useRef(initialRows != null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editSnapshot, setEditSnapshot] = useState<{ name: string } | null>(null);
@@ -90,7 +92,11 @@ export default function RoomsAdminClient({
   }, []);
 
   useEffect(() => {
-    // Soft-refresh after SSR hydrate (or first load when no initialRows).
+    if (skipInitialClassroomRefreshRef.current) {
+      skipInitialClassroomRefreshRef.current = false;
+      return;
+    }
+    // First load when SSR did not provide rows.
     const t = window.setTimeout(() => {
       void loadClassrooms();
     }, 0);

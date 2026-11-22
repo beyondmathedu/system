@@ -7,7 +7,8 @@
  */
 import type { ScheduleCacheScope } from "@/lib/scheduleCacheTags";
 
-const REVALIDATE_DEBOUNCE_MS = 400;
+/** Coalesce rapid ticks/saves into one revalidate round-trip. */
+const REVALIDATE_DEBOUNCE_MS = 600;
 let revalidateTimer: number | null = null;
 let pendingScope: ScheduleCacheScope = "schedule";
 let inFlightRevalidation: Promise<void> | null = null;

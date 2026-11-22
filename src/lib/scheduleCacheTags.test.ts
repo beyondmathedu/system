@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
   SCHEDULE_CACHE_TAG_AGGREGATES,
   SCHEDULE_CACHE_TAG_CLASSROOMS,
   SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
@@ -41,5 +42,15 @@ describe("resolveScheduleCacheTags", () => {
       SCHEDULE_CACHE_TAG_FEE_RECORD,
       SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
     ]);
+  });
+
+  it("keeps soft TTLs positive and ordered (hot < warm)", () => {
+    expect(SCHEDULE_CACHE_REVALIDATE_SEC.homeHot).toBeGreaterThan(0);
+    expect(SCHEDULE_CACHE_REVALIDATE_SEC.homeHot).toBeLessThan(
+      SCHEDULE_CACHE_REVALIDATE_SEC.home,
+    );
+    expect(SCHEDULE_CACHE_REVALIDATE_SEC.feeRecord).toBeGreaterThanOrEqual(300);
+    expect(SCHEDULE_CACHE_REVALIDATE_SEC.aggregates).toBeGreaterThanOrEqual(600);
+    expect(SCHEDULE_CACHE_REVALIDATE_SEC.progress).toBeGreaterThanOrEqual(3600);
   });
 });

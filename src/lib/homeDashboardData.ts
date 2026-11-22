@@ -4,6 +4,7 @@ import { homeBirthdayWhatsappHref } from "@/lib/homeBirthdayWhatsapp";
 import { listUntickedRegularMakeupExtraInRange } from "@/lib/lesson2026Summary";
 import { formatPendingMakeupFromDateLabel } from "@/lib/pendingMakeup";
 import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
   SCHEDULE_CACHE_TAG_AGGREGATES,
   SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
   SCHEDULE_CACHE_TAG_HOME,
@@ -305,7 +306,7 @@ async function loadHomePeopleContextCached(ymdToday: string): Promise<HomePeople
   return unstable_cache(
     () => fetchHomePeopleContextUncached(ymdToday),
     ["home-people-v1", ymdToday],
-    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_HOME] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.home, tags: [SCHEDULE_CACHE_TAG_HOME] },
   )();
 }
 
@@ -316,7 +317,7 @@ async function loadHomeBirthdaySliceCached(ymdToday: string): Promise<HomeBirthd
       return buildBirthdaySlice(people);
     },
     ["home-birthday-v1", ymdToday],
-    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_HOME] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.home, tags: [SCHEDULE_CACHE_TAG_HOME] },
   )();
 }
 
@@ -332,7 +333,7 @@ async function loadHomeUntickedSliceCached(ymdToday: string): Promise<HomeRemind
     },
     ["home-unticked-v1", ymdToday],
     {
-      revalidate: 60,
+      revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.homeHot,
       tags: [SCHEDULE_CACHE_TAG_HOME, SCHEDULE_CACHE_TAG_DAY_TIMETABLE, SCHEDULE_CACHE_TAG_AGGREGATES],
     },
   )();

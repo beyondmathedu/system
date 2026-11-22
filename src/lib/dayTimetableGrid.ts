@@ -1,6 +1,9 @@
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { unstable_cache } from "next/cache";
-import { SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
+import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
+  SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
+} from "@/lib/scheduleCacheTags";
 import {
   PENDING_MAKEUP_TYPE_LABEL,
 } from "@/lib/pendingMakeup";
@@ -562,7 +565,7 @@ const loadDayTimetableStaticBundle = unstable_cache(
     };
   },
   ["day-timetable-static-v11"],
-  { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
+  { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.dayTimetable, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
 );
 
 async function fetchDayTimetablePayloadUncached(
@@ -933,6 +936,9 @@ export async function fetchDayTimetablePayload(
       includeInactiveMakeupSlots ? "1" : "0",
     ],
     // Timetable data rarely needs sub-minute freshness; longer cache = fewer DB round-trips.
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
+    {
+      revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.dayTimetable,
+      tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE],
+    },
   )();
 }

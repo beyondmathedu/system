@@ -12,7 +12,10 @@ import {
   type ProgressSheet,
   type StudentProgressWorkbookPayload,
 } from "@/lib/studentProgressWorkbook";
-import { SCHEDULE_CACHE_TAG_STUDENT_PROGRESS } from "@/lib/scheduleCacheTags";
+import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
+  SCHEDULE_CACHE_TAG_STUDENT_PROGRESS,
+} from "@/lib/scheduleCacheTags";
 
 const WORKBOOK_PATH = path.join(process.cwd(), "public", "student-progress-beyond-math.xlsx");
 
@@ -82,7 +85,7 @@ const loadParsedSheetsCached = unstable_cache(
     return out;
   },
   ["student-progress-workbook-parsed-v13"],
-  { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
+  { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.progress, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
 const loadProgressPayloadForLevelCached = unstable_cache(
@@ -92,7 +95,7 @@ const loadProgressPayloadForLevelCached = unstable_cache(
     return buildProgressPayloadFromSheets(sheetsByName, level);
   },
   ["student-progress-sheets-v13"],
-  { revalidate: 3600, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
+  { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.progress, tags: [SCHEDULE_CACHE_TAG_STUDENT_PROGRESS] },
 );
 
 export async function fetchStudentProgressForLevel(

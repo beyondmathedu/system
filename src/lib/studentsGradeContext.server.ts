@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
   SCHEDULE_CACHE_TAG_AGGREGATES,
   SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
 } from "@/lib/scheduleCacheTags";
@@ -116,7 +117,7 @@ const loadStudentsGradeContextCached = unstable_cache(
   },
   ["students-grade-context-v1"],
   {
-    revalidate: 300,
+    revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.gradeContext,
     tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE, SCHEDULE_CACHE_TAG_AGGREGATES],
   },
 );

@@ -6,7 +6,10 @@ import {
   type RoomDisplayRegistry,
 } from "@/lib/roomDisplayRegistry";
 import { FALLBACK_ROOM_NAV_LINKS, FALLBACK_ROOM_PAGE_META, FALLBACK_SLUG_TO_SCHEDULE_LABEL, type RoomNavItem } from "@/lib/roomConstants";
-import { SCHEDULE_CACHE_TAG_CLASSROOMS } from "@/lib/scheduleCacheTags";
+import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
+  SCHEDULE_CACHE_TAG_CLASSROOMS,
+} from "@/lib/scheduleCacheTags";
 
 export type ClassroomRow = {
   id: string;
@@ -39,7 +42,7 @@ export async function fetchClassroomScheduleLabel(slug: string): Promise<string 
   return unstable_cache(
     async () => fetchClassroomScheduleLabelUncached(slugKey),
     ["classroom-schedule-label-v3", slugKey],
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.classrooms, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 }
 
@@ -75,7 +78,7 @@ export async function fetchClassroomMeta(slug: string): Promise<{
   return unstable_cache(
     async () => fetchClassroomMetaUncached(slugKey),
     ["classroom-meta-v2", slugKey],
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.classrooms, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 }
 
@@ -97,7 +100,7 @@ export async function fetchClassroomRegistry(): Promise<RoomDisplayRegistry> {
   return unstable_cache(
     async () => fetchClassroomRegistryUncached(),
     ["classroom-registry-v4"],
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.classrooms, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 }
 
@@ -120,7 +123,7 @@ export const fetchClassroomNavLinks = cache(async (): Promise<RoomNavItem[]> => 
   return unstable_cache(
     async () => fetchClassroomNavLinksUncached(),
     ["classroom-nav-links-v1"],
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.classrooms, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 });
 
@@ -159,6 +162,6 @@ export async function fetchClassroomsAdminList(): Promise<ClassroomRow[]> {
   return unstable_cache(
     async () => fetchClassroomsAdminListUncached(),
     ["classrooms-admin-list-v1"],
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.classrooms, tags: [SCHEDULE_CACHE_TAG_CLASSROOMS] },
   )();
 }
