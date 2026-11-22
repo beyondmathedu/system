@@ -88,7 +88,6 @@ import {
   saveZohoFeeSyncLockPeriod,
   type ZohoFeeSyncLockPeriod,
 } from "@/lib/zohoFeeSyncLock";
-import { downloadFeeRecordSheetExcel } from "@/lib/feeRecordSheetExcelExport";
 
 type StudentRow = {
   id: string;
@@ -834,7 +833,8 @@ export default function StudentsLessonTimeFeeRecordPage({
     () => initialHydrated.openingBalanceTableMissing,
   );
   const pendingOpeningBalanceRef = useRef<Map<string, number>>(new Map());
-  const skipBootstrapFetchRef = useRef(true);
+  /** Already hydrated for this year+month (SSR or prior fetch) — skip duplicate bootstrap. */
+  const hydratedMonthKeyRef = useRef(`${initialYear}:${initialMonth}`);
   const bootstrappedYearRef = useRef(initialYear);
   const yearCoreRef = useRef<{
     students: FeeRecordBootstrapApiBody["students"];
@@ -915,8 +915,8 @@ export default function StudentsLessonTimeFeeRecordPage({
   }, []);
 
   useEffect(() => {
-    if (skipBootstrapFetchRef.current) {
-      skipBootstrapFetchRef.current = false;
+    const monthKey = `${sheetYear}:${sheetMonth}`;
+    if (hydratedMonthKeyRef.current === monthKey) {
       return;
     }
     let mounted = true;
@@ -951,6 +951,7 @@ export default function StudentsLessonTimeFeeRecordPage({
               sheetMonth,
             ),
           );
+          hydratedMonthKeyRef.current = monthKey;
           return;
         }
 
@@ -964,6 +965,7 @@ export default function StudentsLessonTimeFeeRecordPage({
         };
         bootstrappedYearRef.current = sheetYear;
         applyHydratedBootstrap(hydrateFeeRecordBootstrap(body, sheetYear, sheetMonth));
+        hydratedMonthKeyRef.current = monthKey;
       } catch {
         if (!mounted) return;
         setStudents([]);
@@ -1969,6 +1971,7 @@ export default function StudentsLessonTimeFeeRecordPage({
     if (downloadingExcel || bootstrapLoading || filteredSortedStudents.length === 0) return;
     setDownloadingExcel(true);
     try {
+      const { downloadFeeRecordSheetExcel } = await import("@/lib/feeRecordSheetExcelExport");
       const includeOpeningBalance = sheetYear === OPENING_BALANCE_AS_OF_YEAR;
       await downloadFeeRecordSheetExcel({
         sheetYear,

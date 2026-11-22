@@ -13,9 +13,8 @@ import { getCurrentStudentGrade, loadGradeHistoryByStudentIds } from "@/lib/stud
 import { loadHeldBackYearsByStudentIds } from "@/lib/studentHeldBackYears";
 import { loadStudentProgressSelectionsDurable } from "@/lib/studentProgressSelections.server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
-import StudentProgressByIdClient, {
-  type StudentProgressInitialPayload,
-} from "./StudentProgressByIdClient";
+import StudentProgressByIdEntry from "./StudentProgressByIdEntry";
+import type { StudentProgressInitialPayload } from "./StudentProgressByIdClient";
 
 type PageProps = { params: Promise<{ id: string }> };
 
@@ -135,6 +134,6 @@ export default async function StudentProgressByIdPage({ params }: PageProps) {
   }
 
   return (
-    <StudentProgressByIdClient navViewer={navViewer} readOnly={readOnly} initial={initial} />
+    <StudentProgressByIdEntry navViewer={navViewer} readOnly={readOnly} initial={initial} />
   );
 }

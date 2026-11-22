@@ -25,7 +25,10 @@ import {
   isMissingFeeRecordColumnError,
   normalizeFeeRecordRow,
 } from "@/lib/studentMonthlyFeeRecordsCompat";
-import { SCHEDULE_CACHE_TAG_FEE_RECORD } from "@/lib/scheduleCacheTags";
+import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
+  SCHEDULE_CACHE_TAG_FEE_RECORD,
+} from "@/lib/scheduleCacheTags";
 import { loadStudentsGradeContext } from "@/lib/studentsGradeContext.server";
 import {
   loadStudentFeeTierSettingsAdmin,
@@ -644,34 +647,16 @@ export async function loadFeeRecordBootstrap(
   const { sheetYear, sheetMonth } = params;
   const currentMonth = sheetMonth;
 
-  const { data: studentRows, error: studentErr } = await supabase
-    .from("students")
-    .select("id, name_zh, name_en, nickname_en, grade, student_phone, created_at")
-    .order("id");
-  if (studentErr) throw new Error(studentErr.message);
-
-  const allIds = (studentRows ?? []).map((r) => String(r.id ?? "")).filter(Boolean);
-  let visibilityRows: Array<{
-    student_id?: string;
-    start_date?: string;
-    end_date?: string | null;
-    note?: string | null;
-  }> = [];
-  if (allIds.length) {
-    const vis = await fetchRowsInChunks({
-      ids: allIds,
-      concurrency: 8,
-      query: (chunk) =>
-        supabase
-          .from("student_visibility_periods")
-          .select("student_id, start_date, end_date, note")
-          .in("student_id", chunk),
-    });
-    if (vis.error) throw new Error(vis.error);
-    visibilityRows = vis.data;
-  }
-
-  const periodsById = buildStudentInactivePeriodsById(visibilityRows ?? []);
+  // Wave 1: students + fee tiers (independent; no logic change).
+  const [studentRes, feeTierBundle] = await Promise.all([
+    supabase
+      .from("students")
+      .select("id, name_zh, name_en, nickname_en, grade, student_phone, created_at")
+      .order("id"),
+    loadStudentFeeTierSettingsAdmin(supabase),
+  ]);
+  if (studentRes.error) throw new Error(studentRes.error.message);
+  const studentRows = studentRes.data;
 
   const students: FeeRecordBootstrapStudent[] = (studentRows ?? [])
     .map((r) => ({
@@ -694,35 +679,65 @@ export async function loadFeeRecordBootstrap(
       ? loadStudentFeeOpeningBalancesServer(supabase, ids)
       : Promise.resolve({ balances: {} as Record<string, number> });
 
-  const [metricsResult, feeRows, recordsMap, yearStatesMap, openingResult, heldBackYearsResult, gradeHistoryResult, feeTierBundle] =
-    await Promise.all([
-      ids.length
-        ? loadLessonMetricsBatchServer(supabase, ids, sheetYear)
-        : Promise.resolve({ data: [], error: null }),
-      ids.length
-        ? loadStudentMonthlyFeeRecordsInMonthRangeServer(supabase, {
-            studentIds: ids,
-            year: sheetYear,
-            monthFrom: feeStartMonth,
-            monthTo: currentMonth,
-          })
-        : Promise.resolve([] as FeeRecordBootstrapRow[]),
-      ids.length ? loadLessonScheduleRecordsBatchServer(supabase, ids) : Promise.resolve({}),
-      ids.length ? loadLessonYearStatesBatchServer(supabase, ids, sheetYear) : Promise.resolve({}),
-      openingPromise,
-      ids.length
-        ? loadStudentHeldBackYearsServer(supabase, ids)
-        : Promise.resolve({ byStudentId: {} as Record<string, number[]> }),
-      ids.length
-        ? loadStudentGradeHistoryServer(supabase, ids)
-        : Promise.resolve({
-            byStudentId: {} as Record<string, Record<string, FeeRecordGradeHistoryRow>>,
-          }),
-      loadStudentFeeTierSettingsAdmin(supabase),
-    ]);
+  // Wave 2: visibility is only needed for the return map — run it with the other batches
+  // instead of awaiting it first (removes a sequential waterfall, same payload).
+  const [
+    vis,
+    metricsResult,
+    feeRows,
+    recordsMap,
+    yearStatesMap,
+    openingResult,
+    heldBackYearsResult,
+    gradeHistoryResult,
+  ] = await Promise.all([
+    ids.length
+      ? fetchRowsInChunks({
+          ids,
+          concurrency: 8,
+          query: (chunk) =>
+            supabase
+              .from("student_visibility_periods")
+              .select("student_id, start_date, end_date, note")
+              .in("student_id", chunk),
+        })
+      : Promise.resolve({
+          data: [] as Array<{
+            student_id?: string;
+            start_date?: string;
+            end_date?: string | null;
+            note?: string | null;
+          }>,
+          error: null as string | null,
+        }),
+    ids.length
+      ? loadLessonMetricsBatchServer(supabase, ids, sheetYear)
+      : Promise.resolve({ data: [], error: null }),
+    ids.length
+      ? loadStudentMonthlyFeeRecordsInMonthRangeServer(supabase, {
+          studentIds: ids,
+          year: sheetYear,
+          monthFrom: feeStartMonth,
+          monthTo: currentMonth,
+        })
+      : Promise.resolve([] as FeeRecordBootstrapRow[]),
+    ids.length ? loadLessonScheduleRecordsBatchServer(supabase, ids) : Promise.resolve({}),
+    ids.length ? loadLessonYearStatesBatchServer(supabase, ids, sheetYear) : Promise.resolve({}),
+    openingPromise,
+    ids.length
+      ? loadStudentHeldBackYearsServer(supabase, ids)
+      : Promise.resolve({ byStudentId: {} as Record<string, number[]> }),
+    ids.length
+      ? loadStudentGradeHistoryServer(supabase, ids)
+      : Promise.resolve({
+          byStudentId: {} as Record<string, Record<string, FeeRecordGradeHistoryRow>>,
+        }),
+  ]);
 
+  if (vis.error) throw new Error(vis.error);
   if (metricsResult.error) throw new Error(metricsResult.error);
 
+  const periodsById = buildStudentInactivePeriodsById(vis.data ?? []);
   const visibilityByStudentId: Record<string, FeeRecordStudentVisibility> = {};
   for (const id of ids) {
     visibilityByStudentId[id] = {
@@ -765,34 +780,17 @@ type FeeRecordMonthPart = Pick<
 
 async function loadFeeYearCoreUncached(sheetYear: number): Promise<FeeRecordYearCore> {
   const supabase = getSupabaseAdmin();
-  const { data: studentRows, error: studentErr } = await supabase
-    .from("students")
-    .select("id, name_zh, name_en, nickname_en, grade, student_phone, created_at")
-    .order("id");
-  if (studentErr) throw new Error(studentErr.message);
+  // Same parallel shape as loadFeeRecordBootstrap (no payload change).
+  const [studentRes, feeTierBundle] = await Promise.all([
+    supabase
+      .from("students")
+      .select("id, name_zh, name_en, nickname_en, grade, student_phone, created_at")
+      .order("id"),
+    loadStudentFeeTierSettingsAdmin(supabase),
+  ]);
+  if (studentRes.error) throw new Error(studentRes.error.message);
+  const studentRows = studentRes.data;
 
-  const allIds = (studentRows ?? []).map((r) => String(r.id ?? "")).filter(Boolean);
-  let visibilityRows: Array<{
-    student_id?: string;
-    start_date?: string;
-    end_date?: string | null;
-    note?: string | null;
-  }> = [];
-  if (allIds.length) {
-    const vis = await fetchRowsInChunks({
-      ids: allIds,
-      concurrency: 8,
-      query: (chunk) =>
-        supabase
-          .from("student_visibility_periods")
-          .select("student_id, start_date, end_date, note")
-          .in("student_id", chunk),
-    });
-    if (vis.error) throw new Error(vis.error);
-    visibilityRows = vis.data;
-  }
-
-  const periodsById = buildStudentInactivePeriodsById(visibilityRows ?? []);
   const students: FeeRecordBootstrapStudent[] = (studentRows ?? [])
     .map((r) => ({
       id: String(r.id ?? ""),
@@ -806,16 +804,36 @@ async function loadFeeYearCoreUncached(sheetYear: number): Promise<FeeRecordYear
     .filter((s) => Boolean(s.id));
 
   const ids = students.map((s) => s.id);
-  const [metricsResult, recordsMap, yearStatesMap, feeTierBundle] = await Promise.all([
+  const [vis, metricsResult, recordsMap, yearStatesMap] = await Promise.all([
+    ids.length
+      ? fetchRowsInChunks({
+          ids,
+          concurrency: 8,
+          query: (chunk) =>
+            supabase
+              .from("student_visibility_periods")
+              .select("student_id, start_date, end_date, note")
+              .in("student_id", chunk),
+        })
+      : Promise.resolve({
+          data: [] as Array<{
+            student_id?: string;
+            start_date?: string;
+            end_date?: string | null;
+            note?: string | null;
+          }>,
+          error: null as string | null,
+        }),
     ids.length
       ? loadLessonMetricsBatchServer(supabase, ids, sheetYear)
       : Promise.resolve({ data: [], error: null }),
     ids.length ? loadLessonScheduleRecordsBatchServer(supabase, ids) : Promise.resolve({}),
     ids.length ? loadLessonYearStatesBatchServer(supabase, ids, sheetYear) : Promise.resolve({}),
-    loadStudentFeeTierSettingsAdmin(supabase),
   ]);
+  if (vis.error) throw new Error(vis.error);
   if (metricsResult.error) throw new Error(metricsResult.error);
 
+  const periodsById = buildStudentInactivePeriodsById(vis.data ?? []);
   const visibilityByStudentId: Record<string, FeeRecordStudentVisibility> = {};
   for (const id of ids) {
     visibilityByStudentId[id] = {
@@ -857,7 +875,7 @@ function loadFeeYearCoreCached(sheetYear: number): Promise<FeeRecordYearCore> {
   return unstable_cache(
     () => loadFeeYearCoreUncached(y),
     ["fee-year-core-v3", String(y)],
-    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.feeRecord, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
   )();
 }
 
@@ -874,7 +892,7 @@ function loadFeeMonthPartCached(sheetYear: number, sheetMonth: number): Promise<
       );
     },
     ["fee-month-rows-v3", String(y), String(m)],
-    { revalidate: 120, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.feeRecord, tags: [SCHEDULE_CACHE_TAG_FEE_RECORD] },
   )();
 }
 

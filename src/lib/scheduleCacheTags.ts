@@ -8,6 +8,29 @@ export const SCHEDULE_CACHE_TAG_CLASSROOMS = "bm-classrooms-v1";
 export const SCHEDULE_CACHE_TAG_FEE_RECORD = "bm-fee-record-v12";
 
 /**
+ * Soft TTL (seconds) for Data Cache. Writes still purge matching tags immediately,
+ * so longer TTLs only help repeat reads between saves — results stay the same.
+ */
+export const SCHEDULE_CACHE_REVALIDATE_SEC = {
+  /** Rooms / Tutor Monthly aggregates */
+  aggregates: 900,
+  /** Daily + Regular timetable bundles */
+  dayTimetable: 900,
+  classrooms: 900,
+  /** Fee Record Sheet bootstrap (Zoho / opening-balance writes still tag-bust) */
+  feeRecord: 600,
+  home: 600,
+  /** Unticked reminder on Home (still tag-busted on schedule saves) */
+  homeHot: 180,
+  /** Shared year lesson records + states */
+  yearSchedule: 600,
+  /** Grade / held-back maps shared by timetable paths */
+  gradeContext: 900,
+  /** Parsed progress workbook */
+  progress: 3600,
+} as const;
+
+/**
  * Scoped invalidation so a lesson save does not also drop fee / progress / classroom caches.
  * Reading paths stay identical; only which tags are purged after a write changes.
  */

@@ -693,7 +693,11 @@ export function StudentLessonsYearPage({
   const [initialHydrated] = useState(() =>
     initialBootstrap ? hydrateLessonYearFromBootstrap(initialBootstrap, studentId, targetYear) : null,
   );
-  const seededBootstrapRef = useRef(Boolean(initialHydrated));
+  /** SSR (or prior client load) already applied for this student+year — skip duplicate bootstrap fetch. */
+  const bootstrappedKeyRef = useRef<string | null>(
+    initialBootstrap ? `${studentId}:${targetYear}` : null,
+  );
+  const localStorageSeededRef = useRef(false);
   const { formatRoom, pickerLabel, pickerToStorage, registry, roomPickerOptions } = useRoomDisplayLabels();
   const ROOM_OPTIONS = roomPickerOptions.length > 0 ? roomPickerOptions : [...ROOM_GROUPS];
   const [studentSummary, setStudentSummary] = useState<StudentSummary>(() =>
@@ -758,7 +762,6 @@ export function StudentLessonsYearPage({
   const readOnly = isReadOnlyViewer;
   const isStudentPortal = String(navViewer?.role ?? "").toLowerCase() === "student";
   const lessonTableColCount = isStudentPortal ? 8 : 11;
-  const skipInitialBootstrapFetchRef = useRef(Boolean(initialBootstrap));
 
   const [records, setRecords] = useState<ScheduleRecord[]>(() => initialHydrated?.records ?? []);
   const [roomSlotTutorRules, setRoomSlotTutorRules] = useState<RoomSlotTutorRule[]>(
@@ -1149,40 +1152,45 @@ export function StudentLessonsYearPage({
 
   useEffect(() => {
     if (!studentId || !accessReady) return;
-    if (seededBootstrapRef.current) {
-      seededBootstrapRef.current = false;
-      skipInitialBootstrapFetchRef.current = false;
-      if (typeof window !== "undefined" && initialHydrated) {
-        const scheduleKey = `lesson_schedule_records:${studentId}`;
-        try {
-          window.localStorage.setItem(scheduleKey, JSON.stringify(initialHydrated.records));
-          window.localStorage.setItem(
-            ATTENDANCE_STORAGE_KEY,
-            JSON.stringify(initialHydrated.attendance),
-          );
-          window.localStorage.setItem(
-            HIDDEN_DATES_STORAGE_KEY,
-            JSON.stringify(initialHydrated.hiddenDates),
-          );
-          window.localStorage.setItem(
-            OVERRIDES_STORAGE_KEY,
-            JSON.stringify(initialHydrated.overrides),
-          );
-          window.localStorage.setItem(
-            RESCHEDULE_STORAGE_KEY,
-            JSON.stringify(initialHydrated.rescheduleEntries),
-          );
-          window.localStorage.setItem(
-            EXTRA_STORAGE_KEY,
-            JSON.stringify(initialHydrated.extraEntries),
-          );
-        } catch {
-          // ignore
-        }
+    const bootstrapKey = `${studentId}:${targetYear}`;
+    const scheduleKey = `lesson_schedule_records:${studentId}`;
+
+    // Seed localStorage once from SSR payload (no network).
+    if (initialHydrated && !localStorageSeededRef.current) {
+      localStorageSeededRef.current = true;
+      try {
+        window.localStorage.setItem(scheduleKey, JSON.stringify(initialHydrated.records));
+        window.localStorage.setItem(
+          ATTENDANCE_STORAGE_KEY,
+          JSON.stringify(initialHydrated.attendance),
+        );
+        window.localStorage.setItem(
+          HIDDEN_DATES_STORAGE_KEY,
+          JSON.stringify(initialHydrated.hiddenDates),
+        );
+        window.localStorage.setItem(
+          OVERRIDES_STORAGE_KEY,
+          JSON.stringify(initialHydrated.overrides),
+        );
+        window.localStorage.setItem(
+          RESCHEDULE_STORAGE_KEY,
+          JSON.stringify(initialHydrated.rescheduleEntries),
+        );
+        window.localStorage.setItem(
+          EXTRA_STORAGE_KEY,
+          JSON.stringify(initialHydrated.extraEntries),
+        );
+      } catch {
+        // ignore
       }
+    }
+
+    // Already hydrated for this student+year (SSR or earlier client load) — do not refetch.
+    if (bootstrappedKeyRef.current === bootstrapKey) {
       return;
     }
-    const scheduleKey = `lesson_schedule_records:${studentId}`;
+    bootstrappedKeyRef.current = bootstrapKey;
+
     let mounted = true;
     setStudentLoaded(false);
     setStudentNotFound(false);
@@ -1261,27 +1269,12 @@ export function StudentLessonsYearPage({
           roomSlotTutorRules?: RoomSlotTutorRule[];
         };
 
-        let body: BootstrapBody;
-        if (skipInitialBootstrapFetchRef.current && initialBootstrap) {
-          skipInitialBootstrapFetchRef.current = false;
-          body = {
-            ok: true,
-            student: initialBootstrap.student,
-            examInfo: initialBootstrap.examInfo,
-            scheduleRecords: initialBootstrap.scheduleRecords,
-            yearState: initialBootstrap.yearState as BootstrapBody["yearState"],
-            visibilityMode: initialBootstrap.visibilityMode,
-            inactivePeriods: initialBootstrap.inactivePeriods as StudentInactivePeriodRow[],
-            roomSlotTutorRules: initialBootstrap.roomSlotTutorRules,
-          };
-        } else {
-          const res = await fetch(
-            `/api/students/${encodeURIComponent(studentId)}/lessons-bootstrap?year=${targetYear}`,
-            { credentials: "same-origin", cache: "no-store" },
-          );
-          if (!res.ok) throw new Error("bootstrap failed");
-          body = (await res.json()) as BootstrapBody;
-        }
+        const res = await fetch(
+          `/api/students/${encodeURIComponent(studentId)}/lessons-bootstrap?year=${targetYear}`,
+          { credentials: "same-origin", cache: "no-store" },
+        );
+        if (!res.ok) throw new Error("bootstrap failed");
+        const body = (await res.json()) as BootstrapBody;
         if (!mounted) return;
 
         setExamInfo(normalizeStudentExamInfo(body.examInfo));

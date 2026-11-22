@@ -3,7 +3,10 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { canonicalScheduleRoomLabel, canonicalScheduleTimeLabel } from "@/lib/dayTimetableShared";
 import { normalizeScheduleWeekday } from "@/lib/lessonScheduleVersions";
-import { SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
+import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
+  SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
+} from "@/lib/scheduleCacheTags";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export type RoomSlotTutorRule = {
@@ -129,7 +132,7 @@ export const loadRoomSlotTutorRulesCached = cache(async (): Promise<RoomSlotTuto
   return unstable_cache(
     () => loadRoomSlotTutorRulesServer(getSupabaseAdmin()),
     ["room-slot-tutor-rules-v1"],
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.dayTimetable, tags: [SCHEDULE_CACHE_TAG_DAY_TIMETABLE] },
   )();
 });
 

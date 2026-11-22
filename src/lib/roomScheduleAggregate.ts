@@ -1,5 +1,8 @@
 import { unstable_cache } from "next/cache";
-import { SCHEDULE_CACHE_TAG_AGGREGATES } from "@/lib/scheduleCacheTags";
+import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
+  SCHEDULE_CACHE_TAG_AGGREGATES,
+} from "@/lib/scheduleCacheTags";
 import { fetchClassroomScheduleLabel } from "@/lib/classroomsRegistry";
 import { formatStudentDisplayName } from "@/lib/studentDisplayName";
 import {
@@ -285,7 +288,7 @@ const loadStudentsScheduleBundleCached = unstable_cache(
   ["students-schedule-bundle-v4"],
   // Heavy bundle (students + records + states). Keep longer TTL; tags will bust after edits.
   // Longer TTL: lesson saves still bust via SCHEDULE_CACHE_TAG_AGGREGATES.
-  { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+  { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.aggregates, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
 );
 
 async function loadStudentsScheduleBundle(year: number): Promise<{
@@ -477,7 +480,7 @@ export async function fetchRoomScheduleAggregate(
     async () => fetchRoomScheduleAggregateUncached(slug, year, month, { startIso, endIso }),
     ["room-schedule-aggregate-v6", slugKey, String(year), String(month), startIso, endIso],
     // Heavy full-room expand; longer TTL + tag busting keeps UI snappy.
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.aggregates, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }
 
@@ -631,6 +634,6 @@ export async function fetchTutorMonthLessonRows(
   return unstable_cache(
     async () => fetchTutorMonthLessonRowsUncached(tutorDisplayNames, year, month),
     ["tutor-month-lessons-v10", nameKey, String(year), String(month)],
-    { revalidate: 300, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
+    { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.aggregates, tags: [SCHEDULE_CACHE_TAG_AGGREGATES] },
   )();
 }

@@ -15,7 +15,11 @@ import {
   studentIdsNeedingLegacyStateFallback,
 } from "@/lib/lessonYearStateLegacy";
 import { parseLessonYearStateDbRow } from "@/lib/lessonYearStateShared";
-import { SCHEDULE_CACHE_TAG_AGGREGATES, SCHEDULE_CACHE_TAG_DAY_TIMETABLE } from "@/lib/scheduleCacheTags";
+import {
+  SCHEDULE_CACHE_REVALIDATE_SEC,
+  SCHEDULE_CACHE_TAG_AGGREGATES,
+  SCHEDULE_CACHE_TAG_DAY_TIMETABLE,
+} from "@/lib/scheduleCacheTags";
 import { loadStudentsGradeContext } from "@/lib/studentsGradeContext.server";
 import { fetchRowsInChunks } from "@/lib/supabaseBatchIn";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -187,7 +191,7 @@ const loadScheduleStudentsContextCached = unstable_cache(
     };
   },
   ["schedule-students-context-v4"],
-  { revalidate: 300, tags: SHARED_SCHEDULE_CACHE_TAGS },
+  { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.yearSchedule, tags: SHARED_SCHEDULE_CACHE_TAGS },
 );
 
 async function loadScheduleStudentsForYearUncached(year: number): Promise<ScheduleStudentsContext> {
@@ -265,7 +269,7 @@ const loadYearScheduleDataCached = unstable_cache(
     return { normalizedRecordsById, stateById };
   },
   ["year-schedule-data-v1"],
-  { revalidate: 120, tags: SHARED_SCHEDULE_CACHE_TAGS },
+  { revalidate: SCHEDULE_CACHE_REVALIDATE_SEC.yearSchedule, tags: SHARED_SCHEDULE_CACHE_TAGS },
 );
 
 /** Cached year-wide lesson records + states (shared by Daily Timetable and Rooms). */

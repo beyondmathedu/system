@@ -1,5 +1,8 @@
-/** PostgREST `.in()` lists are capped; keep chunks small for reliability. */
-export const SUPABASE_IN_CHUNK_SIZE = 80;
+/**
+ * PostgREST `.in()` lists are URL-length limited. Student ids are short (e.g. 00001),
+ * so larger chunks cut round-trips on fee/day/room batch loads without changing results.
+ */
+export const SUPABASE_IN_CHUNK_SIZE = 160;
 
 export function chunkIds<T>(ids: readonly T[], chunkSize = SUPABASE_IN_CHUNK_SIZE): T[][] {
   if (!ids.length) return [];
@@ -19,7 +22,7 @@ export async function fetchRowsInChunks<TRow>(params: {
   query: (chunkIds: string[]) => PromiseLike<{ data: TRow[] | null; error: { message: string } | null }>;
 }): Promise<{ data: TRow[]; error: string | null }> {
   const { ids, query, chunkSize = SUPABASE_IN_CHUNK_SIZE } = params;
-  const concurrency = Math.min(12, Math.max(1, Math.floor(params.concurrency ?? 4)));
+  const concurrency = Math.min(16, Math.max(1, Math.floor(params.concurrency ?? 4)));
   if (!ids.length) return { data: [], error: null };
 
   const chunks = chunkIds(ids, chunkSize);

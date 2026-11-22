@@ -126,6 +126,17 @@ async function listStudentsForPageViaRpc(
     return copy as StudentsListRow;
   });
 
+  // Active page: RPC already excluded currently-inactive students, so the
+  // inactive-start map is always empty — skip the extra visibility query (~0.6s).
+  if (status === "active") {
+    return {
+      rows,
+      total,
+      hasMore: offset + rows.length < total,
+      manualInactiveEffectiveById: {},
+    };
+  }
+
   const pageIds = rows.map((r) => r.id).filter(Boolean);
   const { currentInactiveStartById } = await loadInactivePeriodsMaps(
     supabase,

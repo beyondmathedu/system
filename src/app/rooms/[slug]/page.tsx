@@ -14,7 +14,7 @@ import { studentPortalHomePath } from "@/lib/studentPortalAccess";
 import { fetchRoomScheduleAggregate } from "@/lib/roomScheduleAggregate";
 import { defaultDailyTimetablePath, getTutorLandingPath, tutorCanAccessRoomSlug } from "@/lib/tutorRoomAccess";
 import { loadTutorVisibility } from "@/lib/tutorVisibility.server";
-import RoomScheduleTable from "./RoomScheduleTable";
+import RoomScheduleTableLazy from "./RoomScheduleTableLazy";
 
 export const maxDuration = 60;
 
@@ -310,7 +310,7 @@ export default async function RoomPage({ params, searchParams }: PageProps) {
             ) : null}
 
             {rows.length > 0 ? (
-              <RoomScheduleTable
+              <RoomScheduleTableLazy
                 rows={rows}
                 year={year}
                 initialYearStatesByStudentId={yearStatesByStudentId}
