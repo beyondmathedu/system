@@ -995,6 +995,68 @@ export async function upsertStudentFeeOpeningBalanceAdmin(
   return { ok: true };
 }
 
+function normalizeFeePricingGradeForAdmin(raw: string): string | null {
+  const s = String(raw ?? "").trim().replace(/\s/g, "").toUpperCase();
+  const m = /^F\.?([1-6])$/.exec(s);
+  return m ? `F${m[1]}` : null;
+}
+
+/**
+ * Lock one student-month to a tuition pricing grade (or clear lock with "").
+ * Updates only fee_pricing_grade / lesson_unit_price; does not wipe remarks or paid.
+ */
+export async function patchStudentMonthlyFeePricingGradeAdmin(input: {
+  studentId: string;
+  year: number;
+  month: number;
+  feePricingGrade: string;
+  submittedAmount?: number;
+}): Promise<{ ok: boolean; error?: string; feePricingGrade: string | null }> {
+  const studentId = String(input.studentId ?? "").trim();
+  const year = Math.floor(Number(input.year));
+  const month = Math.floor(Number(input.month));
+  const feePricingGrade = normalizeFeePricingGradeForAdmin(input.feePricingGrade);
+  if (!studentId || !Number.isFinite(year) || month < 1 || month > 12) {
+    return { ok: false, error: "invalid_fee_pricing_patch", feePricingGrade: null };
+  }
+
+  const admin = getSupabaseAdmin();
+  const updatedAt = new Date().toISOString();
+  const { data, error } = await admin
+    .from("student_monthly_fee_records")
+    .update({
+      fee_pricing_grade: feePricingGrade,
+      lesson_unit_price: null,
+      updated_at: updatedAt,
+    })
+    .eq("student_id", studentId)
+    .eq("year", year)
+    .eq("month", month)
+    .select("student_id");
+  if (error) {
+    return { ok: false, error: error.message, feePricingGrade };
+  }
+  if (data && data.length > 0) {
+    return { ok: true, feePricingGrade };
+  }
+
+  const submitted = Math.round((Number(input.submittedAmount) || 0) * 100) / 100;
+  const { error: insertErr } = await admin.from("student_monthly_fee_records").insert({
+    student_id: studentId,
+    year,
+    month,
+    submitted_amount: submitted,
+    lesson_unit_price: null,
+    fee_pricing_grade: feePricingGrade,
+    remarks: "",
+    updated_at: updatedAt,
+  });
+  if (insertErr) {
+    return { ok: false, error: insertErr.message, feePricingGrade };
+  }
+  return { ok: true, feePricingGrade };
+}
+
 export type StudentLessonsBootstrapStudent = {
   id: string;
   name_zh: string | null;
