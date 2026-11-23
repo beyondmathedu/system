@@ -1447,15 +1447,16 @@ export default function StudentsLessonTimeFeeRecordPage({
         return { ...prev, [studentId]: byMonth };
       });
 
+      const submittedAmount =
+        month === Number(sheetMonth)
+          ? Number(recordsByStudentId[studentId]?.submitted ?? 0) || 0
+          : Number(submittedByStudentMonth[studentId]?.[month] ?? 0) || 0;
+
       if (month === Number(sheetMonth)) {
         updateStudentRecord(studentId, { feePricingGrade: nextGrade, lessonUnitPrice: 0 });
-        // Current sheet month: reuse full upsert path so concurrent remark saves keep the new grade.
-        scheduleSave(studentId, { feePricingGrade: nextGrade, lessonUnitPrice: 0 });
-        setPricingSaveBusyKey((cur) => (cur === busyKey ? null : cur));
-        return;
       }
 
-      const submittedAmount = Number(submittedByStudentMonth[studentId]?.[month] ?? 0) || 0;
+      // Immediate cloud write (not debounced) so refresh keeps the lock.
       void patchStudentMonthlyFeePricingGrade({
         studentId,
         year: sheetYear,
@@ -1463,6 +1464,7 @@ export default function StudentsLessonTimeFeeRecordPage({
         feePricingGrade: nextGrade,
         submittedAmount,
       })
+        .then(() => revalidateScheduleCachesNow("fee"))
         .catch((err) => {
           console.error("fee_pricing_grade patch failed", err);
         })
@@ -1470,7 +1472,7 @@ export default function StudentsLessonTimeFeeRecordPage({
           setPricingSaveBusyKey((cur) => (cur === busyKey ? null : cur));
         });
     },
-    [sheetYear, sheetMonth, scheduleSave, submittedByStudentMonth],
+    [sheetYear, sheetMonth, recordsByStudentId, submittedByStudentMonth],
   );
 
   const saveFeeTierSettings = useCallback(async () => {

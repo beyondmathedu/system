@@ -526,7 +526,7 @@ export async function patchStudentMonthlyFeePricingGrade(input: {
     .select("student_id");
   if (error) throw error;
   if (data && data.length > 0) {
-    notifyScheduleCachesStale();
+    notifyScheduleCachesStale("fee");
     return;
   }
   const submitted = Math.round((Number(input.submittedAmount) || 0) * 100) / 100;
@@ -544,7 +544,7 @@ export async function patchStudentMonthlyFeePricingGrade(input: {
     { onConflict: "student_id,year,month" },
   );
   if (upsertErr) throw upsertErr;
-  notifyScheduleCachesStale();
+  notifyScheduleCachesStale("fee");
 }
 
 export async function upsertStudentMonthlyFeeRecord(input: {
@@ -595,8 +595,8 @@ export async function upsertStudentMonthlyFeeRecord(input: {
       .upsert(basePayload, { onConflict: "student_id,year,month" }));
   }
   if (error) throw error;
-  // Fee bootstrap caches submitted_amount for ~120s; invalidate after paid/remarks writes.
-  notifyScheduleCachesStale();
+  // Fee bootstrap caches fee rows; must bust fee tag (not schedule-only) or refresh shows stale pricing/paid.
+  notifyScheduleCachesStale("fee");
 }
 
 function hkTodayIso(now = new Date()): string {
