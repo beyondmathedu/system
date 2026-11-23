@@ -492,6 +492,61 @@ function normalizeFeePricingGradeForDb(raw: string): string | null {
   return m ? `F${m[1]}` : null;
 }
 
+/**
+ * Patch only fee_pricing_grade for one student-month (does not wipe remarks / submitted).
+ * Empty grade clears the lock so pricing follows Student Info grade again.
+ */
+export async function patchStudentMonthlyFeePricingGrade(input: {
+  studentId: string;
+  year: number;
+  month: number;
+  feePricingGrade: string;
+  /** Used only when inserting a missing month row. */
+  submittedAmount?: number;
+}): Promise<void> {
+  const studentId = String(input.studentId ?? "").trim();
+  const year = Math.floor(Number(input.year));
+  const month = Math.floor(Number(input.month));
+  if (!studentId || !Number.isFinite(year) || month < 1 || month > 12) {
+    throw new Error("invalid_fee_pricing_patch");
+  }
+  const normalizedFeeGrade = normalizeFeePricingGradeForDb(input.feePricingGrade);
+  const updatedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("student_monthly_fee_records")
+    .update({
+      fee_pricing_grade: normalizedFeeGrade,
+      // Clear flat unit override so locked grade / auto tier applies.
+      lesson_unit_price: null,
+      updated_at: updatedAt,
+    })
+    .eq("student_id", studentId)
+    .eq("year", year)
+    .eq("month", month)
+    .select("student_id");
+  if (error) throw error;
+  if (data && data.length > 0) {
+    notifyScheduleCachesStale();
+    return;
+  }
+  const submitted = Math.round((Number(input.submittedAmount) || 0) * 100) / 100;
+  const { error: upsertErr } = await supabase.from("student_monthly_fee_records").upsert(
+    {
+      student_id: studentId,
+      year,
+      month,
+      submitted_amount: submitted,
+      lesson_unit_price: null,
+      fee_pricing_grade: normalizedFeeGrade,
+      remarks: "",
+      updated_at: updatedAt,
+    },
+    { onConflict: "student_id,year,month" },
+  );
+  if (upsertErr) throw upsertErr;
+  notifyScheduleCachesStale();
+}
+
 export async function upsertStudentMonthlyFeeRecord(input: {
   studentId: string;
   year: number;
