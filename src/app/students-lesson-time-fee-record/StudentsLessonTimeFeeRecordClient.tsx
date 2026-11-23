@@ -22,7 +22,6 @@ import {
   writeFeeOpeningBalanceToLocal,
 } from "@/lib/studentFeeOpeningBalance";
 import {
-  patchStudentMonthlyFeePricingGrade,
   upsertStudentMonthlyFeeRecord,
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
@@ -532,12 +531,14 @@ function FeeArrearsDetailTable({
   onBalanceDueRemarksChange,
   onFeePricingGradeChange,
   pricingSaveBusyKey,
+  pricingSaveError,
 }: {
   rows: MonthlyArrearsRow[];
   balanceDueRemarks: string;
   onBalanceDueRemarksChange: (value: string) => void;
   onFeePricingGradeChange?: (month1to12: number, feePricingGrade: string) => void;
   pricingSaveBusyKey?: string | null;
+  pricingSaveError?: string;
 }) {
   const [showAllMonths, setShowAllMonths] = useState(false);
   const [editingMonth, setEditingMonth] = useState<number | null>(null);
@@ -687,24 +688,30 @@ function FeeArrearsDetailTable({
                                 ) : null}
                               </div>
                               {isEditing && m != null ? (
-                                <select
-                                  className="mt-0.5 max-w-[9.5rem] rounded border border-slate-200 bg-white px-1 py-0.5 text-[10px] text-slate-700 outline-none focus:border-[#1d76c2]"
-                                  value={row.storedFeePricingGrade ?? ""}
-                                  disabled={busy}
-                                  autoFocus
-                                  onChange={(e) => {
-                                    const next = e.target.value;
-                                    onFeePricingGradeChange?.(m, next);
-                                    setEditingMonth(null);
-                                  }}
-                                  onBlur={() => setEditingMonth(null)}
-                                >
-                                  {FEE_PRICING_EDIT_OPTIONS.map((opt) => (
-                                    <option key={opt.value || "auto"} value={opt.value}>
-                                      {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
+                                <div className="mt-0.5 inline-flex flex-wrap justify-end gap-0.5">
+                                  {FEE_PRICING_EDIT_OPTIONS.map((opt) => {
+                                    const active =
+                                      (row.storedFeePricingGrade ?? "") === opt.value;
+                                    return (
+                                      <button
+                                        key={opt.value || "auto"}
+                                        type="button"
+                                        disabled={busy}
+                                        className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-40 ${
+                                          active
+                                            ? "border-[#1d76c2] bg-[#1d76c2] text-white"
+                                            : "border-slate-200 bg-white text-slate-700 hover:border-[#1d76c2]/60"
+                                        }`}
+                                        onClick={() => {
+                                          onFeePricingGradeChange?.(m, opt.value);
+                                          setEditingMonth(null);
+                                        }}
+                                      >
+                                        {opt.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
                               ) : lockedLabel ? (
                                 <span className="text-[10px] font-medium text-amber-700">
                                   {lockedLabel} 價
@@ -754,6 +761,10 @@ function FeeArrearsDetailTable({
           <p className="mt-1 text-slate-600">各月已結清。</p>
         ) : null}
       </div>
+
+      {pricingSaveError ? (
+        <p className="text-[11px] font-medium text-rose-700">{pricingSaveError}</p>
+      ) : null}
 
       <FeeRecordRemarksField
         label="欠款備註"
@@ -886,6 +897,8 @@ export default function StudentsLessonTimeFeeRecordPage({
   );
   const saveTimersRef = useState(() => new Map<string, number>())[0];
   const openingBalanceSaveTimersRef = useState(() => new Map<string, number>())[0];
+  const recordsByStudentIdRef = useRef(recordsByStudentId);
+  recordsByStudentIdRef.current = recordsByStudentId;
 
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
   const [gradeFilter, setGradeFilter] = useState<string>("F.1");
@@ -955,8 +968,11 @@ export default function StudentsLessonTimeFeeRecordPage({
     | { kind: "arrears"; studentId: string; title: string }
     | { kind: "makeup"; studentId: string };
   const [feeDetailDialog, setFeeDetailDialog] = useState<FeeDetailDialogState | null>(null);
+  const [pricingSaveBusyKey, setPricingSaveBusyKey] = useState<string | null>(null);
+  const [pricingSaveError, setPricingSaveError] = useState("");
 
   const onFeeDetailOpen = useCallback((dialog: FeeDetailDialogState) => {
+    setPricingSaveError("");
     setFeeDetailDialog(dialog);
   }, []);
 
@@ -1149,7 +1165,8 @@ export default function StudentsLessonTimeFeeRecordPage({
     if (existing) window.clearTimeout(existing);
     const t = window.setTimeout(() => {
       saveTimersRef.delete(key);
-      const rec = recordsByStudentId[studentId] ?? defaultRecordState();
+      // Always merge against latest record so a stale timer cannot wipe feePricingGrade.
+      const rec = recordsByStudentIdRef.current[studentId] ?? defaultRecordState();
       const merged = { ...rec, ...patch };
       void upsertStudentMonthlyFeeRecord({
         studentId,
@@ -1164,7 +1181,7 @@ export default function StudentsLessonTimeFeeRecordPage({
       });
     }, 600);
     saveTimersRef.set(key, t);
-  }, [recordsByStudentId, saveTimersRef, sheetMonth, sheetYear]);
+  }, [saveTimersRef, sheetMonth, sheetYear]);
 
   const sheetGradeByStudentId = useMemo(() => {
     const out: Record<string, string> = {};
@@ -1430,8 +1447,6 @@ export default function StudentsLessonTimeFeeRecordPage({
     [scheduleSave],
   );
 
-  const [pricingSaveBusyKey, setPricingSaveBusyKey] = useState<string | null>(null);
-
   const onArrearsFeePricingGradeChange = useCallback(
     (studentId: string, month1to12: number, feePricingGrade: string) => {
       const month = Math.floor(Number(month1to12));
@@ -1440,6 +1455,12 @@ export default function StudentsLessonTimeFeeRecordPage({
       const nextGrade = /^F[1-6]$/.test(code) ? code : "";
       const busyKey = `${studentId}:${sheetYear}:${month}`;
       setPricingSaveBusyKey(busyKey);
+      setPricingSaveError("");
+
+      const prevStored =
+        month === Number(sheetMonth)
+          ? String(recordsByStudentIdRef.current[studentId]?.feePricingGrade ?? "")
+          : String(historicalMonthFeeByStudentId[studentId]?.[month]?.feePricingGrade ?? "");
 
       setHistoricalMonthFeeByStudentId((prev) => {
         const byMonth = { ...(prev[studentId] ?? {}) };
@@ -1449,30 +1470,55 @@ export default function StudentsLessonTimeFeeRecordPage({
 
       const submittedAmount =
         month === Number(sheetMonth)
-          ? Number(recordsByStudentId[studentId]?.submitted ?? 0) || 0
+          ? Number(recordsByStudentIdRef.current[studentId]?.submitted ?? 0) || 0
           : Number(submittedByStudentMonth[studentId]?.[month] ?? 0) || 0;
 
       if (month === Number(sheetMonth)) {
         updateStudentRecord(studentId, { feePricingGrade: nextGrade, lessonUnitPrice: 0 });
       }
 
-      // Immediate cloud write (not debounced) so refresh keeps the lock.
-      void patchStudentMonthlyFeePricingGrade({
-        studentId,
-        year: sheetYear,
-        month,
-        feePricingGrade: nextGrade,
-        submittedAmount,
-      })
-        .then(() => revalidateScheduleCachesNow("fee"))
-        .catch((err) => {
+      void (async () => {
+        try {
+          const res = await fetch("/api/students-lesson-fee-record/fee-pricing-grade", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              studentId,
+              year: sheetYear,
+              month,
+              feePricingGrade: nextGrade,
+              submittedAmount,
+            }),
+          });
+          const body = (await res.json().catch(() => null)) as
+            | { ok?: boolean; error?: string }
+            | null;
+          if (!res.ok || !body?.ok) {
+            throw new Error(body?.error || `HTTP ${res.status}`);
+          }
+        } catch (err) {
           console.error("fee_pricing_grade patch failed", err);
-        })
-        .finally(() => {
+          setHistoricalMonthFeeByStudentId((prev) => {
+            const byMonth = { ...(prev[studentId] ?? {}) };
+            byMonth[month] = { lessonUnitPrice: 0, feePricingGrade: prevStored };
+            return { ...prev, [studentId]: byMonth };
+          });
+          if (month === Number(sheetMonth)) {
+            updateStudentRecord(studentId, {
+              feePricingGrade: prevStored,
+              lessonUnitPrice: 0,
+            });
+          }
+          setPricingSaveError(
+            `學費價級儲存失敗：${err instanceof Error ? err.message : "unknown"}`,
+          );
+        } finally {
           setPricingSaveBusyKey((cur) => (cur === busyKey ? null : cur));
-        });
+        }
+      })();
     },
-    [sheetYear, sheetMonth, recordsByStudentId, submittedByStudentMonth],
+    [sheetYear, sheetMonth, historicalMonthFeeByStudentId, submittedByStudentMonth],
   );
 
   const saveFeeTierSettings = useCallback(async () => {
@@ -2885,6 +2931,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                       ? pricingSaveBusyKey.split(":").pop() ?? null
                       : null
                   }
+                  pricingSaveError={pricingSaveError}
                 />
               ) : (
                 <FeeMakeupDetailPanel
