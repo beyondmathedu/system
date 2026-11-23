@@ -22,13 +22,14 @@ import {
   writeFeeOpeningBalanceToLocal,
 } from "@/lib/studentFeeOpeningBalance";
 import {
+  patchStudentMonthlyFeePricingGrade,
   upsertStudentMonthlyFeeRecord,
   type StudentLesson2026State,
 } from "@/lib/studentLessonStorage";
 import { readYmdParts } from "@/lib/intlFormatParts";
 import { formatStudentDisplayNameOrEmpty } from "@/lib/studentDisplayName";
 import { normalizeStudentId } from "@/lib/studentId";
-import { formatGradeDisplay, gradeRank } from "@/lib/grade";
+import { formatGradeDisplay, gradeRank, normalizeGradeCode } from "@/lib/grade";
 import {
   getStudentGradeForMonth,
   gradeForFeePricing as gradeForFeePricingLib,
@@ -268,6 +269,14 @@ type MonthlyArrearsRow = {
   paid: number;
   outstanding: number;
   isLegacyOpening?: boolean;
+  /** 1–12 for normal months; omit for opening/adjustment rows. */
+  month1to12?: number;
+  /** Raw stored lock ("" = auto). */
+  storedFeePricingGrade?: string;
+  /** Effective pricing grade after lock / auto (e.g. F3 / F4). */
+  effectivePricingGrade?: string;
+  /** F.3 students may lock a month to F.4 tuition. */
+  allowPricingEdit?: boolean;
 };
 
 function formatTuitionCell(amount: number, lessonCount: number, isLegacyOpening?: boolean): string {
@@ -353,11 +362,22 @@ function buildMonthlyArrearsRows(params: {
     });
     const lessonCount = countDatedLessonSlots(dates);
     const hist = historicalMonthFee[m];
+    const storedFeePricingGrade =
+      m === sheetMonth
+        ? String(currentRecord.feePricingGrade ?? "")
+        : String(hist?.feePricingGrade ?? "");
+    const autoGrade = getStudentGradeForMonth({
+      currentGrade: student.grade,
+      sheetYear,
+      sheetMonth: m,
+      historyByAcademicYear: gradeHistory,
+      heldBackYears,
+    });
     const gradeFor = gradeForFeePricing(
       student,
       sheetYear,
       m,
-      m === sheetMonth ? currentRecord.feePricingGrade : String(hist?.feePricingGrade ?? ""),
+      storedFeePricingGrade,
       heldBackYears,
       gradeHistory,
     );
@@ -367,6 +387,8 @@ function buildMonthlyArrearsRows(params: {
       gradeFor,
       feeTierSettings: tier,
     });
+    const allowPricingEdit =
+      normalizeGradeCode(autoGrade) === "F3" || normalizeGradeCode(student.grade) === "F3";
     rows.push({
       key: `${sheetYear}-${m}`,
       monthLabel: formatSheetMonthZh(sheetYear, m),
@@ -374,6 +396,13 @@ function buildMonthlyArrearsRows(params: {
       lessonCount,
       paid,
       outstanding: expected - paid,
+      month1to12: m,
+      storedFeePricingGrade: (() => {
+        const c = normalizeGradeCode(storedFeePricingGrade);
+        return /^F[1-6]$/.test(c) ? c : "";
+      })(),
+      effectivePricingGrade: gradeFor,
+      allowPricingEdit,
     });
   }
   return rows;
@@ -491,16 +520,27 @@ function arrearsRowYearLabel(row: MonthlyArrearsRow): string | null {
   return null;
 }
 
+const FEE_PRICING_EDIT_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "自動（跟年級）" },
+  { value: "F3", label: "F.3 價" },
+  { value: "F4", label: "F.4 價" },
+];
+
 function FeeArrearsDetailTable({
   rows,
   balanceDueRemarks,
   onBalanceDueRemarksChange,
+  onFeePricingGradeChange,
+  pricingSaveBusyKey,
 }: {
   rows: MonthlyArrearsRow[];
   balanceDueRemarks: string;
   onBalanceDueRemarksChange: (value: string) => void;
+  onFeePricingGradeChange?: (month1to12: number, feePricingGrade: string) => void;
+  pricingSaveBusyKey?: string | null;
 }) {
   const [showAllMonths, setShowAllMonths] = useState(false);
+  const [editingMonth, setEditingMonth] = useState<number | null>(null);
 
   const settledCount = useMemo(
     () =>
@@ -602,7 +642,81 @@ function FeeArrearsDetailTable({
                     <tr className="border-b border-slate-100 last:border-0">
                       <td className="px-2.5 py-2 align-middle text-slate-800">{row.monthLabel}</td>
                       <td className="px-2.5 py-2 text-right align-middle tabular-nums text-slate-800">
-                        {formatTuitionCell(row.expected, row.lessonCount, row.isLegacyOpening)}
+                        {(() => {
+                          const m = row.month1to12;
+                          const canEdit =
+                            Boolean(row.allowPricingEdit) &&
+                            typeof m === "number" &&
+                            typeof onFeePricingGradeChange === "function";
+                          const isEditing = canEdit && editingMonth === m;
+                          const busy =
+                            pricingSaveBusyKey != null &&
+                            m != null &&
+                            pricingSaveBusyKey === `${m}`;
+                          const lockedLabel = row.storedFeePricingGrade
+                            ? formatGradeDisplay(row.storedFeePricingGrade)
+                            : "";
+                          const effectiveLabel = row.effectivePricingGrade
+                            ? formatGradeDisplay(row.effectivePricingGrade)
+                            : "";
+                          return (
+                            <div className="inline-flex flex-col items-end gap-0.5">
+                              <div className="inline-flex items-center justify-end gap-1">
+                                <span>
+                                  {formatTuitionCell(
+                                    row.expected,
+                                    row.lessonCount,
+                                    row.isLegacyOpening,
+                                  )}
+                                </span>
+                                {canEdit ? (
+                                  <button
+                                    type="button"
+                                    className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-[#1d76c2] disabled:opacity-40"
+                                    aria-label={`改 ${row.monthLabel} 學費價級`}
+                                    title="改學費價級（F.3／F.4）"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      setEditingMonth((prev) => (prev === m ? null : m ?? null))
+                                    }
+                                  >
+                                    <span aria-hidden className="text-[11px] leading-none">
+                                      ✎
+                                    </span>
+                                  </button>
+                                ) : null}
+                              </div>
+                              {isEditing && m != null ? (
+                                <select
+                                  className="mt-0.5 max-w-[9.5rem] rounded border border-slate-200 bg-white px-1 py-0.5 text-[10px] text-slate-700 outline-none focus:border-[#1d76c2]"
+                                  value={row.storedFeePricingGrade ?? ""}
+                                  disabled={busy}
+                                  autoFocus
+                                  onChange={(e) => {
+                                    const next = e.target.value;
+                                    onFeePricingGradeChange?.(m, next);
+                                    setEditingMonth(null);
+                                  }}
+                                  onBlur={() => setEditingMonth(null)}
+                                >
+                                  {FEE_PRICING_EDIT_OPTIONS.map((opt) => (
+                                    <option key={opt.value || "auto"} value={opt.value}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : lockedLabel ? (
+                                <span className="text-[10px] font-medium text-amber-700">
+                                  {lockedLabel} 價
+                                </span>
+                              ) : effectiveLabel && row.allowPricingEdit ? (
+                                <span className="text-[10px] text-slate-400">
+                                  {effectiveLabel} 價
+                                </span>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-2.5 py-2 text-right align-middle tabular-nums text-slate-700">
                         ${formatHkMoneyAmount(row.paid)}
@@ -1314,6 +1428,49 @@ export default function StudentsLessonTimeFeeRecordPage({
       scheduleSave(studentId, { balanceDueRemarks });
     },
     [scheduleSave],
+  );
+
+  const [pricingSaveBusyKey, setPricingSaveBusyKey] = useState<string | null>(null);
+
+  const onArrearsFeePricingGradeChange = useCallback(
+    (studentId: string, month1to12: number, feePricingGrade: string) => {
+      const month = Math.floor(Number(month1to12));
+      if (!studentId || month < 1 || month > 12) return;
+      const code = normalizeGradeCode(feePricingGrade);
+      const nextGrade = /^F[1-6]$/.test(code) ? code : "";
+      const busyKey = `${studentId}:${sheetYear}:${month}`;
+      setPricingSaveBusyKey(busyKey);
+
+      setHistoricalMonthFeeByStudentId((prev) => {
+        const byMonth = { ...(prev[studentId] ?? {}) };
+        byMonth[month] = { lessonUnitPrice: 0, feePricingGrade: nextGrade };
+        return { ...prev, [studentId]: byMonth };
+      });
+
+      if (month === Number(sheetMonth)) {
+        updateStudentRecord(studentId, { feePricingGrade: nextGrade, lessonUnitPrice: 0 });
+        // Current sheet month: reuse full upsert path so concurrent remark saves keep the new grade.
+        scheduleSave(studentId, { feePricingGrade: nextGrade, lessonUnitPrice: 0 });
+        setPricingSaveBusyKey((cur) => (cur === busyKey ? null : cur));
+        return;
+      }
+
+      const submittedAmount = Number(submittedByStudentMonth[studentId]?.[month] ?? 0) || 0;
+      void patchStudentMonthlyFeePricingGrade({
+        studentId,
+        year: sheetYear,
+        month,
+        feePricingGrade: nextGrade,
+        submittedAmount,
+      })
+        .catch((err) => {
+          console.error("fee_pricing_grade patch failed", err);
+        })
+        .finally(() => {
+          setPricingSaveBusyKey((cur) => (cur === busyKey ? null : cur));
+        });
+    },
+    [sheetYear, sheetMonth, scheduleSave, submittedByStudentMonth],
   );
 
   const saveFeeTierSettings = useCallback(async () => {
@@ -2713,6 +2870,18 @@ export default function StudentsLessonTimeFeeRecordPage({
                   balanceDueRemarks={recordsByStudentId[feeDetailDialog.studentId]?.balanceDueRemarks ?? ""}
                   onBalanceDueRemarksChange={(value) =>
                     onBalanceDueRemarksChange(feeDetailDialog.studentId, value)
+                  }
+                  onFeePricingGradeChange={(month1to12, feePricingGrade) =>
+                    onArrearsFeePricingGradeChange(
+                      feeDetailDialog.studentId,
+                      month1to12,
+                      feePricingGrade,
+                    )
+                  }
+                  pricingSaveBusyKey={
+                    pricingSaveBusyKey?.startsWith(`${feeDetailDialog.studentId}:${sheetYear}:`)
+                      ? pricingSaveBusyKey.split(":").pop() ?? null
+                      : null
                   }
                 />
               ) : (
