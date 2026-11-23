@@ -82,13 +82,6 @@ import {
   saveZohoSyncCheckpoint,
   type ZohoMonthAmountMap,
 } from "@/lib/zohoSyncCheckpoint";
-import {
-  isZohoFeeMonthLocked,
-  loadZohoFeeSyncLockPeriod,
-  saveZohoFeeSyncLockPeriod,
-  type ZohoFeeSyncLockPeriod,
-} from "@/lib/zohoFeeSyncLock";
-
 type StudentRow = {
   id: string;
   name_zh: string;
@@ -819,13 +812,6 @@ export default function StudentsLessonTimeFeeRecordPage({
         },
   );
   const [feeTierSaveMsg, setFeeTierSaveMsg] = useState("");
-  /** Sync Zoho will not overwrite months in [from, to] for this sheet year. */
-  const [zohoLockPeriod, setZohoLockPeriod] = useState<ZohoFeeSyncLockPeriod>({
-    fromMonth: 0,
-    toMonth: 0,
-  });
-  /** Avoid reading localStorage before mount (prevents hydration mismatch). */
-  const [zohoLockUiReady, setZohoLockUiReady] = useState(false);
   const [openingBalanceSaveMsg, setOpeningBalanceSaveMsg] = useState(
     () => initialHydrated.openingBalanceSaveMsg,
   );
@@ -877,11 +863,6 @@ export default function StudentsLessonTimeFeeRecordPage({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [feeDetailDialog]);
-
-  useEffect(() => {
-    setZohoLockPeriod(loadZohoFeeSyncLockPeriod(sheetYear));
-    setZohoLockUiReady(true);
-  }, [sheetYear]);
 
   const applyHydratedBootstrap = useCallback((hydrated: ReturnType<typeof hydrateFeeRecordBootstrap>) => {
     setStudents(hydrated.students as StudentRow[]);
@@ -1453,8 +1434,6 @@ export default function StudentsLessonTimeFeeRecordPage({
             detailBatchSize,
             priorAccumulatedAmounts,
             priorAccumulatedLessons,
-            lockFromMonth: zohoLockPeriod.fromMonth,
-            lockToMonth: zohoLockPeriod.toMonth,
           }),
           signal: ctl.signal,
         });
@@ -1533,7 +1512,6 @@ export default function StudentsLessonTimeFeeRecordPage({
             const merged = { ...(next[sid] ?? {}) };
             for (const [monthStr, value] of Object.entries(months ?? {})) {
               const month = Number(monthStr);
-              if (isZohoFeeMonthLocked(month, zohoLockPeriod)) continue;
               merged[month] = value;
             }
             next[sid] = merged;
@@ -1541,7 +1519,7 @@ export default function StudentsLessonTimeFeeRecordPage({
           return next;
         });
       }
-      if (Object.keys(monthMap).length > 0 && !isZohoFeeMonthLocked(Number(sheetMonth), zohoLockPeriod)) {
+      if (Object.keys(monthMap).length > 0) {
         setRecordsByStudentId((prev) => {
           const next = { ...prev };
           for (const [sid, submitted] of Object.entries(monthMap)) {
@@ -1568,23 +1546,11 @@ export default function StudentsLessonTimeFeeRecordPage({
         detailFetchError?: number;
         preservedExistingMonths?: number;
         clearedStaleMonths?: number;
-        lockFromMonth?: number;
-        lockToMonth?: number;
-        lockedMonthsSkipped?: number;
       };
       const skipped = Number(debug.skippedDetailByLimit ?? 0) || 0;
       const extras: string[] = [];
       if (totalUnmatched > 0) extras.push(`${totalUnmatched} 張收據未能對上學生`);
       if (skipped > 0) extras.push(`今日 Zoho 查詢額度已用盡，尚有 ${skipped} 張未讀詳情，可稍後再 Sync`);
-      if (zohoLockPeriod.fromMonth > 0 && zohoLockPeriod.toMonth > 0) {
-        const fromLabel = MONTH_SHORT[zohoLockPeriod.fromMonth - 1];
-        const toLabel = MONTH_SHORT[zohoLockPeriod.toMonth - 1];
-        extras.push(
-          zohoLockPeriod.fromMonth === zohoLockPeriod.toMonth
-            ? `已鎖定 ${fromLabel}（該月已繳未改）`
-            : `已鎖定 ${fromLabel}–${toLabel}（期間已繳未改）`,
-        );
-      }
       setSyncNotice(
         `Zoho 同步完成（${sheetYear}）。已配對 ${matchedTotal} 張收據，更新 ${totalSynced} 筆學費` +
           (extras.length ? `；注意：${extras.join("；")}` : "。"),
@@ -1603,7 +1569,7 @@ export default function StudentsLessonTimeFeeRecordPage({
       setSyncingZoho(false);
     }
     },
-    [sheetMonth, sheetYear, zohoLockPeriod],
+    [sheetMonth, sheetYear],
   );
 
   const { lessonDatesByStudentId, fullLessonDatesByStudentId, lColumnCount } = useMemo(() => {
@@ -2216,14 +2182,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                       }
                       disabled={syncingZoho}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      title={
-                        zohoLockUiReady &&
-                        zohoLockPeriod.fromMonth > 0 &&
-                        zohoLockPeriod.toMonth > 0
-                          ? `按 Zoho 寫已繳；已鎖定 ${MONTH_SHORT[zohoLockPeriod.fromMonth - 1]}–${MONTH_SHORT[zohoLockPeriod.toMonth - 1]}（期間不會改）。可在頁面最下方改 period。`
-                          : "按 Zoho Item & Description 認月份、Amount 寫已繳；分批讀取全部學生，全部完成後才一次寫入。頁面最下方可鎖定 period。"
-                      }
-                      suppressHydrationWarning
+                      title="按 Zoho Item & Description 認月份、Amount 寫已繳；分批讀取全部學生，全部完成後才一次寫入。"
                     >
                       <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
                         <path
@@ -2235,17 +2194,7 @@ export default function StudentsLessonTimeFeeRecordPage({
                           d="M15.92 8.14a.75.75 0 00-1.5 0 5.5 5.5 0 01-9.27 3.59l.94-.94a.75.75 0 10-1.06-1.06l-2.5 2.5a.75.75 0 000 1.06l2.5 2.5a.75.75 0 001.06-1.06l-.99-.99a7 7 0 0011.3-5.59z"
                         />
                       </svg>
-                      <span suppressHydrationWarning>
-                        {syncingZoho
-                          ? "Syncing..."
-                          : zohoLockUiReady &&
-                              zohoLockPeriod.fromMonth > 0 &&
-                              zohoLockPeriod.toMonth > 0
-                            ? zohoLockPeriod.fromMonth === zohoLockPeriod.toMonth
-                              ? `Sync Zoho (鎖 ${MONTH_SHORT[zohoLockPeriod.fromMonth - 1]})`
-                              : `Sync Zoho (鎖 ${MONTH_SHORT[zohoLockPeriod.fromMonth - 1]}–${MONTH_SHORT[zohoLockPeriod.toMonth - 1]})`
-                            : "Sync Zoho Receipts"}
-                      </span>
+                      <span>{syncingZoho ? "Syncing..." : "Sync Zoho Receipts"}</span>
                     </button>
                   </div>
                 </div>
@@ -2719,94 +2668,6 @@ export default function StudentsLessonTimeFeeRecordPage({
                   ) : null}
                 </div>
               </details>
-
-              <div
-                className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50/80 px-4 py-3"
-                suppressHydrationWarning
-              >
-                <div className="text-sm font-bold text-emerald-900">Sync Zoho：鎖定 period</div>
-                <p className="mt-1 text-[12px] leading-snug text-emerald-950/90">
-                  自己揀要封帳的月份區間。按 Sync Zoho Receipts 時不會改動該年「由 → 至」（含）的已繳金額。
-                  例如只鎖 May→May；或 May→Aug。未涵蓋的月份仍可同步。設定只保存在本瀏覽器。
-                </p>
-                <div className="mt-3 flex flex-wrap items-end gap-3" suppressHydrationWarning>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[11px] font-semibold text-emerald-900">{sheetYear} 由</span>
-                    <select
-                      value={zohoLockUiReady ? zohoLockPeriod.fromMonth : 0}
-                      disabled={!zohoLockUiReady}
-                      onChange={(e) => {
-                        const from = Math.floor(Number(e.target.value) || 0);
-                        const next = saveZohoFeeSyncLockPeriod(
-                          sheetYear,
-                          from,
-                          from && !zohoLockPeriod.toMonth ? from : zohoLockPeriod.toMonth,
-                        );
-                        setZohoLockPeriod(next);
-                      }}
-                      className="rounded border border-emerald-300 bg-white px-2 py-1.5 text-sm font-semibold text-slate-800 disabled:opacity-60"
-                      suppressHydrationWarning
-                    >
-                      <option value={0}>—</option>
-                      {MONTH_SHORT.map((label, i) => (
-                        <option key={`from-${label}`} value={i + 1}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[11px] font-semibold text-emerald-900">至</span>
-                    <select
-                      value={zohoLockUiReady ? zohoLockPeriod.toMonth : 0}
-                      disabled={!zohoLockUiReady}
-                      onChange={(e) => {
-                        const to = Math.floor(Number(e.target.value) || 0);
-                        const next = saveZohoFeeSyncLockPeriod(
-                          sheetYear,
-                          to && !zohoLockPeriod.fromMonth ? to : zohoLockPeriod.fromMonth,
-                          to,
-                        );
-                        setZohoLockPeriod(next);
-                      }}
-                      className="rounded border border-emerald-300 bg-white px-2 py-1.5 text-sm font-semibold text-slate-800 disabled:opacity-60"
-                      suppressHydrationWarning
-                    >
-                      <option value={0}>—</option>
-                      {MONTH_SHORT.map((label, i) => (
-                        <option key={`to-${label}`} value={i + 1}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    disabled={!zohoLockUiReady}
-                    onClick={() => {
-                      const next = saveZohoFeeSyncLockPeriod(sheetYear, 0, 0);
-                      setZohoLockPeriod(next);
-                    }}
-                    className="rounded border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-60"
-                  >
-                    清除鎖定
-                  </button>
-                  <span className="text-[12px]" suppressHydrationWarning>
-                    {!zohoLockUiReady ? (
-                      <span className="text-slate-500">載入鎖定設定…</span>
-                    ) : zohoLockPeriod.fromMonth > 0 && zohoLockPeriod.toMonth > 0 ? (
-                      <span className="font-medium text-emerald-800">
-                        已生效：Sync 唔會改{" "}
-                        {zohoLockPeriod.fromMonth === zohoLockPeriod.toMonth
-                          ? MONTH_SHORT[zohoLockPeriod.fromMonth - 1]
-                          : `${MONTH_SHORT[zohoLockPeriod.fromMonth - 1]}–${MONTH_SHORT[zohoLockPeriod.toMonth - 1]}`}
-                      </span>
-                    ) : (
-                      <span className="text-amber-800">未鎖定 — Sync 仍可能改動已對好的月份</span>
-                    )}
-                  </span>
-                </div>
-              </div>
             </div>
           </div>
         </div>
